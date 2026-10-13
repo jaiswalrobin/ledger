@@ -1,25 +1,35 @@
-name: Domain foundation
+name: Ledger CI/CD
 
+# No `paths:` filter on purpose. `domain` and `browser` are required status checks on `main`;
+# a path-filtered workflow never reports on a pull request that touches only other files, which
+# would leave that pull request waiting forever for a check that is never produced.
+#
+# Pull requests run the checks only. A push to `main` (or a manual run on `main`) runs the same
+# checks and then, only if both pass for that exact commit, deploys it to production.
 on:
   push:
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "scripts/**"
-      - "package.json"
-      - "tsconfig.json"
-      - ".github/workflows/domain-ci.yml"
+    branches: [main]
   pull_request:
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "scripts/**"
-      - "package.json"
-      - "tsconfig.json"
-      - ".github/workflows/domain-ci.yml"
+  workflow_dispatch:
+    inputs:
+      simulate_failure:
+        description: "Deploy, then fail the smoke test on purpose to prove the automatic rollback works"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+# A newer push to the same pull request supersedes the older run. Runs on `main` are never
+# cancelled, so every merge commit keeps a complete result.
+concurrency:
+  group: ledger-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Production (Vercel) runs Node 24; test on the same major.
+  NODE_VERSION: "24"
+  NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
   domain:
@@ -27,16 +37,162 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: "22"
-      - name: Install dev dependencies
-        run: npm install --no-audit --no-fund
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
       - name: Type-check
         run: npm run typecheck
       - name: Run domain tests
         run: npm test
       - name: Run synthetic demo
         run: npm run demo
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+        env:
+          POSTGRES_USER: ledger
+          POSTGRES_DB: ledger_browser
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ledger -d ledger_browser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ledger@127.0.0.1:5432/ledger_browser
+      APP_URL: http://127.0.0.1:3000
+      DEMO_MODE: "true"
+      # A throwaway value so this server is configured like production (the cron endpoint answers
+      # 401 to bad credentials; without any secret it answers 503). Protects nothing real.
+      CRON_SECRET: ci-only-not-a-real-secret-0000000000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run migrate
+      - run: npm run test:postgres
+      - run: npm run build
+      - name: Start production server and exercise browser
+        run: |
+          set -euo pipefail
+          npm run start -- --hostname 127.0.0.1 > /tmp/ledger-server.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/api/session > /dev/null; then break; fi
+            sleep 1
+          done
+          npm run test:browser
+          # The deploy job runs this same script against production.
+          BASE_URL=http://127.0.0.1:3000 npm run smoke
+
+  # Informational: reports known-vulnerable dependencies without blocking unrelated work.
+  # Deliberately NOT a required check, because a new advisory can appear on any day and must
+  # not stop a merge that did not cause it. Dependabot raises the fix.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Audit dependencies (high and critical)
+        run: npm audit --audit-level=high
+
+  # Production deploy. Order matters:
+  #   1. build a STAGED production deployment (no traffic) so a broken build never touches the database
+  #   2. apply migrations to the production database
+  #   3. promote the staged deployment to the production domain
+  #   4. smoke-test the live domain; on failure roll back to the previous deployment and re-verify
+  # Migrations therefore run before the new code is live, so they must stay backward-compatible
+  # with the previous release (see docs/deployment.md).
+  deploy:
+    needs: [domain, browser]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Secrets live in this GitHub environment, which only accepts deployments from `main`.
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+    # One production deploy at a time; a queued one waits rather than racing.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+      VERCEL_CLI_VERSION: "63.1.2"
+      SIMULATE_FAILURE: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Require deployment configuration
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID PRODUCTION_URL; do
+            [ -n "${!name:-}" ] || missing+=("$name")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Deployment is not configured. Missing: ${missing[*]} (see docs/deployment.md)"
+            exit 1
+          fi
+          case "$PRODUCTION_URL" in
+            https://*) ;;
+            *) echo "::error::PRODUCTION_URL must start with https://"; exit 1 ;;
+          esac
+
+      - name: Skip if a newer commit has landed on main
+        id: guard
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin main
+          latest="$(git rev-parse FETCH_HEAD)"
+          if [ "$latest" != "$GITHUB_SHA" ]; then
+            echo "::notice::main has moved on to ${latest:0:7}; the run for that commit deploys it. Nothing to do for ${GITHUB_SHA:0:7}."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node
+        if: steps.guard.outputs.stale != 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.guard.outputs.stale != 'true'
+        run: npm ci --no-audit --no-fund
+
+      - name: Stage, migrate, promote, and verify with automatic recovery
+        if: steps.guard.outputs.stale != 'true'
+        env:
+          SMOKE_SIMULATE_FAILURE: ${{ env.SIMULATE_FAILURE == 'true' && '1' || '0' }}
+        run: bash scripts/deploy-production.sh
+
+      - name: Remove pulled production credentials
+        if: always()
+        run: rm -f .vercel/.env.production.local

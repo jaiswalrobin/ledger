@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Application dependencies. Grouped so a week's updates arrive as one reviewable pull request.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    # `pg` v9 changes the meaning of sslmode=require (see docs/deployment.md). Take major
+    # upgrades of it deliberately, not from an automated pull request.
+    ignore:
+      - dependency-name: pg
+        update-types: [version-update:semver-major]
+
+  # Keeps the SHA-pinned actions current; the pinned commit is rewritten with its version comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3

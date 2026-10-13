@@ -1,0 +1,34 @@
+name: Scheduled mailbox sync
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ledger-scheduled-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Run authenticated scheduler
+        env:
+          LEDGER_SYNC_URL: ${{ secrets.LEDGER_SYNC_URL }}
+          CRON_SECRET: ${{ secrets.LEDGER_CRON_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$LEDGER_SYNC_URL" || -z "$CRON_SECRET" ]]; then
+            echo 'Scheduler is not configured; no mailbox was accessed.'
+            exit 0
+          fi
+          if [[ "$LEDGER_SYNC_URL" != https://* || ${#CRON_SECRET} -lt 24 ]]; then
+            echo 'Scheduler configuration is invalid.'
+            exit 1
+          fi
+          # No redirects, tracing, verbose output, response body, or credentials in command arguments.
+          printf 'Authorization: Bearer %s\n' "$CRON_SECRET" |
+            curl --fail --silent --show-error --max-time 285 --request POST --header @- \
+            --output /dev/null "$LEDGER_SYNC_URL"
