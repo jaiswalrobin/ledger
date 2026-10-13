@@ -15,7 +15,7 @@ CREATE TABLE connected_mailboxes (
   provider text NOT NULL CHECK (provider = 'GMAIL'),
   provider_subject text NOT NULL,
   address text NOT NULL,
-  encrypted_refresh_token bytea NOT NULL,
+  encrypted_refresh_token bytea,
   token_key_version integer NOT NULL DEFAULT 1,
   history_cursor text,
   sync_state text NOT NULL DEFAULT 'INITIALIZING'
@@ -25,6 +25,7 @@ CREATE TABLE connected_mailboxes (
   backfill_complete boolean NOT NULL DEFAULT false,
   last_success_at timestamptz,
   disconnected_at timestamptz,
+  CONSTRAINT active_requires_token CHECK (sync_state = 'DISCONNECTED' OR encrypted_refresh_token IS NOT NULL),
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (user_id, provider, provider_subject),
   UNIQUE (id, user_id)
@@ -98,9 +99,12 @@ CREATE TABLE source_artifacts (
   extractor_version text,
   FOREIGN KEY (mailbox_id, user_id) REFERENCES connected_mailboxes(id, user_id),
   UNIQUE (id, user_id),
-  UNIQUE (user_id, source_kind, source_fingerprint),
   CHECK (source_kind <> 'GMAIL' OR (mailbox_id IS NOT NULL AND provider_message_id IS NOT NULL))
 );
+-- Repeated imports of the same .eml are idempotent; distinct Gmail mailboxes
+-- may observe the same message fingerprint without violating this constraint.
+CREATE UNIQUE INDEX idx_imported_eml_fingerprint ON source_artifacts (user_id, source_fingerprint)
+  WHERE source_kind = 'FORWARDED_EML';
 CREATE UNIQUE INDEX idx_gmail_message_in_mailbox
   ON source_artifacts (mailbox_id, provider_message_id)
   WHERE source_kind = 'GMAIL';

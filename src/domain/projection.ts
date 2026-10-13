@@ -23,6 +23,7 @@ export function projectAttempt(attemptId: string, events: readonly ApplicationEv
   let stage: Stage = "UNKNOWN";
   let outcome: Outcome = "PENDING";
   let lastActivityAt: string | null = null;
+  let latestActivityMillis = Number.NEGATIVE_INFINITY;
   const conflicts: string[] = [];
 
   const accepted = events.filter(e => e.attemptId === attemptId && e.reviewState === "ACCEPTED")
@@ -30,12 +31,15 @@ export function projectAttempt(attemptId: string, events: readonly ApplicationEv
       a.observedAt.localeCompare(b.observedAt) || a.id.localeCompare(b.id));
 
   for (const event of accepted) {
-    if (!Number.isFinite(Date.parse(event.occurredAt))) {
+    const eventMillis = Date.parse(event.occurredAt);
+    if (!Number.isFinite(eventMillis)) {
       conflicts.push("Invalid event timestamp: " + event.id);
       continue;
     }
-    lastActivityAt = !lastActivityAt || event.occurredAt > lastActivityAt
-      ? event.occurredAt : lastActivityAt;
+    if (eventMillis > latestActivityMillis) {
+      latestActivityMillis = eventMillis;
+      lastActivityAt = event.occurredAt;
+    }
 
     if (event.kind === "MANUAL_CORRECTION") {
       if (!event.correction) {
