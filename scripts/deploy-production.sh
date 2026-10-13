@@ -8,7 +8,9 @@ set -euo pipefail
 : "${PRODUCTION_URL:?PRODUCTION_URL is required}"
 : "${GITHUB_SHA:?GITHUB_SHA is required}"
 VERCEL_CLI_VERSION="${VERCEL_CLI_VERSION:-63.1.2}"
-cli() { npx --yes "vercel@${VERCEL_CLI_VERSION}" "$@"; }
+# The env IDs link deploy/pull to the project, but inspect also needs an explicit
+# scope: otherwise the CLI discovers accounts through its unscoped user/team APIs.
+cli() { npx --yes "vercel@${VERCEL_CLI_VERSION}" "$@" --scope "$VERCEL_ORG_ID"; }
 work_directory="$(mktemp -d)"
 previous_url='' previous_id='' staged_id='' migrations='not run'
 promotion_attempted=false recovery='not needed' smoke_outcome='not run'

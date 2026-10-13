@@ -306,3 +306,13 @@ record above is historical; this remediation adds `0007_submission_date_correcti
 Pushing this branch does not apply that migration or update the live deployment.
 
 Google/Gmail setup and removal of older previews are documented in [google-setup.md](google-setup.md). New preview deployments are disabled; historical shared-database preview notes above describe the preceding deployment state, not a completed cleanup.
+
+## Credential diagnostics
+
+If production inventory succeeds but the CLI reports `User not found`, avoid
+assuming that the token owner is wrong. Inventory uses an explicit API team selector;
+the release CLI now passes `--scope "$VERCEL_ORG_ID"` on every operation, including
+inspect and rollback. Retest the scoped release before replacing credentials.
+If it still fails, distinguish the token's user-profile access from project access,
+and verify the production environment secret (which overrides a repository secret).
+Never share the token value in logs or chat.

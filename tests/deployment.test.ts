@@ -56,6 +56,9 @@ if(name==='npm'){
  let live='old';try{live=readFileSync('live.txt','utf8');}catch{}
  log('smoke:'+live);process.exit((['smoke-failure','rollback-failure'].includes(scenario)&&live==='new')?1:0);
 }
+// Every operation, including recovery, must stay in the configured owner scope.
+const scopeIndex=args.indexOf('--scope');
+if(scopeIndex<0||args[scopeIndex+1]!==process.env.VERCEL_ORG_ID){console.error('Incorrect Vercel owner scope');process.exit(2);}
 const command=args[2];log(command);
 let live='old';try{live=readFileSync('live.txt','utf8');}catch{}
 let count=0;try{count=Number(readFileSync('inspects.txt','utf8'));}catch{}
