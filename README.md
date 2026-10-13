@@ -4,7 +4,7 @@
 
 Ledger is a planned privacy-conscious application tracker that reconstructs and maintains application histories from dedicated Gmail accounts and selectively forwarded emails. It is designed for people who apply to many roles, sometimes more than once with different contact details, and do not want to maintain a spreadsheet or manually update statuses.
 
-> **Project status:** Architecture and MVP specifications. There is no runnable application yet.
+> **Project status:** Initial executable TypeScript domain foundation with automated tests; Gmail/API/dashboard are not implemented yet.
 
 ## What Ledger should do
 
@@ -71,6 +71,19 @@ These are design choices, **not dependencies already installed**.
 4. **60 days is not a TTL.** The initial backfill and default dashboard window do not limit ongoing monitoring or erase history.
 5. **Unobserved is not unanswered.** Disconnected/forward-only accounts have incomplete monitoring coverage.
 6. **Application submissions should not be automatically repeated.** Ledger tracks attempts and does not circumvent employer screening or duplicate-detection policies.
+
+## Run the first executable slice
+
+Requires **Node.js >= 22.16**. The domain modules rely only on built-in Node support for TypeScript type stripping; no services or credentials are needed.
+
+```bash
+npm install
+npm test
+npm run typecheck
+npm run demo
+```
+
+The current code includes deterministic, privacy-conscious **job and application-attempt resolution**, a minimal header-only candidate/secret gate, and **pure event-state projection** with conflict detection. `npm run demo` uses synthetic employer/identity data. **No Gmail account is accessed, no database is connected, and no production API or dashboard exists yet.** The planned PostgreSQL schema lives at [migrations/0001_core.sql](migrations/0001_core.sql). The schema is a starting migration, not proof of deployed storage.
 
 ## First engineering milestone
 
