@@ -1,13 +1,21 @@
-name: Ledger checks
+name: Ledger CI/CD
 
 # No `paths:` filter on purpose. `domain` and `browser` are required status checks on `main`;
 # a path-filtered workflow never reports on a pull request that touches only other files, which
 # would leave that pull request waiting forever for a check that is never produced.
+#
+# Pull requests run the checks only. A push to `main` (or a manual run on `main`) runs the same
+# checks and then, only if both pass for that exact commit, deploys it to production.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      simulate_failure:
+        description: "Deploy, then fail the smoke test on purpose to prove the automatic rollback works"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,7 +23,7 @@ permissions:
 # A newer push to the same pull request supersedes the older run. Runs on `main` are never
 # cancelled, so every merge commit keeps a complete result.
 concurrency:
-  group: ledger-checks-${{ github.workflow }}-${{ github.ref }}
+  group: ledger-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -65,6 +73,9 @@ jobs:
       DATABASE_URL: postgresql://ledger@127.0.0.1:5432/ledger_browser
       APP_URL: http://127.0.0.1:3000
       DEMO_MODE: "true"
+      # A throwaway value so this server is configured like production (the cron endpoint answers
+      # 401 to bad credentials; without any secret it answers 503). Protects nothing real.
+      CRON_SECRET: ci-only-not-a-real-secret-0000000000
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -86,6 +97,8 @@ jobs:
             sleep 1
           done
           npm run test:browser
+          # The deploy job runs this same script against production.
+          BASE_URL=http://127.0.0.1:3000 npm run smoke
 
   # Informational: reports known-vulnerable dependencies without blocking unrelated work.
   # Deliberately NOT a required check, because a new advisory can appear on any day and must
@@ -102,3 +115,208 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Audit dependencies (high and critical)
         run: npm audit --audit-level=high
+
+  # Production deploy. Order matters:
+  #   1. build a STAGED production deployment (no traffic) so a broken build never touches the database
+  #   2. apply migrations to the production database
+  #   3. promote the staged deployment to the production domain
+  #   4. smoke-test the live domain; on failure roll back to the previous deployment and re-verify
+  # Migrations therefore run before the new code is live, so they must stay backward-compatible
+  # with the previous release (see docs/deployment.md).
+  deploy:
+    needs: [domain, browser]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Secrets live in this GitHub environment, which only accepts deployments from `main`.
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+    # One production deploy at a time; a queued one waits rather than racing.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+      VERCEL_CLI_VERSION: "63.1.2"
+      SIMULATE_FAILURE: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Require deployment configuration
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID PRODUCTION_URL; do
+            [ -n "${!name:-}" ] || missing+=("$name")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Deployment is not configured. Missing: ${missing[*]} (see docs/deployment.md)"
+            exit 1
+          fi
+          case "$PRODUCTION_URL" in
+            https://*) ;;
+            *) echo "::error::PRODUCTION_URL must start with https://"; exit 1 ;;
+          esac
+
+      - name: Skip if a newer commit has landed on main
+        id: guard
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin main
+          latest="$(git rev-parse FETCH_HEAD)"
+          if [ "$latest" != "$GITHUB_SHA" ]; then
+            echo "::notice::main has moved on to ${latest:0:7}; the run for that commit deploys it. Nothing to do for ${GITHUB_SHA:0:7}."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node
+        if: steps.guard.outputs.stale != 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.guard.outputs.stale != 'true'
+        run: npm ci --no-audit --no-fund
+
+      - name: Record the deployment currently serving production
+        if: steps.guard.outputs.stale != 'true'
+        id: previous
+        run: |
+          set -euo pipefail
+          pick() { node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const x=d.deployment??d;console.log(x[process.argv[1]]??"")' "$1"; }
+          json="$(npx --yes "vercel@${VERCEL_CLI_VERSION}" inspect "$PRODUCTION_URL" --format json 2>/dev/null || true)"
+          url="$(printf '%s' "$json" | pick url 2>/dev/null || true)"
+          id="$(printf '%s' "$json" | pick id 2>/dev/null || true)"
+          if [ -n "$url" ]; then case "$url" in https://*) ;; *) url="https://$url" ;; esac; fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "Previous production deployment: ${id:-none}"
+
+      - name: Build a staged production deployment (takes no traffic)
+        if: steps.guard.outputs.stale != 'true'
+        id: stage
+        run: |
+          set -euo pipefail
+          pick() { node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const x=d.deployment??d;console.log(x[process.argv[1]]??"")' "$1"; }
+          npx --yes "vercel@${VERCEL_CLI_VERSION}" deploy --prod --skip-domain --yes --format json \
+            -m "githubCommitSha=${GITHUB_SHA}" -m "githubRunId=${GITHUB_RUN_ID}" > deploy.json
+          url="$(pick url < deploy.json)"; id="$(pick id < deploy.json)"
+          if [ -z "$url" ] || [ -z "$id" ]; then echo "::error::Could not read the staged deployment from the CLI output"; exit 1; fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "Staged deployment: $id"
+
+      # Credentials are fetched only now, after the source has been uploaded, and are deleted
+      # as soon as the migration has run.
+      - name: Apply database migrations
+        if: steps.guard.outputs.stale != 'true'
+        id: migrate
+        run: |
+          set -euo pipefail
+          npx --yes "vercel@${VERCEL_CLI_VERSION}" pull --yes --environment=production
+          # Values pulled from Vercel are not known to Actions as secrets: mask every one so a
+          # stray log line cannot print a connection string.
+          while IFS='=' read -r key value; do
+            value="${value%\"}"; value="${value#\"}"
+            if [ "${#value}" -ge 6 ]; then echo "::add-mask::${value}"; fi
+          done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .vercel/.env.production.local)
+          set -a; . .vercel/.env.production.local; set +a
+          rm -f .vercel/.env.production.local
+          if [ -z "${DATABASE_URL_UNPOOLED:-}" ]; then
+            echo "::error::DATABASE_URL_UNPOOLED is not set in the production environment"; exit 1
+          fi
+          # pipefail makes a failed migration fail this step; nothing may swallow its exit status.
+          DATABASE_URL="$DATABASE_URL_UNPOOLED" npm run migrate 2>&1 | tee migrate.log
+          result="$(grep -E '^Applied [0-9]+ migration' migrate.log || true)"
+          echo "result=${result:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Promote the staged deployment to the production domain
+        if: steps.guard.outputs.stale != 'true'
+        env:
+          STAGED_URL: ${{ steps.stage.outputs.url }}
+          STAGED_ID: ${{ steps.stage.outputs.id }}
+        run: |
+          set -euo pipefail
+          npx --yes "vercel@${VERCEL_CLI_VERSION}" promote "$STAGED_URL" --yes
+          pick() { node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const x=d.deployment??d;console.log(x[process.argv[1]]??"")' "$1"; }
+          live="$(npx --yes "vercel@${VERCEL_CLI_VERSION}" inspect "$PRODUCTION_URL" --format json 2>/dev/null | pick id)"
+          if [ "$live" != "$STAGED_ID" ]; then
+            echo "::error::The production domain is serving ${live:-nothing}, not the promoted deployment"
+            exit 1
+          fi
+
+      - name: Smoke-test the live site
+        if: steps.guard.outputs.stale != 'true'
+        id: smoke
+        continue-on-error: true
+        env:
+          BASE_URL: ${{ vars.PRODUCTION_URL }}
+          SMOKE_SIMULATE_FAILURE: ${{ env.SIMULATE_FAILURE == 'true' && '1' || '0' }}
+        run: npm run smoke
+
+      - name: Roll back to the previous deployment
+        if: steps.guard.outputs.stale != 'true' && steps.smoke.outcome == 'failure'
+        id: rollback
+        env:
+          PREVIOUS_URL: ${{ steps.previous.outputs.url }}
+          PREVIOUS_ID: ${{ steps.previous.outputs.id }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PREVIOUS_URL" ]; then
+            echo "::error::The smoke test failed and there is no previous production deployment to roll back to."
+            exit 1
+          fi
+          npx --yes "vercel@${VERCEL_CLI_VERSION}" rollback "$PREVIOUS_URL" --yes
+          # A rollback makes Vercel stop auto-assigning the domain to new deployments. This pipeline
+          # always promotes explicitly, but a manual `vercel deploy --prod` should keep working.
+          npx --yes "vercel@${VERCEL_CLI_VERSION}" api "/v9/projects/${VERCEL_PROJECT_ID}" -X PATCH -F autoAssignCustomDomains=true > /dev/null
+          pick() { node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const x=d.deployment??d;console.log(x[process.argv[1]]??"")' "$1"; }
+          live="$(npx --yes "vercel@${VERCEL_CLI_VERSION}" inspect "$PRODUCTION_URL" --format json 2>/dev/null | pick id)"
+          if [ "$live" != "$PREVIOUS_ID" ]; then
+            echo "::error::After rollback the domain serves ${live:-nothing}, expected ${PREVIOUS_ID}"
+            exit 1
+          fi
+          echo "Rolled back to ${PREVIOUS_ID}."
+
+      - name: Confirm the rollback restored a healthy site
+        if: steps.guard.outputs.stale != 'true' && steps.smoke.outcome == 'failure'
+        env:
+          BASE_URL: ${{ vars.PRODUCTION_URL }}
+        run: npm run smoke
+
+      - name: Summary
+        if: always() && steps.guard.outputs.stale != 'true'
+        env:
+          STAGED_ID: ${{ steps.stage.outputs.id }}
+          PREVIOUS_ID: ${{ steps.previous.outputs.id }}
+          MIGRATIONS: ${{ steps.migrate.outputs.result }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+          ROLLBACK_OUTCOME: ${{ steps.rollback.outcome }}
+        run: |
+          {
+            echo "### Production deploy"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA:0:7}\` |"
+            echo "| Staged deployment | \`${STAGED_ID:-not created}\` |"
+            echo "| Previous deployment | \`${PREVIOUS_ID:-none}\` |"
+            echo "| Migrations | ${MIGRATIONS:-not run} |"
+            echo "| Smoke test | ${SMOKE_OUTCOME:-not run} |"
+            echo "| Rolled back | $([ "$ROLLBACK_OUTCOME" = "success" ] && echo yes || echo no) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail the run if the deploy was rolled back
+        if: steps.guard.outputs.stale != 'true' && steps.smoke.outcome == 'failure'
+        run: |
+          echo "::error::The new deployment failed its smoke test and production was rolled back to the previous deployment."
+          exit 1

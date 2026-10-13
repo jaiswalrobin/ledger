@@ -1,4 +1,14 @@
 {
   "framework": "nextjs",
-  "crons": [{ "path": "/api/cron/sync", "schedule": "0 3 * * *" }]
+  "crons": [
+    {
+      "path": "/api/cron/sync",
+      "schedule": "0 3 * * *"
+    }
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "main": false
+    }
+  }
 }

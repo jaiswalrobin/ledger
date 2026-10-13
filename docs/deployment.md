@@ -169,8 +169,9 @@ Not set yet, deliberately: `ALLOWED_EMAILS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_
   After changing it, redeploy: environment changes only apply to new deployments. The
   `ledger-*.vercel.app` alias still serves pages but rejects writes by design.
 - **Redeploy:** from a checkout linked to the project (`vercel link`), run `vercel deploy --prod`.
-- **Git integration is connected,** so pushes build on Vercel and a push to `main` targets
-  production. Merge the pull request before relying on that, because `main` has no app until then.
+- **Production is deployed by the pipeline, not by Vercel's Git integration.** `vercel.json` turns
+  Git-triggered deployments off for `main`; pull-request previews still build. See
+  [CI/CD](#cicd-gating-and-rollback).
 - **Preview and production currently share one Neon database.** Previews have no `APP_URL`,
   `DEMO_MODE` or `CRON_SECRET`, so they are largely inert, but give previews their own Neon
   branch before using them for real work.
@@ -186,61 +187,103 @@ Not set yet, deliberately: `ALLOWED_EMAILS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_
 
 ## CI/CD, gating and rollback
 
-### What runs
+One workflow, `Ledger CI/CD` (`.github/workflows/domain-ci.yml`), runs the checks and the deploy.
+It has no path filter, because a required check that is skipped for some files would block those
+pull requests indefinitely.
 
-The `Ledger checks` workflow runs on every pull request and on every push to `main`. It has no
-path filter, because a required check that is skipped for some files would block those pull
-requests indefinitely.
-
-| Job | What it proves | Required to merge |
-| --- | --- | --- |
-| `domain` | Type-check, the full test suite (embedded PostgreSQL), synthetic demo | Yes |
-| `browser` | Migrations on a real PostgreSQL 17, the concurrency tests, a production build, and Playwright against the running server | Yes |
-| `audit` | `npm audit` at high severity | No, on purpose: a new advisory must not block a merge that did not cause it |
+| Job | Runs on | What it proves or does | Required to merge |
+| --- | --- | --- | --- |
+| `domain` | pull request, `main` | Type-check, the full test suite (embedded PostgreSQL), synthetic demo | Yes |
+| `browser` | pull request, `main` | Migrations on PostgreSQL 17, the concurrency tests, a production build, Playwright, and the deploy smoke test against the running server | Yes |
+| `audit` | pull request, `main` | `npm audit` at high severity | No, on purpose: a new advisory must not block a merge that did not cause it |
+| `deploy` | `main` only, after `domain` and `browser` pass for that exact commit | Ships it to production (below) | n/a |
 
 CI uses **Node 24**, the major version the Vercel project runs. Actions are pinned to full commit
-SHAs, and Dependabot proposes weekly updates for npm packages and for the pinned actions. `pg` major
-upgrades are excluded from automation (see the TLS note above).
+SHAs; Dependabot proposes weekly updates for npm packages and for those pins (`pg` major upgrades
+are excluded, see the TLS note above).
+
+### What the deploy job does, in order
+
+1. **Guard.** Refuses to run if its configuration is missing, and skips quietly if a newer commit has
+   already landed on `main` (the run for that commit deploys it), so an older run can never overwrite
+   a newer deploy.
+2. **Build a staged production deployment** with `vercel deploy --prod --skip-domain`. It takes no
+   traffic, so a broken build never reaches users and never touches the database.
+3. **Apply migrations** to the production database over the unpooled connection. A failed migration
+   stops the job before anything is promoted. The credentials are fetched only now and deleted
+   straight after.
+4. **Promote** the staged deployment to the production domain, then confirm the domain really serves it.
+5. **Smoke-test the live site** (`scripts/smoke.ts`): security headers, signed-out requests refused,
+   the cron endpoint failing closed, cross-origin writes refused, and a demo workspace round trip
+   through the database.
+6. **If the smoke test fails:** roll back to the deployment that was live before, confirm the domain
+   serves it, re-run the smoke test to prove the site is healthy again, and fail the run loudly.
+
+The run summary lists the commit, the staged and previous deployments, the migrations applied, the
+smoke result and whether a rollback happened.
 
 ### What gates production
 
-`main` is protected by a ruleset: changes arrive only through a pull request whose `domain` and
-`browser` checks pass, and force-pushes and deletion are blocked. Because Vercel's Git integration
-deploys `main` to production, **the merge gate is the production gate.** Vercel itself does not wait
-for GitHub checks, so do not push to `main` any other way.
+- **`main` is protected by a ruleset:** changes arrive only through a pull request whose `domain`
+  and `browser` checks pass, and force-pushes and deletion are blocked.
+- **Vercel's own Git deploy of `main` is switched off** (`git.deploymentEnabled` in `vercel.json`),
+  so the pipeline is the only automated way to production.
+- **Credentials live in the GitHub environment `production`,** which accepts deployments from `main`
+  only. Pull requests and forks never see them.
 
-### Database migrations are still manual
+### One-time setup that lives outside git
 
-Migrations are **not** part of the build or the deploy. Code and schema therefore change at
-different moments, so every migration must be additive and backward-compatible with the code that is
-currently live (add a column or table first; remove or rename only in a later release).
+The environment `production` and its variables (`VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`,
+`PRODUCTION_URL`) already exist. The one remaining credential is a Vercel token:
 
-1. Merge the migration file together with code that works both before and after it is applied.
-2. Apply it: `npm run migrate` with `DATABASE_URL` set to the Neon **unpooled** connection string,
-   from a trusted shell (`vercel env pull` provides it; delete the file afterwards).
-3. Deploy code that depends on the new schema only after step 2 has succeeded.
+1. Vercel dashboard, Account Settings, Tokens: create one named `ledger-github-deploy`, scoped to the
+   account, with an expiry.
+2. Store it without echoing it:
+   `gh secret set VERCEL_TOKEN --env production --repo jaiswalrobin/ledger`
 
-Migrations are checksummed and serialised by the runner, so re-running is safe.
+Set the secret **before** merging the pull request that introduces the pipeline. Without it the deploy
+job fails at "Require deployment configuration" with a message naming what is missing; production then
+simply stays on the current deployment. Tokens expire, so put the expiry date in a calendar; rotating
+is the same command with a new token.
 
-### Rolling back
+### Everyday operations
 
-Vercel keeps every previous deployment, so reverting application code takes seconds and does not
-touch the database:
+- **Ship a change:** merge a green pull request. Nothing else.
+- **Redeploy without a code change** (for example after editing an environment variable in Vercel):
+  Actions, `Ledger CI/CD`, Run workflow, branch `main`.
+- **Prove the rollback still works:** run the workflow with `simulate_failure` ticked. Expect a red run,
+  "Rolled back: yes" in the summary, and a healthy site. Do this after changing the pipeline.
+- **Roll back by hand:**
+  ```bash
+  npx vercel ls ledger --status READY        # find the last good production deployment
+  npx vercel rollback <deployment-url> --yes
+  ```
+- **Run the smoke test yourself:** `BASE_URL=https://ledger.jaiswalrobin.com npm run smoke`
+- **Break glass** (Actions unavailable): deploy with `npx vercel deploy --prod --skip-domain`, apply
+  migrations with `npm run migrate` (unpooled `DATABASE_URL`), then `npx vercel promote <url>`. The
+  ruleset can be disabled under repository Settings, Rules, if a fix must bypass the checks; re-enable
+  it afterwards.
 
-```bash
-npx vercel ls ledger --status READY      # find the last good production deployment
-npx vercel promote <deployment-url>      # or: npx vercel rollback
-```
+### Migrations: the rule that keeps rollback safe
 
-Rolling back code does **not** undo migrations. This is why migrations must stay backward-compatible:
-the previous release has to keep working against the newer schema.
+Migrations run **before** the new code is promoted, and a rollback restores old code against the
+**new** schema. So every migration must work with both the code that is live now and the code about to
+go live: add columns and tables first; remove or rename only in a later release, after nothing uses them.
 
-### Not built yet
+### What this pipeline does not do
 
-- Automated deploys from CI (apply migrations, deploy, smoke-test, roll back on failure). This needs
-  a `VERCEL_TOKEN` stored as a GitHub secret and Vercel's own Git auto-deploy turned off.
-- A post-deploy smoke test; the checks recorded above were run by hand.
-- A separate database for preview deployments.
-- The scheduler is silent when its secrets are missing (it exits successfully after printing a
-  notice). GitHub also disables scheduled workflows in public repositories after 60 days without
-  repository activity, so re-enable it if the schedule stops.
+- **It does not smoke-test before promoting.** The staged URL sits behind Vercel's login, so the check
+  runs on the live domain right after promotion. A bad deployment can therefore serve users for the
+  seconds it takes to detect and roll back. Testing the staged URL first needs a protection-bypass
+  secret; add it if that window matters.
+- **Rollback depth is one deployment.** The Hobby plan can only roll back to the previous production
+  deployment, which is the only case the pipeline needs.
+- **The smoke test's database check needs demo mode.** Once demo mode is turned off, that check is
+  skipped and reported as skipped; add a health endpoint then.
+- **Node drift is possible.** `package.json` says `"node": ">=22.16.0"`, and Vercel warns that this
+  upgrades automatically when a new Node major is released, while CI is pinned to 24. Pinning
+  `engines.node` to `24.x` closes that gap.
+- **Preview deployments share the production database,** and there is no alerting beyond GitHub's
+  failure emails.
+- **The 15-minute Gmail scheduler is separate** from deploys. It is silent when its secrets are missing,
+  and GitHub disables scheduled workflows in public repositories after 60 days without activity.
