@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Evidence-backed job application tracker",
   "engines": {
-    "node": ">=22.16.0"
+    "node": "24.x"
   },
   "scripts": {
     "dev": "next dev",

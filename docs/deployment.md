@@ -23,7 +23,10 @@ credentials) was made separately on 2026-10-13 and is recorded in
    trusted, authorized environment with the corresponding `DATABASE_URL` binding.
    Use a migration-capable database role there, and an appropriately restricted
    runtime role for the app. Migration files are checksum-checked and serialized
-   with a transaction-scoped PostgreSQL lock. Older filename-only records acquire
+   with a transaction-scoped PostgreSQL lock. The exact pending legacy 0002 migration
+   has a runner adapter that backfills normalized company keys before NOT NULL/uniqueness.
+   Colliding legacy names keep every company ID, domain, and opening through distinct
+   reserved keys. Already applied files and their checksums are unchanged. Older filename-only records acquire
    a checksum baseline on their first upgrade; review those files before upgrading.
 5. Deploy the preview, open it, and choose **Explore the demo**. Each browser gets
    an isolated PostgreSQL-backed workspace: four openings, five attempts, and one
@@ -127,7 +130,6 @@ PostgreSQL persistence, uploads, reviews, mobile navigation, owner isolation, CS
 logout revocation, and deletion. Live processes and Docker container data should
 not be assumed to survive cloud snapshots.
 
-
 ## Production deployment record
 
 First production deployment of commit `610bbf4`, made on 2026-10-13 with the Vercel CLI
@@ -135,14 +137,14 @@ from a clean checkout of the pushed branch. It runs the **synthetic demo only**:
 login and Gmail are not configured, so `googleReady` is `false` and no mailbox can be
 connected. This record contains no secrets or account identifiers.
 
-| Item | Value |
-| --- | --- |
-| Public origin (`APP_URL`) | `https://ledger.jaiswalrobin.com` |
-| Hosting | Vercel project `ledger`, Hobby plan, Node 24, region `iad1`, Next.js preset |
-| Database | Neon free plan, resource `ledger-db`, AWS `us-east-1`, created through the Vercel Marketplace |
-| Migrations | All 6 applied with `npm run migrate` using the **unpooled** connection string; a re-run applies 0 |
-| DNS | Only the `ledger` subdomain was added; the zone's wildcard already pointed at Vercel and no other record was changed |
-| TLS | Wildcard Let's Encrypt certificate managed by Vercel; HSTS enabled |
+| Item                      | Value                                                                                                                |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Public origin (`APP_URL`) | `https://ledger.jaiswalrobin.com`                                                                                    |
+| Hosting                   | Vercel project `ledger`, Hobby plan, Node 24, region `iad1`, Next.js preset                                          |
+| Database                  | Neon free plan, resource `ledger-db`, AWS `us-east-1`, created through the Vercel Marketplace                        |
+| Migrations                | All 6 applied with `npm run migrate` using the **unpooled** connection string; a re-run applies 0                    |
+| DNS                       | Only the `ledger` subdomain was added; the zone's wildcard already pointed at Vercel and no other record was changed |
+| TLS                       | Wildcard Let's Encrypt certificate managed by Vercel; HSTS enabled                                                   |
 
 Production environment variables that are set (names only):
 
@@ -168,7 +170,7 @@ Not set yet, deliberately: `ALLOWED_EMAILS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_
 - **`APP_URL` is also the CSRF allow-list.** Every write must carry an `Origin` equal to it.
   After changing it, redeploy: environment changes only apply to new deployments. The
   `ledger-*.vercel.app` alias still serves pages but rejects writes by design.
-- **Redeploy:** from a checkout linked to the project (`vercel link`), run `vercel deploy --prod`.
+- **Redeploy:** run the CI/CD workflow on `main`; use explicit staged deployment and promotion for the documented manual recovery path.
 - **Production is deployed by the pipeline, not by Vercel's Git integration.** `vercel.json` turns
   Git-triggered deployments off for `main`; pull-request previews still build. See
   [CI/CD](#cicd-gating-and-rollback).
@@ -191,12 +193,12 @@ One workflow, `Ledger CI/CD` (`.github/workflows/domain-ci.yml`), runs the check
 It has no path filter, because a required check that is skipped for some files would block those
 pull requests indefinitely.
 
-| Job | Runs on | What it proves or does | Required to merge |
-| --- | --- | --- | --- |
-| `domain` | pull request, `main` | Type-check, the full test suite (embedded PostgreSQL), synthetic demo | Yes |
-| `browser` | pull request, `main` | Migrations on PostgreSQL 17, the concurrency tests, a production build, Playwright, and the deploy smoke test against the running server | Yes |
-| `audit` | pull request, `main` | `npm audit` at high severity | No, on purpose: a new advisory must not block a merge that did not cause it |
-| `deploy` | `main` only, after `domain` and `browser` pass for that exact commit | Ships it to production (below) | n/a |
+| Job       | Runs on                                                              | What it proves or does                                                                                                                   | Required to merge                                                           |
+| --------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `domain`  | pull request, `main`                                                 | Type-check, the full test suite (embedded PostgreSQL), synthetic demo                                                                    | Yes                                                                         |
+| `browser` | pull request, `main`                                                 | Migrations on PostgreSQL 17, the concurrency tests, a production build, Playwright, and the deploy smoke test against the running server | Yes                                                                         |
+| `audit`   | pull request, `main`                                                 | `npm audit` at high severity                                                                                                             | No, on purpose: a new advisory must not block a merge that did not cause it |
+| `deploy`  | `main` only, after `domain` and `browser` pass for that exact commit | Ships it to production (below)                                                                                                           | n/a                                                                         |
 
 CI uses **Node 24**, the major version the Vercel project runs. Actions are pinned to full commit
 SHAs; Dependabot proposes weekly updates for npm packages and for those pins (`pg` major upgrades
@@ -204,7 +206,7 @@ are excluded, see the TLS note above).
 
 ### What the deploy job does, in order
 
-1. **Guard.** Refuses to run if its configuration is missing, and skips quietly if a newer commit has
+1. **Guard.** Refuses to run if its configuration is missing or the previous production deployment cannot be inspected and validated, and skips quietly if a newer commit has
    already landed on `main` (the run for that commit deploys it), so an older run can never overwrite
    a newer deploy.
 2. **Build a staged production deployment** with `vercel deploy --prod --skip-domain`. It takes no
@@ -216,8 +218,15 @@ are excluded, see the TLS note above).
 5. **Smoke-test the live site** (`scripts/smoke.ts`): security headers, signed-out requests refused,
    the cron endpoint failing closed, cross-origin writes refused, and a demo workspace round trip
    through the database.
-6. **If the smoke test fails:** roll back to the deployment that was live before, confirm the domain
-   serves it, re-run the smoke test to prove the site is healthy again, and fail the run loudly.
+6. **If promotion, domain verification, or the smoke test fails:** attempt rollback to the recorded
+   previous deployment, verify the domain and re-run smoke. The run fails even after successful
+   recovery. A failed rollback is explicitly reported as unverified recovery. A production-domain
+   recheck before promotion also stops a release if someone deployed manually while it was staging.
+
+The ordered release and recovery live in `scripts/deploy-production.sh`. Its regression harness
+fault-injects lookup, build, migration, promotion-response, verification, smoke and rollback failures.
+Pulled variables are parsed by `scripts/migrate-production.ts` as dotenv data and deleted; they are
+never sourced as shell code. Only the unpooled database binding is passed to the migration process.
 
 The run summary lists the commit, the staged and previous deployments, the migrations applied, the
 smoke result and whether a rollback happened.
@@ -252,7 +261,7 @@ is the same command with a new token.
 - **Redeploy without a code change** (for example after editing an environment variable in Vercel):
   Actions, `Ledger CI/CD`, Run workflow, branch `main`.
 - **Prove the rollback still works:** run the workflow with `simulate_failure` ticked. Expect a red run,
-  "Rolled back: yes" in the summary, and a healthy site. Do this after changing the pipeline.
+  "Recovery: verified" in the summary, and a healthy site. Do this after changing the pipeline.
 - **Roll back by hand:**
   ```bash
   npx vercel ls ledger --status READY        # find the last good production deployment
@@ -280,10 +289,16 @@ go live: add columns and tables first; remove or rename only in a later release,
   deployment, which is the only case the pipeline needs.
 - **The smoke test's database check needs demo mode.** Once demo mode is turned off, that check is
   skipped and reported as skipped; add a health endpoint then.
-- **Node drift is possible.** `package.json` says `"node": ">=22.16.0"`, and Vercel warns that this
-  upgrades automatically when a new Node major is released, while CI is pinned to 24. Pinning
-  `engines.node` to `24.x` closes that gap.
+- **Runtime version:** `engines.node` is pinned to `24.x`, matching CI and Vercel. Update them together deliberately.
 - **Preview deployments share the production database,** and there is no alerting beyond GitHub's
   failure emails.
 - **The 15-minute Gmail scheduler is separate** from deploys. It is silent when its secrets are missing,
   and GitHub disables scheduled workflows in public repositories after 60 days without activity.
+
+## End-to-end completion
+
+See the [end-to-end checklist](end-to-end-checklist.md) for the exact secure settings,
+release/migration gate, separate preview database, real Google/Gmail validation, scheduler
+activation, and remaining public-launch hardening. The original six-migration production
+record above is historical; this remediation adds `0007_submission_date_corrections.sql`.
+Pushing this branch does not apply that migration or update the live deployment.

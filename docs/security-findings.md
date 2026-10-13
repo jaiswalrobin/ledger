@@ -2,8 +2,46 @@
 
 **Date:** 2026-10-13
 **Branch / commits reviewed:** `feat/first-browser-version` — `440987f`, `33fdaaa`, `edb03ca`
-**Status:** SEC-01 through SEC-09 have been remediated on the same branch, with regression tests. The browser layer now implements the SEC-13 controls. No public deployment or real-inbox access has been verified. The original audit below is retained as the baseline; its historical “Open” labels are superseded by the remediation record.
+**Status:** SEC-01 through SEC-09 have been remediated on the same branch, with regression tests. The browser layer now implements the SEC-13 controls. The deployment document records a public synthetic demo; live-domain access and real-inbox access have not been independently verified in this cloud session. The original audit below is retained as the baseline; its historical “Open” labels are superseded by the remediation record.
 **Gate:** a synthetic browser preview can be deployed after database and hosting configuration. Before real inbox use, verify the live Google configuration and the remaining runtime, key-management, retention, and production-isolation limitations.
+
+## PR #1 follow-up remediation
+
+The follow-up review of `dba4ed8` identified seven remaining application defects
+and two deployment recovery defects. All nine are addressed on the same branch:
+
+- Both decoded MIME alternatives and raw HTML undergo transient secret screening;
+  contradictory outcomes or identifiers enter `CONFLICTING_ALTERNATIVES` review.
+  Excessive anchor nesting is rejected instead of silently truncating a body.
+- Reconnect requeues only `FAILED/DISCONNECTED` tasks inside its locked transaction;
+  completed work, unrelated failures, and other owners' tasks are preserved.
+- Dates beyond five minutes of the internal observation clock, before the Unix
+  epoch, or without an explicit timezone cannot become accepted event dates.
+  Owners can correct a previously bad submission instant; migration 0007 stores
+  the old/new dates and affected event IDs, and the UI shows that correction history.
+- Existing-opening review creation works without employer/title placeholders in
+  both the UI and route. Ownership is still checked in the transactional action.
+- Revocation uses a ten-second abort timeout and rejects redirects; local disconnect
+  remains effective if the provider times out or refuses the revoke.
+- The exact pending historical 0002 migration has a runner compatibility adapter:
+  normalized keys are backfilled before enforcing constraints. Colliding legacy
+  companies retain their IDs, metadata and opening links using distinct keys.
+  Applied migration files and stored checksums remain unchanged.
+- Production releases refuse to proceed without a validated rollback target.
+  An EXIT trap handles failures once promotion has been attempted, including a
+  lost provider response and failed domain verification. Recovery verifies the
+  previous deployment and reruns smoke; failed recovery is explicitly reported.
+- Production dotenv is parsed as data rather than sourced as shell code. Node is
+  pinned to 24.x, and the pinned v6 GitHub actions use the matching Node runtime.
+
+Validation: **199 unit tests, 4 native PostgreSQL tests, 6 browser scenarios, and
+7 local HTTP smoke checks pass**, along with type-checking and the production
+build. The unit suite includes 12 deployment/dotenv tests with failure injection.
+Native tests include populated-schema upgrade; browser tests include existing-opening
+creation and persisted submission-date corrections. Updated production deployment,
+live Google OAuth and real-inbox behavior still need external validation. See the
+[end-to-end checklist](end-to-end-checklist.md). This record does not claim an
+exhaustive security guarantee or a separate external security-service rerun.
 
 ## Remediation record
 

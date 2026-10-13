@@ -15,6 +15,10 @@ export interface ParsedMessage {
   /** ISO instant from the original Date header; null when absent or unparsable. */
   date: string | null;
   text: string;
+  /** Other decoded MIME alternatives, transient and never persisted. */
+  alternativeTexts?: readonly string[];
+  /** Raw HTML for conservative secret screening, never extraction or persistence. */
+  inspectionHtml?: string;
 }
 
 export interface ParsedOriginal {
@@ -35,7 +39,10 @@ export type SignalKind = Extract<
   | "OFFER_RECEIVED"
 >;
 
-export const TERMINAL_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>(["REJECTION_RECEIVED", "OFFER_RECEIVED"]);
+export const TERMINAL_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>([
+  "REJECTION_RECEIVED",
+  "OFFER_RECEIVED",
+]);
 
 /** Structured, redacted facts lifted from a message. Safe to persist. */
 export interface ExtractedFields {

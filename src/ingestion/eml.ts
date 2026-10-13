@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import PostalMime from "postal-mime";
 import type { Email } from "postal-mime";
 import type { ParsedMessage, ParsedOriginal } from "./source.ts";
-import { htmlText } from "./html.ts";
+import { htmlText, HtmlInspectionError } from "./html.ts";
 
 export const EML_LIMITS = {
   /** Vercel rejects request bodies above 4.5 MB; stay under it. */
@@ -75,13 +75,20 @@ function toMessage(email: Email): ParsedMessage {
     ),
   ];
   if (to.length > EML_LIMITS.maxRecipients) throw new EmlError("TOO_MANY");
-  const text = email.text?.trim()
-    ? email.text
-    : email.html
-      ? htmlText(email.html)
-      : "";
+  let html = "";
+  try {
+    html = email.html ? htmlText(email.html) : "";
+  } catch (error) {
+    if (error instanceof HtmlInspectionError) throw new EmlError("MALFORMED");
+    throw error;
+  }
+  const text = email.text?.trim() ? email.text : html;
   // Never silently discard the tail: it may contain a secret or contradict an earlier phrase.
-  if (text.length > EML_LIMITS.maxTextChars) throw new EmlError("TOO_LARGE");
+  if (
+    text.length > EML_LIMITS.maxTextChars ||
+    html.length > EML_LIMITS.maxTextChars
+  )
+    throw new EmlError("TOO_LARGE");
   return {
     messageId: email.messageId?.trim() || null,
     fromName: email.from?.name?.trim() ?? "",
@@ -90,6 +97,8 @@ function toMessage(email: Email): ParsedMessage {
     subject: email.subject?.trim() ?? "",
     date: originalDate(email),
     text,
+    alternativeTexts: html && html !== text ? [html] : [],
+    ...(email.html ? { inspectionHtml: email.html } : {}),
   };
 }
 

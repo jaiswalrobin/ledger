@@ -250,3 +250,88 @@ test("a review can be assigned and unsupported mail can be interpreted explicitl
   await page.getByRole("button", { name: "Applications", exact: true }).click();
   await expect(page.getByText("Manual Example", { exact: true })).toBeVisible();
 });
+
+test("review creation uses an existing opening without dummy fields, and submission dates can be corrected", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Explore the demo" }).click();
+  await page
+    .getByRole("button", { name: "Import emails", exact: true })
+    .first()
+    .click();
+  const raw = [
+    "From: Updates <updates@example.com>",
+    "To: test@example.com",
+    "Subject: Application notes",
+    `Date: ${new Date(Date.now() - 86400000).toUTCString()}`,
+    "Message-ID: <existing-opening-browser@example.com>",
+    "Content-Type: text/plain",
+    "",
+    "A selected note without employer or role fields.",
+  ].join("\r\n");
+  await page
+    .getByLabel("Email files")
+    .setInputFiles({
+      name: "existing.eml",
+      mimeType: "message/rfc822",
+      buffer: Buffer.from(raw),
+    });
+  await page.getByRole("button", { name: "Import selected emails" }).click();
+  await expect(
+    page.getByText("Saved for review", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Needs review" })
+    .click();
+  const card = page
+    .locator(".review-card")
+    .filter({
+      has: page.getByRole("heading", {
+        name: "Application notes",
+        exact: true,
+      }),
+    });
+  await card.locator("summary").click();
+  await card
+    .getByLabel("Job opening", { exact: true })
+    .selectOption({ label: "Juniper Studio · Frontend Engineer" });
+  await expect(card.getByLabel("Company", { exact: true })).toHaveValue("");
+  await expect(card.getByLabel("Role", { exact: true })).toHaveValue("");
+  await card
+    .getByLabel("Event type", { exact: true })
+    .selectOption("CONFIRMATION_RECEIVED");
+  await card
+    .getByRole("button", { name: "Create application", exact: true })
+    .click();
+  await expect(card).toHaveCount(0);
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Applications", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "View Juniper Studio application" })
+    .click();
+  await expect(page.getByText("2 independent attempts")).toBeVisible();
+  const attempt = page.locator(".attempt-card").last();
+  await attempt
+    .locator("summary")
+    .filter({ hasText: "Correct submission date" })
+    .click();
+  const fixed = new Date(Date.now() - 2 * 86400000);
+  fixed.setSeconds(0, 0);
+  const local = new Date(fixed.getTime() - fixed.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16);
+  await attempt
+    .getByLabel("Submission date and time", { exact: true })
+    .fill(local);
+  await attempt.getByRole("button", { name: "Save submission date" }).click();
+  await expect(page.getByText(/Submission date corrected from/)).toBeVisible();
+  await page.reload();
+  await page
+    .getByRole("button", { name: "View Juniper Studio application" })
+    .click();
+  await expect(page.getByText(/Submission date corrected from/)).toBeVisible();
+});

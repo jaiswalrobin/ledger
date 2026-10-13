@@ -160,3 +160,59 @@ test("real PostgreSQL: a replaced lease fences a still-running worker", async ()
     0,
   );
 });
+
+test("real PostgreSQL: a populated legacy schema upgrades without losing company/opening identities", async () => {
+  const { mkdtemp, readFile, writeFile, readdir, rm } =
+    await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const { randomUUID } = await import("node:crypto");
+  const schema = "ledger_upgrade_" + randomUUID().replaceAll("-", "");
+  const directory = await mkdtemp(join(tmpdir(), "ledger-native-upgrade-"));
+  const source = new URL("../../migrations", import.meta.url).pathname;
+  await pool.query(`CREATE SCHEMA "${schema}"`);
+  const isolatedPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: 1,
+    options: `-c search_path=${schema}`,
+  });
+  const isolated = fromPool(isolatedPool);
+  try {
+    await writeFile(
+      join(directory, "0001_core.sql"),
+      await readFile(join(source, "0001_core.sql")),
+    );
+    await applyMigrations(isolated, directory);
+    const user = await seedUser(isolated),
+      ids = [randomUUID(), randomUUID()];
+    for (const [index, id] of ids.entries()) {
+      await isolated.query(
+        "INSERT INTO companies(id,user_id,canonical_name)VALUES($1,$2,$3)",
+        [id, user, index ? " ACME  Labs " : "Acme Labs"],
+      );
+      await isolated.query(
+        "INSERT INTO job_openings(id,user_id,company_id,title)VALUES($1,$2,$3,'Engineer')",
+        [randomUUID(), user, id],
+      );
+    }
+    for (const file of await readdir(source))
+      await writeFile(
+        join(directory, file),
+        await readFile(join(source, file)),
+      );
+    assert.equal((await applyMigrations(isolated, directory)).length, 6);
+    assert.equal(
+      (await isolated.query("SELECT id FROM companies")).rows.length,
+      2,
+    );
+    assert.equal(
+      (await isolated.query("SELECT id FROM job_openings")).rows.length,
+      2,
+    );
+    assert.deepEqual(await applyMigrations(isolated, directory), []);
+  } finally {
+    await isolatedPool.end();
+    await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await rm(directory, { recursive: true, force: true });
+  }
+});

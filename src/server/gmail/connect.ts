@@ -73,6 +73,12 @@ export async function connectMailbox(
           found.history_cursor ? "RESYNC_REQUIRED" : "INITIALIZING",
         ],
       );
+      await tx.query(
+        `UPDATE processing_tasks SET state='PENDING', outcome=NULL, safe_error_code=NULL,
+          attempts=0, next_attempt_at=now(), finished_at=NULL
+         WHERE mailbox_id=$1 AND user_id=$2 AND state='FAILED' AND outcome='DISCONNECTED'`,
+        [found.id, userId],
+      );
       return { mailboxId: found.id, reconnected: true };
     }
     const id = randomUUID();

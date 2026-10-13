@@ -10,6 +10,7 @@ import { redactSubject } from "../ingestion/eml.ts";
 import { EXTRACTOR_VERSION, extractSignal } from "../ingestion/extract.ts";
 import { classifyHeaders } from "../ingestion/header-gate.ts";
 import { hasSensitiveContent } from "../ingestion/privacy.ts";
+import { usableEventDate } from "../ingestion/dates.ts";
 import {
   TERMINAL_KINDS,
   type ExtractedSignal,
@@ -47,6 +48,8 @@ export interface IngestInput {
   userId: string;
   source: IngestSource;
   original: ParsedOriginal;
+  /** Internal observation clock; never accepted from an HTTP request. */
+  observedAt?: Date;
 }
 
 export type ReviewReason =
@@ -60,7 +63,8 @@ export type ReviewReason =
   | "UNRECOGNIZED"
   | "AMBIGUOUS_APPLICATION_ID"
   | "EVENT_PRECEDES_SUBMISSION"
-  | "CONFLICTING_EVENTS";
+  | "CONFLICTING_EVENTS"
+  | "CONFLICTING_ALTERNATIVES";
 
 export type IngestOutcome =
   | {
@@ -105,6 +109,7 @@ export function originalKeyOf(original: ParsedOriginal): string | null {
       [...m.to].sort(),
       normalized(m.subject),
       normalized(m.text),
+      [...new Set((m.alternativeTexts ?? []).map(normalized))].sort(),
     ]),
   );
 }
@@ -139,7 +144,7 @@ export async function ingestOriginal(
 
 async function run(
   tx: Db,
-  { userId, source, original }: IngestInput,
+  { userId, source, original, observedAt = new Date() }: IngestInput,
 ): Promise<IngestOutcome> {
   // Serialise ingestion per user so concurrent runs cannot create the same opening twice.
   const owner = await tx.query(
@@ -168,6 +173,7 @@ async function run(
   if (seen.rows.length) return { status: "DUPLICATE" };
 
   const m = original.message;
+  const usableDate = usableEventDate(m.date, observedAt);
   const artifactId = randomUUID();
   const originalKey = originalKeyOf(original);
   const fromDomain = m.fromAddress?.split("@")[1] ?? "";
@@ -196,7 +202,7 @@ async function run(
         source.kind === "GMAIL" ? source.providerMessageId : null,
         null,
         original.fingerprint,
-        m.date,
+        usableDate,
         original.envelopeDate,
         decision,
         extractorVersion,
@@ -214,14 +220,19 @@ async function run(
   });
   if (
     gate.kind === "SKIP_SENSITIVE" ||
-    hasSensitiveContent(m.subject + "\n" + m.text)
+    [
+      m.subject,
+      m.text,
+      ...(m.alternativeTexts ?? []),
+      m.inspectionHtml ?? "",
+    ].some(hasSensitiveContent)
   ) {
     // Nothing derived from a credential-like message is kept, including its subject.
     await insertArtifact("SKIPPED_SENSITIVE", null, null, null);
     return { status: "SKIPPED_SENSITIVE" };
   }
 
-  const signal = extractSignal(m);
+  const signal = extractSignal({ ...m, date: usableDate });
   const subjectRedacted = redactSubject(m.subject);
 
   if (originalKey) {
@@ -265,6 +276,8 @@ async function run(
     trustedSender,
   };
 
+  if (signal.reasons.includes("conflicting-alternatives"))
+    return review(base, "CONFLICTING_ALTERNATIVES", [], []);
   if (!signal.kind) {
     if (source.kind === "GMAIL") {
       await tx.query(
@@ -286,7 +299,7 @@ async function run(
     if (outcome.createdAttempt)
       return {
         ...outcome,
-        reconciled: await reconcileWaitingUpdates(tx, userId),
+        reconciled: await reconcileWaitingUpdates(tx, userId, observedAt),
       };
   }
   return outcome;
@@ -561,6 +574,7 @@ async function apply(
 async function reconcileWaitingUpdates(
   tx: Db,
   userId: string,
+  observedAt: Date,
 ): Promise<number> {
   const { rows } = await tx.query<{
     review_id: string;
@@ -586,11 +600,13 @@ async function reconcileWaitingUpdates(
   let applied = 0;
   for (const row of rows) {
     if (!row.event_kind || !row.original_message_at) continue;
-    const occurredAt = (
+    const originalAt = (
       row.original_message_at instanceof Date
         ? row.original_message_at
         : new Date(String(row.original_message_at))
     ).toISOString();
+    const occurredAt = usableEventDate(originalAt, observedAt);
+    if (!occurredAt) continue;
     const signal: ExtractedSignal = {
       kind: row.event_kind,
       confidence: "HIGH",

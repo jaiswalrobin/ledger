@@ -1,4 +1,9 @@
 /** A bounded, single-pass text scanner. No rendering, DOM execution, or resource loading. */
+export class HtmlInspectionError extends Error {
+  constructor() {
+    super("MALFORMED_HTML");
+  }
+}
 export function htmlText(html: string): string {
   const lower = html.toLowerCase();
   const out: string[] = [];
@@ -48,7 +53,7 @@ export function htmlText(html: string): string {
         const href = links.pop();
         if (href) out.push(` (${href}) `);
       } else {
-        if (links.length >= 20) break;
+        if (links.length >= 20) throw new HtmlInspectionError();
         const match = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(
           tag,
         );

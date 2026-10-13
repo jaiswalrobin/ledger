@@ -176,7 +176,14 @@ export interface EventView {
 }
 
 export interface OpeningDetail extends Omit<OpeningView, "attempts"> {
-  attempts: (AttemptView & { events: EventView[] })[];
+  attempts: (AttemptView & {
+    events: EventView[];
+    submissionDateCorrections: {
+      previousAt: string | null;
+      correctedAt: string;
+      createdAt: string;
+    }[];
+  })[];
 }
 
 export async function getOpening(
@@ -261,9 +268,27 @@ export async function getOpening(
     });
     eventViews.set(e.attempt_id, list);
   }
+  const corrections = await db.query<{
+    attempt_id: string;
+    previous_submitted_at: unknown;
+    corrected_submitted_at: unknown;
+    created_at: unknown;
+  }>(
+    "SELECT attempt_id,previous_submitted_at,corrected_submitted_at,created_at FROM submission_date_corrections WHERE user_id=$1 AND attempt_id=ANY($2::uuid[]) ORDER BY created_at,id",
+    [userId, ids],
+  );
   const withEvents = views.map((v) => ({
     ...v,
     events: eventViews.get(v.id) ?? [],
+    submissionDateCorrections: corrections.rows
+      .filter((c) => c.attempt_id === v.id)
+      .map((c) => ({
+        previousAt: c.previous_submitted_at
+          ? iso(c.previous_submitted_at)
+          : null,
+        correctedAt: iso(c.corrected_submitted_at),
+        createdAt: iso(c.created_at),
+      })),
   }));
   const latest =
     views

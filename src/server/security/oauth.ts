@@ -162,9 +162,7 @@ export interface ExchangeInput {
   redirectUri: string;
 }
 
-export async function exchangeCode(
-  i: ExchangeInput,
-): Promise<{
+export async function exchangeCode(i: ExchangeInput): Promise<{
   accessToken: string;
   refreshToken?: string;
   idToken: string;
@@ -221,6 +219,8 @@ export async function revokeToken(
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ token }),
+      signal: AbortSignal.timeout(10_000),
+      redirect: "error",
     });
     return response.ok;
   } catch {

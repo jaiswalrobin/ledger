@@ -40,6 +40,7 @@ async function ingest(
     userId,
     source: { kind: "FORWARDED_EML", syntheticFixture: true },
     original: original!,
+    observedAt: new Date("2027-02-01T12:00:00Z"),
   });
 }
 
@@ -145,6 +146,7 @@ describe("review resolution", () => {
   async function ambiguousRejection(u: string) {
     const out = await ingest(u, {
       ...rejection(APPLICANT_A, null),
+      date: "Mon, 12 Oct 2026 15:00:00 +0000",
       to: "unknown@example.com",
     });
     assert.equal(out.status, "REVIEW");
@@ -236,6 +238,7 @@ describe("authorization", () => {
     const [a] = await twoAttempts(owner);
     const out = await ingest(owner, {
       ...rejection(APPLICANT_A, null),
+      date: "Mon, 12 Oct 2026 15:00:00 +0000",
       to: "unknown@example.com",
     });
     const reviewId = (out as { reviewId: string }).reviewId;

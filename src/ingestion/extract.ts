@@ -7,7 +7,7 @@ import type {
 } from "./source.ts";
 import { safeField } from "./privacy.ts";
 
-export const EXTRACTOR_VERSION = "rules-2";
+export const EXTRACTOR_VERSION = "rules-3";
 
 /**
  * Deterministic phrase rules. Anything ambiguous yields `kind: null` so the pipeline routes it
@@ -316,7 +316,7 @@ function extractCompanyAndTitle(
 
 // ---- main ---------------------------------------------------------------------------------
 
-export function extractSignal(message: ParsedMessage): ExtractedSignal {
+function extractOne(message: ParsedMessage): ExtractedSignal {
   const body = message.text;
   const { kind, reasons } = detectKind(`${message.subject}\n${body}`);
 
@@ -369,4 +369,37 @@ export function extractSignal(message: ParsedMessage): ExtractedSignal {
     occurredAt: message.date,
     reasons,
   };
+}
+
+export function extractSignal(message: ParsedMessage): ExtractedSignal {
+  const main = extractOne(message);
+  for (const text of message.alternativeTexts ?? []) {
+    const alternative = extractOne({ ...message, text });
+    const conflicting =
+      (main.kind && alternative.kind && main.kind !== alternative.kind) ||
+      alternative.reasons.includes("ambiguous-kind") ||
+      main.reasons.includes("ambiguous-kind") ||
+      Object.keys(main.fields).some((key) => {
+        const field = key as keyof ExtractedFields;
+        const a = main.fields[field],
+          b = alternative.fields[field];
+        return (
+          a != null &&
+          b != null &&
+          (field === "externalApplicationId" ||
+          field === "canonicalUrl" ||
+          field === "atsKey"
+            ? JSON.stringify(a) !== JSON.stringify(b)
+            : JSON.stringify(a).toLowerCase() !==
+              JSON.stringify(b).toLowerCase())
+        );
+      });
+    if (conflicting)
+      return {
+        ...main,
+        confidence: "LOW",
+        reasons: [...main.reasons, "conflicting-alternatives"],
+      };
+  }
+  return main;
 }

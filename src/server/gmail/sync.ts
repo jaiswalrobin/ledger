@@ -528,6 +528,7 @@ export async function syncMailbox(
                 headers.senderAuthenticated === true,
               ),
               original,
+              observedAt: now(),
             }),
           );
           if (result.status === "APPLIED") {

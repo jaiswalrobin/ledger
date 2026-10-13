@@ -90,6 +90,8 @@ const reasonText: Record<string, string> = {
     "This application ID appears on more than one attempt.",
   EVENT_PRECEDES_SUBMISSION: "This event appears to predate the submission.",
   CONFLICTING_EVENTS: "This update conflicts with the accepted timeline.",
+  CONFLICTING_ALTERNATIVES:
+    "The plain-text and HTML versions disagree. Choose how this update should be interpreted.",
 };
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
@@ -483,6 +485,26 @@ export default function Home() {
                   </div>
                 </div>
                 <p className="activity">{attempt.activity}</p>
+                {attempt.submissionDateCorrections.map((correction, i) => (
+                  <p className="small muted" key={i}>
+                    Submission date corrected from {date(correction.previousAt)}{" "}
+                    to {date(correction.correctedAt)} ·{" "}
+                    {date(correction.createdAt)}
+                  </p>
+                ))}
+                <SubmissionDateForm
+                  submittedAt={attempt.submittedAt}
+                  busy={busy}
+                  save={(occurredAt) =>
+                    void work(async () => {
+                      await api("submission-date", {
+                        attemptId: attempt.id,
+                        occurredAt,
+                      });
+                      await refresh();
+                    })
+                  }
+                />
                 <div className="timeline">
                   {attempt.events.map((event) => (
                     <div
@@ -1171,6 +1193,43 @@ function Stat({
     </div>
   );
 }
+function SubmissionDateForm({
+  submittedAt,
+  busy,
+  save,
+}: {
+  submittedAt: string | null;
+  busy: boolean;
+  save: (value: string) => void;
+}) {
+  const [value, setValue] = useState(localInstant(submittedAt));
+  useEffect(() => setValue(localInstant(submittedAt)), [submittedAt]);
+  return (
+    <details className="correction">
+      <summary>Correct submission date</summary>
+      <p>
+        The previous date is retained in the correction history. Linked
+        submission events keep their email evidence.
+      </p>
+      <label>
+        Submission date and time
+        <input
+          aria-label="Submission date and time"
+          type="datetime-local"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        />
+      </label>
+      <button
+        className="secondary"
+        disabled={busy || !value || !Number.isFinite(Date.parse(value))}
+        onClick={() => save(new Date(value).toISOString())}
+      >
+        Save submission date
+      </button>
+    </details>
+  );
+}
 function StatusForm({
   stage,
   outcome,
@@ -1323,6 +1382,7 @@ function ReviewCard({
           <label>
             Job opening
             <select
+              aria-label="Job opening"
               value={openingId}
               onChange={(e) => setOpeningId(e.target.value)}
             >
@@ -1338,6 +1398,7 @@ function ReviewCard({
             Company
             <input
               value={company}
+              disabled={!!openingId}
               onChange={(e) => setCompany(e.target.value)}
               maxLength={80}
             />
@@ -1346,6 +1407,7 @@ function ReviewCard({
             Role
             <input
               value={title}
+              disabled={!!openingId}
               onChange={(e) => setTitle(e.target.value)}
               maxLength={100}
             />
@@ -1392,7 +1454,9 @@ function ReviewCard({
           </label>
           <button
             className="secondary"
-            disabled={busy || !company || !title || !kind || !at}
+            disabled={
+              busy || (!openingId && (!company || !title)) || !kind || !at
+            }
             onClick={() =>
               submit({
                 action: "create",

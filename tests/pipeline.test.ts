@@ -42,7 +42,12 @@ async function ingest(
   source: IngestSource = FORWARD,
 ): Promise<IngestOutcome> {
   const [original] = await parseEml(new TextEncoder().encode(buildEml(spec)));
-  return ingestOriginal(db, { userId, source, original: original! });
+  return ingestOriginal(db, {
+    userId,
+    source,
+    original: original!,
+    observedAt: new Date("2027-02-01T12:00:00Z"),
+  });
 }
 
 const count = async (sql: string, params: unknown[]): Promise<number> =>

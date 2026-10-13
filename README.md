@@ -4,7 +4,7 @@
 
 Ledger is a privacy-conscious application tracker that reconstructs and maintains application histories from dedicated Gmail accounts and selectively forwarded emails. It is designed for people who apply to many roles, sometimes more than once with different contact details, and do not want to maintain a spreadsheet or manually update statuses.
 
-> **Project status:** First browser prototype with a PostgreSQL-backed synthetic demo, application timelines, `.eml` imports, reviews, reversible corrections, Google login, and a dedicated Gmail connector. Live Google access and public deployment are not yet verified.
+> **Project status:** First browser prototype with a PostgreSQL-backed synthetic demo, application timelines, `.eml` imports, reviews, reversible corrections, Google login, and a dedicated Gmail connector. The synthetic demo is deployed at https://ledger.jaiswalrobin.com; Google/Gmail still need configuration and live validation.
 
 ## What Ledger should do
 
@@ -74,7 +74,7 @@ The browser implementation follows the [first-version design](docs/superpowers/s
 
 ## Run the first executable slice
 
-Requires **Node.js >= 22.16**. The domain modules rely only on built-in Node support for TypeScript type stripping; no services or credentials are needed.
+Requires **Node.js 24.x**, matching the Vercel runtime and CI. The domain modules rely only on built-in Node support for TypeScript type stripping; no services or credentials are needed.
 
 ```bash
 npm ci
@@ -87,7 +87,7 @@ The domain-only commands above exercise deterministic **job and application-atte
 
 For the browser version, follow [deployment and development](docs/deployment.md): configure PostgreSQL, run `npm run migrate`, set `APP_URL` and `DEMO_MODE=true`, then build and start the Next.js app. The demo is isolated per visitor and persisted in PostgreSQL. `.eml` uploads feed the actual ingestion pipeline; uncertain or unverified terminal events go to review. Full email bodies are discarded.
 
-**Recommended hosting: Vercel + Neon.** Google login and Gmail require separate secure OAuth configuration. No real mailbox has been accessed or public instance deployed by these development checks; see the [security findings and remediation record](docs/security-findings.md).
+**Recommended hosting: Vercel + Neon.** Google login and Gmail require separate secure OAuth configuration. These development checks use synthetic data; see the [security findings and remediation record](docs/security-findings.md).
 
 ## Next validation milestone
 
@@ -98,3 +98,5 @@ See [roadmap](docs/roadmap.md) for the staged plan.
 ## References
 
 Google Gmail API documentation: [scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [list messages](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list), [get messages](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/get), [sync](https://developers.google.com/workspace/gmail/api/guides/sync), [push notifications](https://developers.google.com/workspace/gmail/api/guides/push). Compliance: [restricted-scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification).
+
+For the remaining hosting, release, OAuth, scheduling, and live validation steps, see the [end-to-end checklist](docs/end-to-end-checklist.md).

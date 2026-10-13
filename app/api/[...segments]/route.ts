@@ -53,6 +53,7 @@ import {
   resolveReviewCreate,
   setAttemptStatus,
   setEventState,
+  correctSubmissionDate,
 } from "../../../src/server/actions.ts";
 import type { CreateInput } from "../../../src/server/actions.ts";
 import type { Outcome, Stage } from "../../../src/domain/types.ts";
@@ -365,10 +366,12 @@ export async function POST(
           overrides,
         );
       } else if (body.action === "create") {
-        const input: CreateInput = {
-          company: safeText(body.company, 80),
-          title: safeText(body.title, 100),
-        };
+        const input: CreateInput = body.openingId
+          ? { openingId: validUuid(body.openingId) }
+          : {
+              company: safeText(body.company, 80),
+              title: safeText(body.title, 100),
+            };
         if (body.applicantEmail) {
           const email = safeText(body.applicantEmail, 254);
           if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
@@ -399,6 +402,15 @@ export async function POST(
         stage: body.stage as Stage,
         outcome: body.outcome as Outcome,
       });
+      return response({ ok: true });
+    }
+    if (path === "submission-date") {
+      await correctSubmissionDate(
+        db,
+        session.userId,
+        validUuid(body.attemptId),
+        safeText(body.occurredAt, 40),
+      );
       return response({ ok: true });
     }
     if (path === "delete-account") {

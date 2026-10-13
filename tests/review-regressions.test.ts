@@ -42,6 +42,7 @@ async function ingest(
     userId,
     source: { kind: "FORWARDED_EML", syntheticFixture: true },
     original: original!,
+    observedAt: new Date("2027-02-01T12:00:00Z"),
   });
 }
 test("SEC-01: hostile unterminated HTML completes within bounds", async () => {
@@ -53,9 +54,13 @@ test("SEC-01: hostile unterminated HTML completes within bounds", async () => {
     "<!--".repeat(50000),
   ]) {
     const started = performance.now();
-    await parseEml(
-      Buffer.from(buildEml({ ...greenhouseConfirmation(), text: "", html })),
-    );
+    try {
+      await parseEml(
+        Buffer.from(buildEml({ ...greenhouseConfirmation(), text: "", html })),
+      );
+    } catch (error) {
+      assert.ok(error instanceof EmlError && error.code === "MALFORMED");
+    }
     assert.ok(
       performance.now() - started < 1500,
       "hostile HTML blocked the event loop",
@@ -360,6 +365,7 @@ test("uploaded headers cannot authorize an automatic terminal change", async () 
     userId: user,
     source: { kind: "FORWARDED_EML" },
     original: original!,
+    observedAt: new Date("2027-02-01T12:00:00Z"),
   });
   assert.equal(result.status, "REVIEW");
   if (result.status === "REVIEW")

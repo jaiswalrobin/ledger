@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AtsKey, Outcome, Stage } from "../domain/types.ts";
 import type { ExtractedFields, SignalKind } from "../ingestion/source.ts";
 import type { Db } from "./db.ts";
+import { usableEventDate } from "../ingestion/dates.ts";
 import {
   insertAttempt,
   insertOpening,
@@ -197,9 +198,57 @@ function resolveKindAndTime(
   if (!kind) throw new ActionError("KIND_REQUIRED");
   if (!SIGNAL_KINDS.includes(kind)) throw new ActionError("INVALID_INPUT");
   const occurredAt = o.occurredAt ?? ctx.occurredAt;
-  if (!occurredAt || !Number.isFinite(Date.parse(occurredAt)))
-    throw new ActionError("INVALID_INPUT");
-  return { kind, occurredAt: new Date(occurredAt).toISOString() };
+  const usable = usableEventDate(occurredAt);
+  if (!usable) throw new ActionError("INVALID_INPUT");
+  return { kind, occurredAt: usable };
+}
+
+/** Corrects a bad submission clock without hiding its original value or evidence. */
+export async function correctSubmissionDate(
+  db: Db,
+  userId: string,
+  attemptId: string,
+  value: string,
+): Promise<void> {
+  const correctedAt = usableEventDate(value);
+  if (!correctedAt) throw new ActionError("INVALID_INPUT");
+  await db.transaction(async (tx) => {
+    await serializeOwner(tx, userId);
+    await ownedAttempt(tx, userId, attemptId);
+    const row = (
+      await tx.query<{ submitted_at: unknown }>(
+        "SELECT submitted_at FROM application_attempts WHERE id=$1 AND user_id=$2 FOR UPDATE",
+        [attemptId, userId],
+      )
+    ).rows[0]!;
+    const old = row.submitted_at
+      ? new Date(row.submitted_at as Date | string).toISOString()
+      : null;
+    if (old === correctedAt) return;
+    const events = await tx.query<{ id: string }>(
+      `UPDATE application_events SET occurred_at=$4, origin='MANUAL'
+       WHERE attempt_id=$1 AND user_id=$2 AND event_kind IN ('SUBMITTED','CONFIRMATION_RECEIVED')
+         AND occurred_at IS NOT DISTINCT FROM $3::timestamptz RETURNING id`,
+      [attemptId, userId, old, correctedAt],
+    );
+    await tx.query(
+      "UPDATE application_attempts SET submitted_at=$3 WHERE id=$1 AND user_id=$2",
+      [attemptId, userId, correctedAt],
+    );
+    await tx.query(
+      `INSERT INTO submission_date_corrections(id,user_id,attempt_id,previous_submitted_at,corrected_submitted_at,event_ids)
+       VALUES($1,$2,$3,$4,$5,$6)`,
+      [
+        randomUUID(),
+        userId,
+        attemptId,
+        old,
+        correctedAt,
+        events.rows.map((e) => e.id),
+      ],
+    );
+    await reproject(tx, userId, attemptId);
+  });
 }
 
 export async function resolveReviewAssign(

@@ -94,6 +94,7 @@ describe("schema", () => {
         "0004_browser_sessions.sql",
         "0005_sender_trust.sql",
         "0006_demo_retention.sql",
+        "0007_submission_date_corrections.sql",
       ],
     );
   });
