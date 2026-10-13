@@ -5,12 +5,14 @@
 ## Phase 0 — Contract and fixtures
 
 - [ ] Confirm product/domain invariants and decisions.
-- [ ] Define shared **SourceArtifact**, **ExtractedSignal**, **ApplicationEvent** and **ResolutionResult** contracts.
-- [ ] Create anonymized synthetic .eml fixtures: confirmations, OTP, interviews, offers, rejections, forwards, duplicates, ambiguous sender/recipient, multiple roles.
+- [ ] Define shared **SourceArtifact**, **ExtractedSignal**, **ApplicationEvent** and **ResolutionResult** contracts (domain ID, resolution and event contracts implemented; source artifact/extraction contracts pending).
+- [ ] Create anonymized synthetic .eml fixtures: confirmations, OTP, interviews, offers, rejections, forwards, duplicates, ambiguous sender/recipient, multiple roles. (Synthetic in-code examples and domain tests started; real .eml fixture corpus pending.)
 - [ ] Write golden tests for attempts and event status projections before Gmail API work.
 - [ ] Choose NestJS vs Fastify, schema tooling and key management.
 
 **Exit:** domain tests pass offline; no real mailbox access.
+
+**Current checkpoint (2026-10-13):** Committed executable TS domain resolution, status projection, header privacy gate, and 26 test cases. Added initial SQL migration and CI workflow; actual PostgreSQL integration and Gmail are pending.
 
 ## Phase 1 — Domain persistence + headless parsing
 
