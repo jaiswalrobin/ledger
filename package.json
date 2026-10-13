@@ -14,10 +14,14 @@
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "demo": "node --experimental-strip-types scripts/demo.ts",
-    "migrate": "node --experimental-strip-types scripts/migrate.ts"
+    "migrate": "node --experimental-strip-types scripts/migrate.ts",
+    "test:browser": "playwright test",
+    "test:postgres": "node --experimental-strip-types --test tests/postgres/*.test.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.9",
+    "@playwright/test": "^1.64.0",
+    "@sparticuz/chromium": "^153.0.0",
     "@types/node": "^22.16.0",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
@@ -25,6 +29,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "lucide-react": "^1.56.0",
     "next": "^16.4.0",
     "pg": "^8.23.1",
     "postal-mime": "^4.0.5",

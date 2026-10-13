@@ -20,12 +20,14 @@ export interface AppConfig {
 }
 
 function decodeKey(value: string | undefined): Buffer | null {
-  if (!value) return null;
+  if (!value || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null;
   const key = Buffer.from(value, "base64");
-  return key.length === 32 ? key : null;
+  return key.length === 32 && key.toString("base64") === value ? key : null;
 }
 
-export function parseConfig(env: Record<string, string | undefined>): AppConfig {
+export function parseConfig(
+  env: Record<string, string | undefined>,
+): AppConfig {
   const bad: string[] = [];
   const text = (name: string): string => {
     const value = env[name]?.trim();
@@ -43,20 +45,32 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
   try {
     const url = new URL(appUrlRaw);
     const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-    if (url.protocol === "https:" || (local && url.protocol === "http:")) appUrl = url.origin;
+    if (
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      url.pathname === "/" &&
+      (url.protocol === "https:" || (local && url.protocol === "http:"))
+    )
+      appUrl = url.origin;
   } catch {
     // reported below
   }
   if (!appUrl) bad.push("APP_URL");
 
   const secretBytes = Buffer.from(env["AUTH_SECRET"] ?? "", "base64");
-  if (secretBytes.length < 32) bad.push("AUTH_SECRET");
+  if (
+    secretBytes.length < 32 ||
+    secretBytes.toString("base64") !== env["AUTH_SECRET"]
+  )
+    bad.push("AUTH_SECRET");
   const tokenKey = decodeKey(env["TOKEN_ENCRYPTION_KEY"]);
   if (!tokenKey) bad.push("TOKEN_ENCRYPTION_KEY");
 
   const allowedEmails = (env["ALLOWED_EMAILS"] ?? "")
     .split(",")
-    .map(e => e.trim().toLowerCase())
+    .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
   if (!allowedEmails.length) bad.push("ALLOWED_EMAILS");
 

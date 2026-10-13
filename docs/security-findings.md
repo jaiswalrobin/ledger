@@ -2,8 +2,56 @@
 
 **Date:** 2026-10-13
 **Branch / commits reviewed:** `feat/first-browser-version` — `440987f`, `33fdaaa`, `edb03ca`
-**Status of this document:** findings only. **None of the issues below is fixed yet.** Nothing is deployed and no real mailbox has ever been connected, so there has been no production exposure.
-**Gate:** do not connect a real Gmail account or deploy to Vercel until findings SEC-01 to SEC-06 are closed and verified.
+**Status:** SEC-01 through SEC-09 have been remediated on the same branch, with regression tests. The browser layer now implements the SEC-13 controls. No public deployment or real-inbox access has been verified. The original audit below is retained as the baseline; its historical “Open” labels are superseded by the remediation record.
+**Gate:** a synthetic browser preview can be deployed after database and hosting configuration. Before real inbox use, verify the live Google configuration and the remaining runtime, key-management, retention, and production-isolation limitations.
+
+## Remediation record
+
+- **SEC-01/02:** replaced backtracking HTML regexes with a bounded linear scanner;
+  reject oversized bodies/headers before conversion, and never silently truncate
+  potentially contradictory or sensitive content. Hostile-input tests complete within bounds.
+- **SEC-03:** durable attempts/backoff are recorded before retrieval. Crashed tasks
+  consume an attempt and eventually fail safely rather than blocking later mail.
+- **SEC-04:** explicit `{ userId }` or authenticated internal `{ system: true }` scope;
+  omission and cross-owner IDs fail closed. Routes derive owners from revocable sessions.
+- **SEC-05:** retain completed discovery checkpoints and the original baseline until
+  processing finishes; paginate incremental discovery durably within the budget.
+- **SEC-06:** failed/pending work and stale sync observations prevent healthy coverage;
+  surface failures and support explicit retries. Failed runs are recorded as failed.
+- **SEC-07/08:** typed vault errors, settled worker pools, and ownership/expiry fencing
+  for durable writes. Disconnect stops access locally first. Real PostgreSQL tests
+  confirm that an old worker cannot ingest mail or release a replacement's lease.
+- **SEC-09:** removed unknown-host canonical URLs and restricted known ATS URL shapes.
+  React escapes all rendered content. No untrusted HTML is rendered or fetched.
+- **SEC-13:** origin checks; bounded streamed uploads; opaque hashed sessions with
+  expiry/logout revocation; OAuth state/purpose/user/nonce binding; exact read-only
+  grants; bearer-only cron; CSP nonces and security headers; owner-scoped mutations.
+
+Additional audit fixes: content-aware deduplication, employer/requisition-scoped
+application-ID matching, candidate-ID exclusion, explicit submitted-contact proof,
+secondary body-secret screening, no persisted raw Message-ID, chronology/conflict
+review, serialized manual projection writes, accurate PGlite row counts, canonical
+key validation, verified transport/time bounds, migration checksums/locking, and
+seven-day demo retention. Uploaded sender headers cannot authorize terminal updates;
+Gmail's server-supplied aligned authentication metadata plus a known ATS sender is
+required for automatic terminal acceptance. Unknown recruiters and uploaded terminal
+messages remain reviewable, and sender authentication is not a guarantee of extraction
+correctness.
+
+Evidence: `tests/review-regressions.test.ts`, `tests/web-security.test.ts`,
+`tests/postgres/locking.test.ts`, `tests/browser/mvp.spec.ts`, plus the existing suite.
+Local verification: **178 unit tests, 3 native PostgreSQL concurrency tests, and 5
+production-browser scenarios passed**, along with type-checking, the production
+build, migration/replay checks, and the synthetic domain demo. Browser checks ran
+against a freshly migrated isolated database with browser security enabled;
+repeated earlier runs exercised the demo rate limit. Remote CI is not yet confirmed.
+A full dependency audit (including development dependencies) reports zero known
+package vulnerabilities at the time of this review; this is not a claim of an exhaustive vulnerability guarantee. The
+original external review reports have not been rerun by a separate security service.
+
+Remaining launch work: actual Google/Vercel validation, runtime credential isolation,
+production RLS, key rotation and backup expiry, broader extraction evaluation, and
+any applicable Google restricted-scope verification. See `deployment.md`.
 
 ## 1. Where these findings came from
 
@@ -11,10 +59,10 @@ Two sources, kept separate on purpose.
 
 1. **Automated background security reviews.** Two reviews ran after the commit and after the push. They reported **headlines only** — no file, line, reproduction or severity:
 
-   | Review | Headline as reported |
-   | --- | --- |
+   | Review       | Headline as reported                                                                                                                                                  |
+   | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
    | After commit | `authentication-bypass` in `src/server/gmail/sync.ts` · `fail-open-state-drift` in `src/server/gmail/sync.ts` · `redos-resource-cap-bypass` in `src/ingestion/eml.ts` |
-   | After push | `authentication-bypass / data-integrity` in `src/server/gmail/sync.ts` · `resource-bound-placement / ReDoS` in `src/ingestion/eml.ts` |
+   | After push   | `authentication-bypass / data-integrity` in `src/server/gmail/sync.ts` · `resource-bound-placement / ReDoS` in `src/ingestion/eml.ts`                                 |
 
 2. **My own audit of those files**, done to find out what the headlines most plausibly refer to. Everything under "Evidence" below was read from the code or measured; nothing is copied from the reviews because the reviews gave no detail.
 
@@ -24,21 +72,21 @@ Severity is **my assessment**, not the reviewer's, and is stated for the system 
 
 ## 2. Summary
 
-| ID | Title | Component | Severity | Source | Status |
-| --- | --- | --- | --- | --- | --- |
-| SEC-01 | Quadratic regexes in HTML→text conversion (ReDoS) | `src/ingestion/eml.ts` | **High** | Review (ReDoS) + measured | Open |
-| SEC-02 | Resource caps applied after the expensive work | `src/ingestion/eml.ts` | **Medium** | Review (resource-bound-placement) | Open |
-| SEC-03 | A hanging message is never counted, so it blocks a mailbox forever | `src/server/gmail/sync.ts` | **High** (availability) | Own audit, follows from SEC-01 | Open |
-| SEC-04 | Sync entry points have no caller-ownership scope; omission means "all users" | `src/server/gmail/sync.ts` | **High** if wired to a route (latent today) | Review (authentication-bypass) | Open |
-| SEC-05 | Interrupted discovery restarts and moves the baseline cursor forward (silent gap) | `src/server/gmail/sync.ts` | **Medium** | Review (state drift / data-integrity) | Open |
-| SEC-06 | A mailbox is reported `HEALTHY` and backfill `complete` despite permanently failed messages | `src/server/gmail/sync.ts` | **Medium** | Review (fail-open) | Open |
-| SEC-07 | Token errors are classified by matching message text | `src/server/gmail/sync.ts` | Low | Own audit | Open |
-| SEC-08 | Lease can be released while workers are still running after an abort | `src/server/gmail/sync.ts` | Low | Own audit (reasoned, not reproduced) | Open |
-| SEC-09 | Attacker-influenced URL can be stored and later rendered as a link | `src/ingestion/extract.ts` | Low–Medium | Own audit | Open (UI not built yet) |
-| SEC-10 | The header gate is steerable by the sender | `src/ingestion/header-gate.ts` | Low (amplifies SEC-01) | Own audit / already documented | Accepted, mitigate via SEC-01 |
-| SEC-11 | Applicant email and redacted subject are stored unencrypted | schema / `pipeline.ts` | Info | Own audit | Accepted for first test |
-| SEC-12 | The Gmail-credential boundary is a code boundary, not a runtime one | architecture | Info | Design decision D7 | Accepted, documented |
-| SEC-13 | Controls the web layer must satisfy before first deployment | `app/` (not yet built) | Gate | Own audit | Checklist |
+| ID     | Title                                                                                       | Component                      | Severity                                    | Source                                | Status                        |
+| ------ | ------------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------- | ------------------------------------- | ----------------------------- |
+| SEC-01 | Quadratic regexes in HTML→text conversion (ReDoS)                                           | `src/ingestion/eml.ts`         | **High**                                    | Review (ReDoS) + measured             | Open                          |
+| SEC-02 | Resource caps applied after the expensive work                                              | `src/ingestion/eml.ts`         | **Medium**                                  | Review (resource-bound-placement)     | Open                          |
+| SEC-03 | A hanging message is never counted, so it blocks a mailbox forever                          | `src/server/gmail/sync.ts`     | **High** (availability)                     | Own audit, follows from SEC-01        | Open                          |
+| SEC-04 | Sync entry points have no caller-ownership scope; omission means "all users"                | `src/server/gmail/sync.ts`     | **High** if wired to a route (latent today) | Review (authentication-bypass)        | Open                          |
+| SEC-05 | Interrupted discovery restarts and moves the baseline cursor forward (silent gap)           | `src/server/gmail/sync.ts`     | **Medium**                                  | Review (state drift / data-integrity) | Open                          |
+| SEC-06 | A mailbox is reported `HEALTHY` and backfill `complete` despite permanently failed messages | `src/server/gmail/sync.ts`     | **Medium**                                  | Review (fail-open)                    | Open                          |
+| SEC-07 | Token errors are classified by matching message text                                        | `src/server/gmail/sync.ts`     | Low                                         | Own audit                             | Open                          |
+| SEC-08 | Lease can be released while workers are still running after an abort                        | `src/server/gmail/sync.ts`     | Low                                         | Own audit (reasoned, not reproduced)  | Open                          |
+| SEC-09 | Attacker-influenced URL can be stored and later rendered as a link                          | `src/ingestion/extract.ts`     | Low–Medium                                  | Own audit                             | Open (UI not built yet)       |
+| SEC-10 | The header gate is steerable by the sender                                                  | `src/ingestion/header-gate.ts` | Low (amplifies SEC-01)                      | Own audit / already documented        | Accepted, mitigate via SEC-01 |
+| SEC-11 | Applicant email and redacted subject are stored unencrypted                                 | schema / `pipeline.ts`         | Info                                        | Own audit                             | Accepted for first test       |
+| SEC-12 | The Gmail-credential boundary is a code boundary, not a runtime one                         | architecture                   | Info                                        | Design decision D7                    | Accepted, documented          |
+| SEC-13 | Controls the web layer must satisfy before first deployment                                 | `app/` (not yet built)         | Gate                                        | Own audit                             | Checklist                     |
 
 ---
 
@@ -48,26 +96,26 @@ Severity is **my assessment**, not the reviewer's, and is stated for the system 
 
 **Location:** `src/ingestion/eml.ts`, `htmlToText`, lines 35–52. Four of its regexes backtrack quadratically on unterminated tags:
 
-| Line | Pattern | Trigger |
-| --- | --- | --- |
-| 38 | `/<(script\|style\|head)\b[\s\S]*?<\/\1>/gi` | many `<script ` with no `</script>` |
-| 39 | `/<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi` | many `<a href="x">` with no `</a>` |
-| 40 | `/<(?:br\|\/p\|\/div\|\/tr\|\/li\|\/h[1-6])\b[^>]*>/gi` | many `<br ` with no `>` |
-| 41 | `/<[^>]+>/g` | many `<` with no `>` (**worst**) |
+| Line | Pattern                                                          | Trigger                             |
+| ---- | ---------------------------------------------------------------- | ----------------------------------- |
+| 38   | `/<(script\|style\|head)\b[\s\S]*?<\/\1>/gi`                     | many `<script ` with no `</script>` |
+| 39   | `/<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi` | many `<a href="x">` with no `</a>`  |
+| 40   | `/<(?:br\|\/p\|\/div\|\/tr\|\/li\|\/h[1-6])\b[^>]*>/gi`          | many `<br ` with no `>`             |
+| 41   | `/<[^>]+>/g`                                                     | many `<` with no `>` (**worst**)    |
 
 Each time the engine meets an opener it scans to the end of the string looking for a closer that does not exist, then moves on one character and repeats. Work grows with the square of the input.
 
 **Evidence (measured on Node 26, this repository's code paths; throwaway scripts in the appendix):**
 
-| Input | Size | Time |
-| --- | --- | --- |
-| `<` × 50 000 → line 41 | 50 KB | 1.5 s |
-| `<` × 100 000 | 100 KB | 5.8 s |
-| `<` × 200 000 | 200 KB | 24.2 s |
-| `<` × 400 000 | 400 KB | **97.3 s** |
-| `<br ` × 80 000 → line 40 | 320 KB | 15.3 s |
-| `<script ` × 40 000 → line 38 | 320 KB | 1.7 s |
-| `<a href="x">` × 16 000 → line 39 | 192 KB | 0.2 s |
+| Input                             | Size   | Time       |
+| --------------------------------- | ------ | ---------- |
+| `<` × 50 000 → line 41            | 50 KB  | 1.5 s      |
+| `<` × 100 000                     | 100 KB | 5.8 s      |
+| `<` × 200 000                     | 200 KB | 24.2 s     |
+| `<` × 400 000                     | 400 KB | **97.3 s** |
+| `<br ` × 80 000 → line 40         | 320 KB | 15.3 s     |
+| `<script ` × 40 000 → line 38     | 320 KB | 1.7 s      |
+| `<a href="x">` × 16 000 → line 39 | 192 KB | 0.2 s      |
 
 Every doubling of input multiplies the time by about four, which is the signature of quadratic growth. Extrapolating line 41 to the 4 MB limit that `parseEml` allows gives on the order of **hours** of blocked CPU from one message. (The extrapolation is arithmetic, not a measurement.)
 
@@ -85,7 +133,7 @@ Every doubling of input multiplies the time by about four, which is the signatur
 3. Keep the existing entity decoder (line 42) — it is linear.
 4. Optional defence in depth: parse Gmail-sourced messages in a `worker_threads` worker with a hard timeout so that any future parser slowdown cannot stall the main loop.
 
-**Verification:** regression tests that feed 300 000-repetition floods of `<script `, `<style>`, `<a href="…">`, bare `<` (2 000 000×) and `<!--` through `parseEml` and assert completion in under 1.5 s; plus a test that link targets are still kept and `script`/`style` content is still dropped. *(Drafted in the working tree, uncommitted, currently failing as intended.)*
+**Verification:** regression tests that feed 300 000-repetition floods of `<script `, `<style>`, `<a href="…">`, bare `<` (2 000 000×) and `<!--` through `parseEml` and assert completion in under 1.5 s; plus a test that link targets are still kept and `script`/`style` content is still dropped. _(Drafted in the working tree, uncommitted, currently failing as intended.)_
 
 **Status:** Open.
 
@@ -105,7 +153,7 @@ The only cap on body text, `maxTextChars` (100 000), is applied at line 71 — *
 - Cap `subject` at 1 000 characters, `fromName` at 200, and the number of `To` recipients at 50, at the point they are read from the parser.
 - Keep `maxBytes`, but treat it as a ceiling, not the working bound.
 
-**Verification:** tests that a 100 000-character subject is truncated to ≤ 1 000, that a multi-megabyte `<p>` body returns ≤ `maxTextChars` quickly, and that cap values are enforced at the boundary function. *(Drafted, uncommitted.)*
+**Verification:** tests that a 100 000-character subject is truncated to ≤ 1 000, that a multi-megabyte `<p>` body returns ≤ `maxTextChars` quickly, and that cap values are enforced at the boundary function. _(Drafted, uncommitted.)_
 
 **Status:** Open.
 
@@ -123,7 +171,7 @@ This is a general poison-pill weakness, not specific to HTML: any input that cra
 
 **Recommended fix:** count the attempt **when claiming** the task, before doing any work — `UPDATE processing_tasks SET attempts = attempts + 1, next_attempt_at = now() + backoff(attempts + 1) WHERE id = …` — and mark `DONE`/`FAILED` on completion. A crash then still consumes an attempt, and after `MAX_TASK_ATTEMPTS` the task becomes `FAILED` with a safe code (`CRASHED_OR_TIMED_OUT`) instead of blocking the queue. Process due tasks oldest-first but never let one task monopolise a run.
 
-**Verification:** a test where `getRaw`/`parseEml` is made to hang or throw non-Error values and the fake clock advances between runs; assert the task reaches `FAILED` within the attempt bound and other messages still process. *(Not yet drafted.)*
+**Verification:** a test where `getRaw`/`parseEml` is made to hang or throw non-Error values and the fake clock advances between runs; assert the task reaches `FAILED` within the attempt bound and other messages still process. _(Not yet drafted.)_
 
 **Status:** Open.
 
@@ -141,14 +189,14 @@ No route calls these functions yet, which is why this is rated latent. It become
 **Recommended fix:** make the scope explicit and non-optional:
 
 ```ts
-type SyncScope = { userId: string } | { system: true };   // no default
-syncMailbox(deps, mailboxId, scope)       // lease UPDATE adds AND ($user IS NULL OR user_id = $user)
-syncAllMailboxes(deps, scope)
+type SyncScope = { userId: string } | { system: true }; // no default
+syncMailbox(deps, mailboxId, scope); // lease UPDATE adds AND ($user IS NULL OR user_id = $user)
+syncAllMailboxes(deps, scope);
 ```
 
 User-initiated paths pass `{ userId: session.userId }`; only the bearer-authenticated cron route passes `{ system: true }`. A mismatch returns `SKIPPED` without touching Gmail.
 
-**Verification:** a user-scoped sync of another user's mailbox returns `SKIPPED` with zero Gmail calls and leaves state unchanged; a user-scoped sweep touches only that user's mailboxes while the system scope touches all. *(Drafted, uncommitted.)*
+**Verification:** a user-scoped sync of another user's mailbox returns `SKIPPED` with zero Gmail calls and leaves state unchanged; a user-scoped sweep touches only that user's mailboxes while the system scope touches all. _(Drafted, uncommitted.)_
 
 **Status:** Open.
 
@@ -171,7 +219,7 @@ The same restart happens for `RESYNC_REQUIRED`.
 
 **Recommended fix:** persist that discovery **finished** (for example `scan_state = {mode, done: true}`), and on later runs skip `discover` when it is present and go straight to `catchUp()` from the stored cursor. Only the very first call may set the baseline, and it must never be overwritten while the mailbox is mid-initialisation. Clear `scan_state` only when the mailbox becomes `HEALTHY`.
 
-**Verification:** run once with a zero time budget (discovery completes, processing does not), then add a new message and run again; assert `listMessageIds` and `getProfile` are not called again, the baseline is unchanged, and the new message is found through history. *(Drafted, uncommitted.)*
+**Verification:** run once with a zero time budget (discovery completes, processing does not), then add a new message and run again; assert `listMessageIds` and `getProfile` are not called again, the baseline is unchanged, and the new message is found through history. _(Drafted, uncommitted.)_
 
 **Status:** Open.
 
@@ -187,7 +235,7 @@ The transition to `HEALTHY` (and `backfill_complete = true`) checks only that no
 
 **Recommended fix:** count `FAILED` tasks (excluding the deliberate `DISCONNECTED` ones). If any exist, keep `backfill_complete = false`, set `last_error_code = 'TASKS_FAILED'` and do **not** clear it on healthy runs; show the count on the Connections page and offer a manual "retry failed" action.
 
-**Verification:** a mailbox with one message that can never be fetched reaches `HEALTHY` but with `backfill_complete = false` and `last_error_code = 'TASKS_FAILED'`. *(Drafted, uncommitted.)*
+**Verification:** a mailbox with one message that can never be fetched reaches `HEALTHY` but with `backfill_complete = false` and `last_error_code = 'TASKS_FAILED'`. _(Drafted, uncommitted.)_
 
 **Status:** Open.
 
@@ -233,7 +281,7 @@ Known ATS hosts are matched by exact host and path shape, which is safe. The gen
 
 **Location:** `src/ingestion/header-gate.ts`.
 
-Whether a body is fetched depends on keywords in headers that the sender controls, so an attacker can *cause* a body fetch (this is what makes SEC-01 reachable) and can also craft a subject to look like a verification mail. The docs already state the gate is "not a security guarantee". This is accepted by design; the mitigation is that everything after the gate must be safe on hostile input (SEC-01, SEC-02, SEC-03).
+Whether a body is fetched depends on keywords in headers that the sender controls, so an attacker can _cause_ a body fetch (this is what makes SEC-01 reachable) and can also craft a subject to look like a verification mail. The docs already state the gate is "not a security guarantee". This is accepted by design; the mitigation is that everything after the gate must be safe on hostile input (SEC-01, SEC-02, SEC-03).
 
 **Status:** Accepted; mitigated by closing SEC-01 to SEC-03.
 
@@ -258,50 +306,60 @@ The architecture asks that only the Gmail connector can use Gmail credentials, e
 The `app/` layer is not built yet, so these are requirements rather than findings. They come from the project docs and the Next.js 16 security guidance in `node_modules/next/dist/docs`.
 
 - [ ] **Cron endpoint fails closed.** `/api/cron/sync` accepts only `Authorization: Bearer <CRON_SECRET>`, compared in constant time; the route refuses to run if the secret is unset or shorter than 24 characters (the config parser already enforces the length). Uses the explicit `{ system: true }` sync scope (SEC-04).
-- [ ] **Every Server Action re-verifies the session** and re-checks resource ownership in SQL. A page-level check does not protect an action (Next.js data-security guide). All mutations already take `userId` in their `WHERE` clauses; the actions must pass the *session* user, never a form value.
+- [ ] **Every Server Action re-verifies the session** and re-checks resource ownership in SQL. A page-level check does not protect an action (Next.js data-security guide). All mutations already take `userId` in their `WHERE` clauses; the actions must pass the _session_ user, never a form value.
 - [ ] **CSRF.** Server Actions compare `Origin` to `Host` by default; do not add `allowedOrigins`. OAuth callbacks verify `state` in constant time and bind a Gmail connection to the session user (implemented and tested in `src/server/security/flow.ts`).
 - [ ] **Cookies:** `HttpOnly`, `Secure` (HTTPS), `SameSite=Lax`, short TTL; the OAuth state cookie scoped to `/api` and 10 minutes.
 - [ ] **No secrets in logs or responses.** Error paths return codes only; no `console.*` in `src/server` (enforced by a test). Verify the same for `app/`.
 - [ ] **Upload limits** enforced in the action (4 MB) before reading the body, with an explicit error, because Vercel rejects larger bodies with a generic 413.
 - [ ] **Rendering:** React escaping only, no `dangerouslySetInnerHTML`; links per SEC-09.
 - [ ] **Security headers** (`frame-ancestors 'none'`, `X-Content-Type-Options`, `Referrer-Policy`).
-- [ ] **Google OAuth app** in *Testing* mode with only the owner's accounts as test users; scope exactly `gmail.readonly` (validated server-side by `grantedScopesAreReadOnly`).
+- [ ] **Google OAuth app** in _Testing_ mode with only the owner's accounts as test users; scope exactly `gmail.readonly` (validated server-side by `grantedScopesAreReadOnly`).
 
 ## 5. Remediation plan
 
-| Step | Closes | Notes |
-| --- | --- | --- |
-| 1. Linear HTML scanner + input caps at the parse boundary | SEC-01, SEC-02 | Highest value; makes SEC-10 harmless. |
-| 2. Claim-time attempt accounting | SEC-03 | Removes the poison-pill class of failure. |
-| 3. Explicit `SyncScope` | SEC-04 | Small change, do it before any route calls sync. |
-| 4. Persist discovery completion; never rewrite the baseline | SEC-05 | |
-| 5. Count failed tasks in health and coverage | SEC-06 | Surface on the Connections page. |
-| 6. Typed token errors; `allSettled` worker pool | SEC-07, SEC-08 | |
-| 7. Link allowlist in the UI | SEC-09 | When the Opening page is built. |
-| 8. Re-run the full suite, then re-request the automated security review | all | The reviewer's full output should be compared with this document. |
+| Step                                                                    | Closes         | Notes                                                             |
+| ----------------------------------------------------------------------- | -------------- | ----------------------------------------------------------------- |
+| 1. Linear HTML scanner + input caps at the parse boundary               | SEC-01, SEC-02 | Highest value; makes SEC-10 harmless.                             |
+| 2. Claim-time attempt accounting                                        | SEC-03         | Removes the poison-pill class of failure.                         |
+| 3. Explicit `SyncScope`                                                 | SEC-04         | Small change, do it before any route calls sync.                  |
+| 4. Persist discovery completion; never rewrite the baseline             | SEC-05         |                                                                   |
+| 5. Count failed tasks in health and coverage                            | SEC-06         | Surface on the Connections page.                                  |
+| 6. Typed token errors; `allSettled` worker pool                         | SEC-07, SEC-08 |                                                                   |
+| 7. Link allowlist in the UI                                             | SEC-09         | When the Opening page is built.                                   |
+| 8. Re-run the full suite, then re-request the automated security review | all            | The reviewer's full output should be compared with this document. |
 
-**Current state of the fixes:** regression tests for SEC-01, 02, 04, 05 and 06 were drafted in the working tree (`tests/eml.test.ts`, `tests/sync.test.ts`) but are **uncommitted and failing by design** because the fixes are not written. They are intentionally not in the pushed commits, so the branch's test suite stays green.
+**Historical note:** this paragraph previously described uncommitted failing drafts. The implemented regression tests and remediations are now part of this branch; use the remediation record above for current status.
 
 ## Appendix — reproducing the ReDoS measurements
 
 Throwaway scripts, not part of the repository. They copy the regexes from `src/ingestion/eml.ts` lines 38–41 and time `String.prototype.replace` on synthetic input. Run with `node --experimental-strip-types`.
 
 ```ts
-const script = /<(script|style|head)\b[\s\S]*?<\/\1>/gi;      // eml.ts:38
+const script = /<(script|style|head)\b[\s\S]*?<\/\1>/gi; // eml.ts:38
 const anchor = /<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi; // :39
 const breaks = /<(?:br|\/p|\/div|\/tr|\/li|\/h[1-6])\b[^>]*>/gi; // :40
-const strip  = /<[^>]+>/g;                                       // :41
+const strip = /<[^>]+>/g; // :41
 
 const time = (label: string, input: string, re: RegExp) => {
   const t = process.hrtime.bigint();
   input.replace(re, " ");
-  console.log(label, input.length, "chars", Number(process.hrtime.bigint() - t) / 1e6, "ms");
+  console.log(
+    label,
+    input.length,
+    "chars",
+    Number(process.hrtime.bigint() - t) / 1e6,
+    "ms",
+  );
 };
 
-for (const n of [50_000, 100_000, 200_000, 400_000]) time(`'<' x ${n}`, "<".repeat(n), strip);
-for (const n of [20_000, 40_000, 80_000])            time(`'<br ' x ${n}`, "<br ".repeat(n), breaks);
-for (const n of [10_000, 20_000, 40_000])            time(`'<script ' x ${n}`, "<script ".repeat(n), script);
-for (const n of [4_000, 8_000, 16_000])              time(`'<a href="x">' x ${n}`, '<a href="x">'.repeat(n), anchor);
+for (const n of [50_000, 100_000, 200_000, 400_000])
+  time(`'<' x ${n}`, "<".repeat(n), strip);
+for (const n of [20_000, 40_000, 80_000])
+  time(`'<br ' x ${n}`, "<br ".repeat(n), breaks);
+for (const n of [10_000, 20_000, 40_000])
+  time(`'<script ' x ${n}`, "<script ".repeat(n), script);
+for (const n of [4_000, 8_000, 16_000])
+  time(`'<a href="x">' x ${n}`, '<a href="x">'.repeat(n), anchor);
 ```
 
 Expect each row to take about four times as long as the row before it. After the fix, the same inputs must complete in well under a second.

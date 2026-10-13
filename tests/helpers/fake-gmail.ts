@@ -1,4 +1,8 @@
-import { GmailError, type GmailClient, type MessageHeadersView } from "../../src/server/gmail/client.ts";
+import {
+  GmailError,
+  type GmailClient,
+  type MessageHeadersView,
+} from "../../src/server/gmail/client.ts";
 import { buildEml, type EmlSpec } from "./eml.ts";
 
 interface Stored {
@@ -16,16 +20,32 @@ export class FakeGmail implements GmailClient {
   pageSize = 2;
   readonly messages = new Map<string, Stored>();
   private readonly log: { historyId: number; id: string }[] = [];
-  readonly calls = { profile: 0, list: 0, history: 0, headers: [] as string[], raw: [] as string[] };
+  readonly calls = {
+    profile: 0,
+    list: 0,
+    history: 0,
+    headers: [] as string[],
+    raw: [] as string[],
+  };
   /** message id -> number of times getRaw should throw rate_limited before succeeding */
   rateLimitRaw = new Map<string, number>();
   /** ids whose listing should be omitted from queries (used to model messages missed by a window) */
   hiddenFromQueries = new Set<string>();
 
-  add(id: string, spec: EmlSpec | string, labels: string[] = ["INBOX"], internalDate?: number): this {
+  add(
+    id: string,
+    spec: EmlSpec | string,
+    labels: string[] = ["INBOX"],
+    internalDate?: number,
+  ): this {
     const raw = typeof spec === "string" ? spec : buildEml(spec);
     const dateHeader = /^Date: (.+)$/m.exec(raw)?.[1];
-    this.messages.set(id, { raw, labels, internalDate: internalDate ?? (dateHeader ? Date.parse(dateHeader) : Date.now()) });
+    this.messages.set(id, {
+      raw,
+      labels,
+      internalDate:
+        internalDate ?? (dateHeader ? Date.parse(dateHeader) : Date.now()),
+    });
     this.historyId += 1;
     this.log.push({ historyId: this.historyId, id });
     return this;
@@ -40,12 +60,17 @@ export class FakeGmail implements GmailClient {
     this.calls.list += 1;
     const after = Number(/after:(\d+)/.exec(q)?.[1] ?? 0) * 1000;
     const all = [...this.messages.entries()]
-      .filter(([id, m]) => m.internalDate >= after && !this.hiddenFromQueries.has(id))
+      .filter(
+        ([id, m]) => m.internalDate >= after && !this.hiddenFromQueries.has(id),
+      )
       .map(([id]) => id);
     const start = pageToken ? Number(pageToken) : 0;
     const ids = all.slice(start, start + this.pageSize);
     const next = start + this.pageSize;
-    return { ids, ...(next < all.length ? { nextPageToken: String(next) } : {}) };
+    return {
+      ids,
+      ...(next < all.length ? { nextPageToken: String(next) } : {}),
+    };
   }
 
   async getHeaders(id: string): Promise<MessageHeadersView | null> {
@@ -57,6 +82,7 @@ export class FakeGmail implements GmailClient {
       from: /^From: (.+)$/m.exec(m.raw)?.[1] ?? "",
       subject: /^Subject: (.+)$/m.exec(m.raw)?.[1] ?? "",
       labelIds: m.labels,
+      senderAuthenticated: true,
     };
   }
 
@@ -73,11 +99,18 @@ export class FakeGmail implements GmailClient {
 
   async listHistory(startHistoryId: string, pageToken?: string) {
     this.calls.history += 1;
-    if (Number(startHistoryId) < this.minValidHistoryId) throw new GmailError("history_expired");
-    const after = this.log.filter(e => e.historyId > Number(startHistoryId)).map(e => e.id);
+    if (Number(startHistoryId) < this.minValidHistoryId)
+      throw new GmailError("history_expired");
+    const after = this.log
+      .filter((e) => e.historyId > Number(startHistoryId))
+      .map((e) => e.id);
     const start = pageToken ? Number(pageToken) : 0;
     const ids = after.slice(start, start + this.pageSize);
     const next = start + this.pageSize;
-    return { ids, historyId: String(this.historyId), ...(next < after.length ? { nextPageToken: String(next) } : {}) };
+    return {
+      ids,
+      historyId: String(this.historyId),
+      ...(next < after.length ? { nextPageToken: String(next) } : {}),
+    };
   }
 }

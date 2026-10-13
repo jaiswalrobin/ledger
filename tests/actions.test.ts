@@ -2,42 +2,93 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { parseEml } from "../src/ingestion/eml.ts";
 import {
-  ActionError, dismissReview, resolveReviewAssign, resolveReviewCreate, setAttemptStatus, setEventState,
+  ActionError,
+  dismissReview,
+  resolveReviewAssign,
+  resolveReviewCreate,
+  setAttemptStatus,
+  setEventState,
 } from "../src/server/actions.ts";
 import type { Db } from "../src/server/db.ts";
 import { ingestOriginal, type IngestOutcome } from "../src/server/pipeline.ts";
 import { buildEml, forwardAsAttachment, type EmlSpec } from "./helpers/eml.ts";
 import { createTestDb, seedUser, type TestDb } from "./helpers/db.ts";
 import {
-  APPLICANT_A, APPLICANT_B, greenhouseConfirmation, interviewInvite, newsletter, rejection,
+  APPLICANT_A,
+  APPLICANT_B,
+  greenhouseConfirmation,
+  interviewInvite,
+  newsletter,
+  rejection,
 } from "./helpers/fixtures.ts";
 
 let t: TestDb;
 let db: Db;
-before(async () => { t = await createTestDb(); db = t.db; });
+before(async () => {
+  t = await createTestDb();
+  db = t.db;
+});
 after(() => t.close());
 
-async function ingest(userId: string, spec: EmlSpec | string): Promise<IngestOutcome> {
+async function ingest(
+  userId: string,
+  spec: EmlSpec | string,
+): Promise<IngestOutcome> {
   const raw = typeof spec === "string" ? spec : buildEml(spec);
   const [original] = await parseEml(new TextEncoder().encode(raw));
-  return ingestOriginal(db, { userId, source: { kind: "FORWARDED_EML" }, original: original! });
+  return ingestOriginal(db, {
+    userId,
+    source: { kind: "FORWARDED_EML", syntheticFixture: true },
+    original: original!,
+  });
 }
 
 const attempts = async (u: string) =>
-  (await db.query<{ id: string; stage: string; outcome: string; applicant_email_snapshot: string }>(
-    "SELECT id, stage, outcome, applicant_email_snapshot FROM application_attempts WHERE user_id = $1 ORDER BY created_at, id", [u])).rows;
+  (
+    await db.query<{
+      id: string;
+      stage: string;
+      outcome: string;
+      applicant_email_snapshot: string;
+    }>(
+      "SELECT id, stage, outcome, applicant_email_snapshot FROM application_attempts WHERE user_id = $1 ORDER BY created_at, id",
+      [u],
+    )
+  ).rows;
 
-const reviewState = async (id: string) => (await db.query<{ state: string; resolution: string | null }>("SELECT state, resolution FROM review_items WHERE id = $1", [id])).rows[0]!;
+const reviewState = async (id: string) =>
+  (
+    await db.query<{ state: string; resolution: string | null }>(
+      "SELECT state, resolution FROM review_items WHERE id = $1",
+      [id],
+    )
+  ).rows[0]!;
 
 async function twoAttempts(u: string) {
   await ingest(u, greenhouseConfirmation(APPLICANT_A, undefined, "a", "GH-1"));
-  await ingest(u, greenhouseConfirmation(APPLICANT_B, "Wed, 07 Oct 2026 10:00:00 +0000", "b", "GH-2"));
+  await ingest(
+    u,
+    greenhouseConfirmation(
+      APPLICANT_B,
+      "Wed, 07 Oct 2026 10:00:00 +0000",
+      "b",
+      "GH-2",
+    ),
+  );
   return attempts(u);
 }
 
-async function acceptedEventId(u: string, attemptId: string, kind: string): Promise<string> {
-  return (await db.query<{ id: string }>(
-    "SELECT id FROM application_events WHERE user_id = $1 AND attempt_id = $2 AND event_kind = $3", [u, attemptId, kind])).rows[0]!.id;
+async function acceptedEventId(
+  u: string,
+  attemptId: string,
+  kind: string,
+): Promise<string> {
+  return (
+    await db.query<{ id: string }>(
+      "SELECT id FROM application_events WHERE user_id = $1 AND attempt_id = $2 AND event_kind = $3",
+      [u, attemptId, kind],
+    )
+  ).rows[0]!.id;
 }
 
 describe("reversible events", () => {
@@ -47,34 +98,55 @@ describe("reversible events", () => {
     await ingest(u, interviewInvite(APPLICANT_A, undefined, "GH-1"));
     assert.equal((await attempts(u))[0]!.stage, "INTERVIEW");
 
-    await setEventState(db, u, await acceptedEventId(u, a!.id, "INTERVIEW_INVITED"), "REJECTED");
+    await setEventState(
+      db,
+      u,
+      await acceptedEventId(u, a!.id, "INTERVIEW_INVITED"),
+      "REJECTED",
+    );
     assert.equal((await attempts(u))[0]!.stage, "APPLIED");
 
     // A differently serialised copy of the SAME original arrives via a forward: evidence is
     // linked as a second observation, no event is recreated, and the owner's correction stands.
-    const copy = buildEml(interviewInvite(APPLICANT_A, undefined, "GH-1")).replace("Hi Robin", "Hi  Robin");
+    const copy = buildEml(
+      interviewInvite(APPLICANT_A, undefined, "GH-1"),
+    ).replace("Hi Robin", "Hi  Robin");
     const again = await ingest(u, forwardAsAttachment([copy]));
     assert.equal(again.status, "DUPLICATE_OBSERVATION");
     assert.equal((await attempts(u))[0]!.stage, "APPLIED");
 
-    await setEventState(db, u, await acceptedEventId(u, a!.id, "INTERVIEW_INVITED"), "ACCEPTED");
+    await setEventState(
+      db,
+      u,
+      await acceptedEventId(u, a!.id, "INTERVIEW_INVITED"),
+      "ACCEPTED",
+    );
     assert.equal((await attempts(u))[0]!.stage, "INTERVIEW");
   });
 
   it("a manual status correction becomes the projected state and keeps provenance as an event", async () => {
     const u = await seedUser(db);
     const [a] = await twoAttempts(u);
-    await setAttemptStatus(db, u, a!.id, { stage: "INTERVIEW", outcome: "WITHDRAWN" });
+    await setAttemptStatus(db, u, a!.id, {
+      stage: "INTERVIEW",
+      outcome: "WITHDRAWN",
+    });
     const row = (await attempts(u))[0]!;
     assert.deepEqual([row.stage, row.outcome], ["INTERVIEW", "WITHDRAWN"]);
-    const { rows } = await db.query("SELECT 1 FROM application_events WHERE attempt_id = $1 AND event_kind = 'MANUAL_CORRECTION' AND origin = 'MANUAL'", [a!.id]);
+    const { rows } = await db.query(
+      "SELECT 1 FROM application_events WHERE attempt_id = $1 AND event_kind = 'MANUAL_CORRECTION' AND origin = 'MANUAL'",
+      [a!.id],
+    );
     assert.equal(rows.length, 1);
   });
 });
 
 describe("review resolution", () => {
   async function ambiguousRejection(u: string) {
-    const out = await ingest(u, { ...rejection(APPLICANT_A, null), to: "unknown@example.com" });
+    const out = await ingest(u, {
+      ...rejection(APPLICANT_A, null),
+      to: "unknown@example.com",
+    });
     assert.equal(out.status, "REVIEW");
     return (out as Extract<IngestOutcome, { status: "REVIEW" }>).reviewId;
   }
@@ -85,9 +157,12 @@ describe("review resolution", () => {
     const reviewId = await ambiguousRejection(u);
     await resolveReviewAssign(db, u, reviewId, a!.id);
     const rows = await attempts(u);
-    assert.equal(rows.find(r => r.id === a!.id)!.outcome, "REJECTED");
-    assert.equal(rows.find(r => r.id === b!.id)!.outcome, "PENDING");
-    assert.deepEqual(await reviewState(reviewId), { state: "RESOLVED", resolution: "ASSIGNED" });
+    assert.equal(rows.find((r) => r.id === a!.id)!.outcome, "REJECTED");
+    assert.equal(rows.find((r) => r.id === b!.id)!.outcome, "PENDING");
+    assert.deepEqual(await reviewState(reviewId), {
+      state: "RESOLVED",
+      resolution: "ASSIGNED",
+    });
   });
 
   it("an item cannot be resolved twice", async () => {
@@ -95,26 +170,49 @@ describe("review resolution", () => {
     const [a] = await twoAttempts(u);
     const reviewId = await ambiguousRejection(u);
     await resolveReviewAssign(db, u, reviewId, a!.id);
-    await assert.rejects(resolveReviewAssign(db, u, reviewId, a!.id), (e: unknown) => e instanceof ActionError && e.code === "ALREADY_RESOLVED");
+    await assert.rejects(
+      resolveReviewAssign(db, u, reviewId, a!.id),
+      (e: unknown) => e instanceof ActionError && e.code === "ALREADY_RESOLVED",
+    );
   });
 
   it("an update with no known submission can create the opening and attempt on request", async () => {
     const u = await seedUser(db);
     const out = await ingest(u, interviewInvite(APPLICANT_A, undefined, null));
     assert.equal(out.status, "REVIEW");
-    await resolveReviewCreate(db, u, (out as { reviewId: string }).reviewId, {});
+    await resolveReviewCreate(
+      db,
+      u,
+      (out as { reviewId: string }).reviewId,
+      {},
+    );
     const [row] = await attempts(u);
     assert.equal(row!.stage, "INTERVIEW");
     assert.equal(row!.applicant_email_snapshot, APPLICANT_A);
-    assert.equal((await db.query("SELECT 1 FROM job_openings WHERE user_id = $1", [u])).rows.length, 1);
+    assert.equal(
+      (await db.query("SELECT 1 FROM job_openings WHERE user_id = $1", [u]))
+        .rows.length,
+      1,
+    );
   });
 
   it("an unrecognised forward needs the owner to say what it is, then creates the attempt", async () => {
     const u = await seedUser(db);
     const out = await ingest(u, newsletter());
     const reviewId = (out as { reviewId: string }).reviewId;
-    await assert.rejects(resolveReviewCreate(db, u, reviewId, { company: "Initech", title: "Analyst" }), (e: unknown) => e instanceof ActionError && e.code === "KIND_REQUIRED");
-    await resolveReviewCreate(db, u, reviewId, { kind: "CONFIRMATION_RECEIVED", company: "Initech", title: "Analyst", applicantEmail: APPLICANT_A });
+    await assert.rejects(
+      resolveReviewCreate(db, u, reviewId, {
+        company: "Initech",
+        title: "Analyst",
+      }),
+      (e: unknown) => e instanceof ActionError && e.code === "KIND_REQUIRED",
+    );
+    await resolveReviewCreate(db, u, reviewId, {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Initech",
+      title: "Analyst",
+      applicantEmail: APPLICANT_A,
+    });
     assert.equal((await attempts(u))[0]!.stage, "APPLIED");
   });
 
@@ -123,8 +221,11 @@ describe("review resolution", () => {
     await twoAttempts(u);
     const reviewId = await ambiguousRejection(u);
     await dismissReview(db, u, reviewId);
-    assert.deepEqual(await reviewState(reviewId), { state: "DISMISSED", resolution: "DISMISSED" });
-    assert.ok((await attempts(u)).every(r => r.outcome === "PENDING"));
+    assert.deepEqual(await reviewState(reviewId), {
+      state: "DISMISSED",
+      resolution: "DISMISSED",
+    });
+    assert.ok((await attempts(u)).every((r) => r.outcome === "PENDING"));
   });
 });
 
@@ -133,13 +234,33 @@ describe("authorization", () => {
     const owner = await seedUser(db);
     const intruder = await seedUser(db);
     const [a] = await twoAttempts(owner);
-    const out = await ingest(owner, { ...rejection(APPLICANT_A, null), to: "unknown@example.com" });
+    const out = await ingest(owner, {
+      ...rejection(APPLICANT_A, null),
+      to: "unknown@example.com",
+    });
     const reviewId = (out as { reviewId: string }).reviewId;
-    const eventId = await acceptedEventId(owner, a!.id, "CONFIRMATION_RECEIVED");
-    const notFound = (e: unknown) => e instanceof ActionError && e.code === "NOT_FOUND";
-    await assert.rejects(setAttemptStatus(db, intruder, a!.id, { stage: "APPLIED", outcome: "REJECTED" }), notFound);
-    await assert.rejects(setEventState(db, intruder, eventId, "REJECTED"), notFound);
-    await assert.rejects(resolveReviewAssign(db, intruder, reviewId, a!.id), notFound);
+    const eventId = await acceptedEventId(
+      owner,
+      a!.id,
+      "CONFIRMATION_RECEIVED",
+    );
+    const notFound = (e: unknown) =>
+      e instanceof ActionError && e.code === "NOT_FOUND";
+    await assert.rejects(
+      setAttemptStatus(db, intruder, a!.id, {
+        stage: "APPLIED",
+        outcome: "REJECTED",
+      }),
+      notFound,
+    );
+    await assert.rejects(
+      setEventState(db, intruder, eventId, "REJECTED"),
+      notFound,
+    );
+    await assert.rejects(
+      resolveReviewAssign(db, intruder, reviewId, a!.id),
+      notFound,
+    );
     await assert.rejects(dismissReview(db, intruder, reviewId), notFound);
     assert.equal((await attempts(owner))[0]!.outcome, "PENDING");
   });

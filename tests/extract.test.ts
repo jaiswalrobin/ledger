@@ -4,8 +4,15 @@ import { extractSignal } from "../src/ingestion/extract.ts";
 import { parseEml } from "../src/ingestion/eml.ts";
 import { buildEml, type EmlSpec } from "./helpers/eml.ts";
 import {
-  APPLICANT_A, assessmentInvite, greenhouseConfirmation, interviewInvite, leverConfirmation,
-  newsletter, offer, rejection, workdayConfirmation,
+  APPLICANT_A,
+  assessmentInvite,
+  greenhouseConfirmation,
+  interviewInvite,
+  leverConfirmation,
+  newsletter,
+  offer,
+  rejection,
+  workdayConfirmation,
 } from "./helpers/fixtures.ts";
 
 async function extract(spec: EmlSpec) {
@@ -21,8 +28,15 @@ describe("confirmations", () => {
     assert.equal(s.fields.company, "Acme Robotics");
     assert.equal(s.fields.title, "Senior Backend Engineer");
     assert.equal(s.fields.location, "Berlin, Germany");
-    assert.deepEqual(s.fields.atsKey, { provider: "greenhouse", tenant: "acmerobotics", requisitionId: "4455001" });
-    assert.equal(s.fields.canonicalUrl, "https://boards.greenhouse.io/acmerobotics/jobs/4455001");
+    assert.deepEqual(s.fields.atsKey, {
+      provider: "greenhouse",
+      tenant: "acmerobotics",
+      requisitionId: "4455001",
+    });
+    assert.equal(
+      s.fields.canonicalUrl,
+      "https://boards.greenhouse.io/acmerobotics/jobs/4455001",
+    );
     assert.equal(s.fields.externalApplicationId, "GH-778899");
     assert.equal(s.fields.applicantEmail, APPLICANT_A);
     assert.equal(s.occurredAt, "2026-10-05T09:30:00.000Z");
@@ -33,15 +47,26 @@ describe("confirmations", () => {
     assert.equal(s.kind, "CONFIRMATION_RECEIVED");
     assert.equal(s.fields.company, "Northwind Labs");
     assert.equal(s.fields.title, "Data Engineer");
-    assert.deepEqual(s.fields.atsKey, { provider: "lever", tenant: "northwindlabs", requisitionId: "6f1c1c2e-aaaa-4bbb-8ccc-0123456789ab" });
-    assert.equal(s.fields.canonicalUrl, "https://jobs.lever.co/northwindlabs/6f1c1c2e-aaaa-4bbb-8ccc-0123456789ab");
+    assert.deepEqual(s.fields.atsKey, {
+      provider: "lever",
+      tenant: "northwindlabs",
+      requisitionId: "6f1c1c2e-aaaa-4bbb-8ccc-0123456789ab",
+    });
+    assert.equal(
+      s.fields.canonicalUrl,
+      "https://jobs.lever.co/northwindlabs/6f1c1c2e-aaaa-4bbb-8ccc-0123456789ab",
+    );
   });
 
   it("Workday: tenant from host, requisition from the job path", async () => {
     const s = await extract(workdayConfirmation());
     assert.equal(s.kind, "CONFIRMATION_RECEIVED");
     assert.equal(s.fields.title, "Platform Engineer");
-    assert.deepEqual(s.fields.atsKey, { provider: "workday", tenant: "contoso", requisitionId: "R-20418" });
+    assert.deepEqual(s.fields.atsKey, {
+      provider: "workday",
+      tenant: "contoso",
+      requisitionId: "R-20418",
+    });
   });
 });
 
@@ -84,7 +109,10 @@ describe("updates", () => {
 
 describe("fail-closed behaviour", () => {
   it("a message that is both rejection and offer is unrecognised, not guessed", async () => {
-    const s = await extract({ ...rejection(), text: "We regret to inform you the role is filled. We are pleased to offer you a different role." });
+    const s = await extract({
+      ...rejection(),
+      text: "We regret to inform you the role is filled. We are pleased to offer you a different role.",
+    });
     assert.equal(s.kind, null);
     assert.equal(s.confidence, "LOW");
   });
@@ -94,22 +122,36 @@ describe("fail-closed behaviour", () => {
   });
 
   it("does not treat the word 'unfortunately' alone as rejection", async () => {
-    const s = await extract({ ...greenhouseConfirmation(), text: "Thank you for applying. Unfortunately we cannot reply to each applicant individually." });
+    const s = await extract({
+      ...greenhouseConfirmation(),
+      text: "Thank you for applying. Unfortunately we cannot reply to each applicant individually.",
+    });
     assert.equal(s.kind, "CONFIRMATION_RECEIVED");
   });
 
   it("leaves the applicant email unknown when there are several recipients", async () => {
-    const s = await extract({ ...greenhouseConfirmation(), to: [APPLICANT_A, "other@example.com"] });
+    const s = await extract({
+      ...greenhouseConfirmation(),
+      to: [APPLICANT_A, "other@example.com"],
+      text: greenhouseConfirmation().text!.replace(/^Submitted email:.*$/m, ""),
+    });
     assert.equal(s.fields.applicantEmail, null);
   });
 
   it("never lifts a title that is really a status phrase", async () => {
-    const s = await extract({ ...rejection(), subject: "Update on your application at Acme Robotics", text: "We will not be moving forward with your application." });
+    const s = await extract({
+      ...rejection(),
+      subject: "Update on your application at Acme Robotics",
+      text: "We will not be moving forward with your application.",
+    });
     assert.equal(s.fields.title, null);
   });
 
   it("does not use signed or tokenised links as a canonical URL", async () => {
-    const s = await extract({ ...greenhouseConfirmation(), text: "Thank you for applying to Acme Robotics.\nhttps://track.example.com/c/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEf?sig=zzz" });
+    const s = await extract({
+      ...greenhouseConfirmation(),
+      text: "Thank you for applying to Acme Robotics.\nhttps://track.example.com/c/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEf?sig=zzz",
+    });
     assert.equal(s.fields.canonicalUrl, null);
     assert.equal(s.fields.atsKey, null);
   });

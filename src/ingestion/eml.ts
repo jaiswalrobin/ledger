@@ -2,15 +2,26 @@ import { createHash } from "node:crypto";
 import PostalMime from "postal-mime";
 import type { Email } from "postal-mime";
 import type { ParsedMessage, ParsedOriginal } from "./source.ts";
+import { htmlText } from "./html.ts";
 
 export const EML_LIMITS = {
   /** Vercel rejects request bodies above 4.5 MB; stay under it. */
   maxBytes: 4 * 1024 * 1024,
   maxOriginals: 25,
   maxTextChars: 100_000,
+  maxHtmlChars: 256_000,
+  maxSubjectChars: 1000,
+  maxNameChars: 200,
+  maxRecipients: 50,
 } as const;
 
-export type EmlErrorCode = "EMPTY" | "TOO_LARGE" | "TOO_MANY" | "NOT_A_MESSAGE" | "INLINE_FORWARD" | "MALFORMED";
+export type EmlErrorCode =
+  | "EMPTY"
+  | "TOO_LARGE"
+  | "TOO_MANY"
+  | "NOT_A_MESSAGE"
+  | "INLINE_FORWARD"
+  | "MALFORMED";
 
 /** Carries only a code; never message content. */
 export class EmlError extends Error {
@@ -31,48 +42,66 @@ const PARSE_OPTIONS = {
   maxPartCount: 200,
 } as const;
 
-/** Keeps link targets (job URLs often live only in href) and drops active content. Nothing is fetched. */
-function htmlToText(html: string): string {
-  const entities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
-  return html
-    .replace(/<(script|style|head)\b[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, label: string) => `${label} (${href}) `)
-    .replace(/<(?:br|\/p|\/div|\/tr|\/li|\/h[1-6])\b[^>]*>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, (m, dec: string, hex: string, name: string) => {
-      if (dec) return String.fromCodePoint(Math.min(Number(dec), 0x10ffff));
-      if (hex) return String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff));
-      return entities[name.toLowerCase()] ?? m;
-    })
-    .split("\n")
-    .map(line => line.replace(/[ \t]+/g, " ").trim())
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
 function isoOrNull(value: string | undefined): string | null {
   if (!value) return null;
+  // A local clock without a timezone is not evidence of an absolute event instant.
+  if (
+    value.length > 128 ||
+    !/\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?\s*(?:Z|[+-]\d{2}:?\d{2}|UT|GMT|(?:E[SD]|C[SD]|M[SD]|P[SD])T)(?:\s*\([^)]{0,80}\))?\s*$/i.test(
+      value,
+    )
+  )
+    return null;
   const millis = Date.parse(value);
   return Number.isFinite(millis) ? new Date(millis).toISOString() : null;
 }
 
 function toMessage(email: Email): ParsedMessage {
-  const recipients = (email.to ?? []).flatMap(a => (a.group ? a.group.map(g => g.address) : [a.address]));
-  const to = [...new Set(recipients.filter((a): a is string => !!a).map(a => a.trim().toLowerCase()))];
-  const text = email.text?.trim() ? email.text : email.html ? htmlToText(email.html) : "";
+  if (
+    (email.subject?.length ?? 0) > EML_LIMITS.maxSubjectChars ||
+    (email.from?.name?.length ?? 0) > EML_LIMITS.maxNameChars ||
+    (email.text?.length ?? 0) > EML_LIMITS.maxTextChars ||
+    (email.html?.length ?? 0) > EML_LIMITS.maxHtmlChars
+  )
+    throw new EmlError("TOO_LARGE");
+  const recipients = (email.to ?? []).flatMap((a) =>
+    a.group ? a.group.map((g) => g.address) : [a.address],
+  );
+  const to = [
+    ...new Set(
+      recipients
+        .filter((a): a is string => !!a)
+        .map((a) => a.trim().toLowerCase()),
+    ),
+  ];
+  if (to.length > EML_LIMITS.maxRecipients) throw new EmlError("TOO_MANY");
+  const text = email.text?.trim()
+    ? email.text
+    : email.html
+      ? htmlText(email.html)
+      : "";
+  // Never silently discard the tail: it may contain a secret or contradict an earlier phrase.
+  if (text.length > EML_LIMITS.maxTextChars) throw new EmlError("TOO_LARGE");
   return {
     messageId: email.messageId?.trim() || null,
     fromName: email.from?.name?.trim() ?? "",
     fromAddress: email.from?.address?.trim().toLowerCase() || null,
     to,
     subject: email.subject?.trim() ?? "",
-    date: isoOrNull(email.date),
-    text: text.slice(0, EML_LIMITS.maxTextChars),
+    date: originalDate(email),
+    text,
   };
 }
 
-const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
+function originalDate(email: Email): string | null {
+  const dates = email.headers.filter(
+    (header) => header.key.toLowerCase() === "date",
+  );
+  return dates.length === 1 ? isoOrNull(dates[0]!.value) : null;
+}
+
+const sha256 = (bytes: Uint8Array): string =>
+  createHash("sha256").update(bytes).digest("hex");
 
 async function parseOne(bytes: Uint8Array): Promise<Email> {
   try {
@@ -82,7 +111,8 @@ async function parseOne(bytes: Uint8Array): Promise<Email> {
   }
 }
 
-const looksLikeMessage = (m: ParsedMessage): boolean => !!(m.fromAddress || m.subject || m.date || m.messageId);
+const looksLikeMessage = (m: ParsedMessage): boolean =>
+  !!(m.fromAddress || m.subject || m.date || m.messageId);
 
 /**
  * Parses an uploaded .eml. If it carries `message/rfc822` attachments (Gmail's "Forward as
@@ -95,19 +125,24 @@ export async function parseEml(bytes: Uint8Array): Promise<ParsedOriginal[]> {
   if (bytes.byteLength > EML_LIMITS.maxBytes) throw new EmlError("TOO_LARGE");
 
   const outer = await parseOne(bytes);
-  const attached = outer.attachments.filter(a => a.mimeType.toLowerCase() === "message/rfc822");
+  const attached = outer.attachments.filter(
+    (a) => a.mimeType.toLowerCase() === "message/rfc822",
+  );
 
   if (attached.length === 0) {
     const message = toMessage(outer);
     if (!looksLikeMessage(message)) throw new EmlError("NOT_A_MESSAGE");
-    if (/^\s*(?:fwd?|fw)\s*:/i.test(message.subject) || /-{2,}\s*forwarded message\s*-{2,}/i.test(message.text)) {
+    if (
+      /^\s*(?:fwd?|fw)\s*:/i.test(message.subject) ||
+      /-{2,}\s*forwarded message\s*-{2,}/i.test(message.text)
+    ) {
       throw new EmlError("INLINE_FORWARD");
     }
     return [{ message, fingerprint: sha256(bytes), envelopeDate: null }];
   }
 
   if (attached.length > EML_LIMITS.maxOriginals) throw new EmlError("TOO_MANY");
-  const envelopeDate = isoOrNull(outer.date);
+  const envelopeDate = originalDate(outer);
   const results: ParsedOriginal[] = [];
   for (const attachment of attached) {
     const raw = new Uint8Array(attachment.content as ArrayBuffer);

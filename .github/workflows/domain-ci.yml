@@ -1,4 +1,4 @@
-name: Domain foundation
+name: Ledger checks
 
 on:
   push:
@@ -6,7 +6,13 @@ on:
       - "src/**"
       - "tests/**"
       - "scripts/**"
+      - "app/**"
+      - "migrations/**"
+      - "proxy.ts"
+      - "next.config.ts"
+      - "playwright.config.ts"
       - "package.json"
+      - "package-lock.json"
       - "tsconfig.json"
       - ".github/workflows/domain-ci.yml"
   pull_request:
@@ -14,7 +20,13 @@ on:
       - "src/**"
       - "tests/**"
       - "scripts/**"
+      - "app/**"
+      - "migrations/**"
+      - "proxy.ts"
+      - "next.config.ts"
+      - "playwright.config.ts"
       - "package.json"
+      - "package-lock.json"
       - "tsconfig.json"
       - ".github/workflows/domain-ci.yml"
 
@@ -33,10 +45,52 @@ jobs:
         with:
           node-version: "22"
       - name: Install dev dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Type-check
         run: npm run typecheck
       - name: Run domain tests
         run: npm test
       - name: Run synthetic demo
         run: npm run demo
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+        env:
+          POSTGRES_USER: ledger
+          POSTGRES_DB: ledger_browser
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ledger -d ledger_browser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ledger@127.0.0.1:5432/ledger_browser
+      APP_URL: http://127.0.0.1:3000
+      DEMO_MODE: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run migrate
+      - run: npm run test:postgres
+      - run: npm run build
+      - name: Start production server and exercise browser
+        run: |
+          set -euo pipefail
+          npm run start -- --hostname 127.0.0.1 > /tmp/ledger-server.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/api/session > /dev/null; then break; fi
+            sleep 1
+          done
+          npm run test:browser

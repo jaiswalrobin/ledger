@@ -1,50 +1,100 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import { deriveCoverage, describeActivity, maskEmail } from "../src/domain/coverage.ts";
+import {
+  deriveCoverage,
+  describeActivity,
+  maskEmail,
+} from "../src/domain/coverage.ts";
 import { parseEml } from "../src/ingestion/eml.ts";
 import type { Db } from "../src/server/db.ts";
 import { ingestOriginal, type IngestSource } from "../src/server/pipeline.ts";
-import { getOpening, listMailboxes, listOpenings, listReviews } from "../src/server/queries.ts";
+import {
+  getOpening,
+  listMailboxes,
+  listOpenings,
+  listReviews,
+} from "../src/server/queries.ts";
 import { buildEml, type EmlSpec } from "./helpers/eml.ts";
-import { createTestDb, seedMailbox, seedUser, type TestDb } from "./helpers/db.ts";
-import { APPLICANT_A, greenhouseConfirmation, interviewInvite, newsletter } from "./helpers/fixtures.ts";
+import {
+  createTestDb,
+  seedMailbox,
+  seedUser,
+  type TestDb,
+} from "./helpers/db.ts";
+import {
+  APPLICANT_A,
+  greenhouseConfirmation,
+  interviewInvite,
+  newsletter,
+} from "./helpers/fixtures.ts";
 
 describe("deriveCoverage", () => {
   it("no Gmail source means forwarded/manual, never 'monitored'", () => {
     assert.equal(deriveCoverage([]), "FORWARD_OR_MANUAL");
   });
   it("a healthy, fully backfilled mailbox is continuous", () => {
-    assert.equal(deriveCoverage([{ syncState: "HEALTHY", backfillComplete: true }]), "CONTINUOUS_HEALTHY");
+    assert.equal(
+      deriveCoverage([{ syncState: "HEALTHY", backfillComplete: true }]),
+      "CONTINUOUS_HEALTHY",
+    );
   });
   it("a healthy mailbox whose backfill is unfinished says so", () => {
-    assert.equal(deriveCoverage([{ syncState: "HEALTHY", backfillComplete: false }]), "BACKFILL_INCOMPLETE");
+    assert.equal(
+      deriveCoverage([{ syncState: "HEALTHY", backfillComplete: false }]),
+      "BACKFILL_INCOMPLETE",
+    );
   });
   it("degraded, resyncing and initialising mailboxes are degraded", () => {
-    for (const syncState of ["DEGRADED", "RESYNC_REQUIRED", "INITIALIZING"] as const) {
-      assert.equal(deriveCoverage([{ syncState, backfillComplete: true }]), "CONTINUOUS_DEGRADED");
+    for (const syncState of [
+      "DEGRADED",
+      "RESYNC_REQUIRED",
+      "INITIALIZING",
+    ] as const) {
+      assert.equal(
+        deriveCoverage([{ syncState, backfillComplete: true }]),
+        "CONTINUOUS_DEGRADED",
+      );
     }
   });
   it("the least healthy observing mailbox wins", () => {
-    assert.equal(deriveCoverage([
-      { syncState: "HEALTHY", backfillComplete: true }, { syncState: "DISCONNECTED", backfillComplete: true },
-    ]), "DISCONNECTED");
+    assert.equal(
+      deriveCoverage([
+        { syncState: "HEALTHY", backfillComplete: true },
+        { syncState: "DISCONNECTED", backfillComplete: true },
+      ]),
+      "DISCONNECTED",
+    );
   });
 });
 
 describe("describeActivity", () => {
   const now = new Date("2026-10-20T12:00:00Z");
   it("never claims rejection from silence and always names the coverage", () => {
-    const healthy = describeActivity("2026-10-11T09:00:00Z", now, "CONTINUOUS_HEALTHY");
-    assert.match(healthy, /^No response observed in connected sources since 11 Oct 2026 \(9 days\)/);
+    const healthy = describeActivity(
+      "2026-10-11T09:00:00Z",
+      now,
+      "CONTINUOUS_HEALTHY",
+    );
+    assert.match(
+      healthy,
+      /^No response observed in connected sources since 11 Oct 2026 \(9 days\)/,
+    );
     assert.doesNotMatch(healthy, /reject/i);
   });
   it("does not assert 'no response' for unmonitored attempts", () => {
-    const text = describeActivity("2026-10-11T09:00:00Z", now, "FORWARD_OR_MANUAL");
+    const text = describeActivity(
+      "2026-10-11T09:00:00Z",
+      now,
+      "FORWARD_OR_MANUAL",
+    );
     assert.match(text, /not continuously monitored/i);
     assert.doesNotMatch(text, /No response observed/);
   });
   it("handles an attempt with no activity yet", () => {
-    assert.match(describeActivity(null, now, "CONTINUOUS_HEALTHY"), /no activity recorded/i);
+    assert.match(
+      describeActivity(null, now, "CONTINUOUS_HEALTHY"),
+      /no activity recorded/i,
+    );
   });
 });
 
@@ -59,7 +109,10 @@ describe("maskEmail", () => {
 describe("read models", () => {
   let t: TestDb;
   let db: Db;
-  before(async () => { t = await createTestDb(); db = t.db; });
+  before(async () => {
+    t = await createTestDb();
+    db = t.db;
+  });
   after(() => t.close());
 
   async function ingest(userId: string, spec: EmlSpec, source: IngestSource) {
@@ -70,11 +123,24 @@ describe("read models", () => {
   it("lists openings with attempts, masked applicant, derived coverage and evidence provenance", async () => {
     const u = await seedUser(db);
     const mailbox = await seedMailbox(db, u, "jobs@example.org");
-    await db.query("UPDATE connected_mailboxes SET sync_state = 'HEALTHY', backfill_complete = true WHERE id = $1", [mailbox]);
-    await ingest(u, greenhouseConfirmation(APPLICANT_A, undefined, "a", "GH-1"), { kind: "GMAIL", mailboxId: mailbox, providerMessageId: "gm-1" });
-    await ingest(u, interviewInvite(APPLICANT_A, undefined, "GH-1"), { kind: "FORWARDED_EML" });
+    await db.query(
+      "UPDATE connected_mailboxes SET sync_state = 'HEALTHY', backfill_complete = true,last_success_at='2026-10-20T12:00:00Z' WHERE id = $1",
+      [mailbox],
+    );
+    await ingest(
+      u,
+      greenhouseConfirmation(APPLICANT_A, undefined, "a", "GH-1"),
+      { kind: "GMAIL", mailboxId: mailbox, providerMessageId: "gm-1" },
+    );
+    await ingest(u, interviewInvite(APPLICANT_A, undefined, "GH-1"), {
+      kind: "FORWARDED_EML",
+    });
 
-    const openings = await listOpenings(db, u, new Date("2026-10-20T12:00:00Z"));
+    const openings = await listOpenings(
+      db,
+      u,
+      new Date("2026-10-20T12:00:00Z"),
+    );
     assert.equal(openings.length, 1);
     const o = openings[0]!;
     assert.equal(o.company, "Acme Robotics");
@@ -85,14 +151,25 @@ describe("read models", () => {
     assert.equal(a.coverage, "CONTINUOUS_HEALTHY");
     assert.match(a.activity, /connected sources|since/i);
 
-    const detail = await getOpening(db, u, o.id, new Date("2026-10-20T12:00:00Z"));
+    const detail = await getOpening(
+      db,
+      u,
+      o.id,
+      new Date("2026-10-20T12:00:00Z"),
+    );
     assert.ok(detail);
     const events = detail.attempts[0]!.events;
-    assert.deepEqual(events.map(e => e.kind), ["CONFIRMATION_RECEIVED", "INTERVIEW_INVITED"]);
+    assert.deepEqual(
+      events.map((e) => e.kind),
+      ["CONFIRMATION_RECEIVED", "INTERVIEW_INVITED"],
+    );
     assert.equal(events[0]!.evidence[0]!.sourceKind, "GMAIL");
     assert.equal(events[0]!.evidence[0]!.mailboxAddress, "jobs@example.org");
     assert.equal(events[1]!.evidence[0]!.sourceKind, "FORWARDED_EML");
-    assert.match(events[0]!.evidence[0]!.subject ?? "", /Thank you for applying/);
+    assert.match(
+      events[0]!.evidence[0]!.subject ?? "",
+      /Thank you for applying/,
+    );
   });
 
   it("a forwarded-only attempt is labelled as not continuously monitored", async () => {
@@ -116,13 +193,27 @@ describe("read models", () => {
 
   it("lists open reviews with a safe subject, the reason code and candidate attempts", async () => {
     const u = await seedUser(db);
-    await ingest(u, greenhouseConfirmation(APPLICANT_A, undefined, "a", null), { kind: "FORWARDED_EML" });
-    await ingest(u, greenhouseConfirmation(APPLICANT_A, "Tue, 06 Oct 2026 10:00:00 +0000", "b", null), { kind: "FORWARDED_EML" });
+    await ingest(u, greenhouseConfirmation(APPLICANT_A, undefined, "a", null), {
+      kind: "FORWARDED_EML",
+    });
+    await ingest(
+      u,
+      greenhouseConfirmation(
+        APPLICANT_A,
+        "Tue, 06 Oct 2026 10:00:00 +0000",
+        "b",
+        null,
+      ),
+      { kind: "FORWARDED_EML" },
+    );
     const reviews = await listReviews(db, u);
     assert.equal(reviews.length, 1);
     assert.equal(reviews[0]!.reason, "POSSIBLE_RESENT_CONFIRMATION");
     assert.equal(reviews[0]!.candidates.length, 1);
-    assert.equal(reviews[0]!.candidates[0]!.openingTitle, "Senior Backend Engineer");
+    assert.equal(
+      reviews[0]!.candidates[0]!.openingTitle,
+      "Senior Backend Engineer",
+    );
     assert.equal(reviews[0]!.kind, "CONFIRMATION_RECEIVED");
   });
 
@@ -131,7 +222,9 @@ describe("read models", () => {
     const mailbox = await seedMailbox(db, u, "jobs@example.org");
     await db.query(
       `INSERT INTO sync_runs (id, mailbox_id, kind, state, finished_at, discovered_count, bodies_fetched)
-       VALUES (gen_random_uuid(), $1, 'BACKFILL', 'COMPLETED', now(), 12, 4)`, [mailbox]);
+       VALUES (gen_random_uuid(), $1, 'BACKFILL', 'COMPLETED', now(), 12, 4)`,
+      [mailbox],
+    );
     const [m] = await listMailboxes(db, u);
     assert.equal(m!.address, "jobs@example.org");
     assert.equal(m!.lastRun?.discovered, 12);

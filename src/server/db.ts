@@ -9,7 +9,10 @@ export type Row = Record<string, unknown>;
  * import a driver directly, so swapping or faking the database stays cheap.
  */
 export interface Db {
-  query<T extends object = Row>(text: string, params?: readonly unknown[]): Promise<{ rows: T[]; rowCount: number }>;
+  query<T extends object = Row>(
+    text: string,
+    params?: readonly unknown[],
+  ): Promise<{ rows: T[]; rowCount: number }>;
   /** Multi-statement SQL without parameters (migrations). */
   exec(sql: string): Promise<void>;
   /** Nested calls join the outer transaction. */
@@ -19,8 +22,14 @@ export interface Db {
 export function fromPool(pool: Pool): Db {
   const wrap = (target: Pool | PoolClient, inTransaction: boolean): Db => {
     const db: Db = {
-      async query<T extends object = Row>(text: string, params?: readonly unknown[]) {
-        const result = await target.query(text, params ? [...params] : undefined);
+      async query<T extends object = Row>(
+        text: string,
+        params?: readonly unknown[],
+      ) {
+        const result = await target.query(
+          text,
+          params ? [...params] : undefined,
+        );
         return { rows: result.rows as T[], rowCount: result.rowCount ?? 0 };
       },
       async exec(sql) {
@@ -49,15 +58,22 @@ export function fromPool(pool: Pool): Db {
 
 export function fromPglite(pg: PGlite | Transaction): Db {
   const db: Db = {
-    async query<T extends object = Row>(text: string, params?: readonly unknown[]) {
+    async query<T extends object = Row>(
+      text: string,
+      params?: readonly unknown[],
+    ) {
       const result = await pg.query<T>(text, params ? [...params] : []);
-      return { rows: result.rows, rowCount: result.affectedRows ?? result.rows.length };
+      return {
+        rows: result.rows,
+        rowCount: Math.max(result.affectedRows ?? 0, result.rows.length),
+      };
     },
     async exec(sql) {
       await pg.exec(sql);
     },
     async transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
-      if ("transaction" in pg) return pg.transaction(tx => fn(fromPglite(tx)));
+      if ("transaction" in pg)
+        return pg.transaction((tx) => fn(fromPglite(tx)));
       return fn(db);
     },
   };

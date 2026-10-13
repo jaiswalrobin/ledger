@@ -26,11 +26,15 @@ export function greenhouseConfirmation(
       `Job: https://boards.greenhouse.io/acmerobotics/jobs/${jobId}?gh_src=tracking123`,
       applicationId ? `Application ID: ${applicationId}` : "",
       "Location: Berlin, Germany",
+      `Submitted email: ${to}`,
     ].join("\n"),
   };
 }
 
-export function leverConfirmation(to = APPLICANT_A, date = "Tue, 06 Oct 2026 11:00:00 +0000"): EmlSpec {
+export function leverConfirmation(
+  to = APPLICANT_A,
+  date = "Tue, 06 Oct 2026 11:00:00 +0000",
+): EmlSpec {
   return {
     from: '"Northwind Labs" <no-reply@hire.lever.co>',
     to,
@@ -42,11 +46,15 @@ export function leverConfirmation(to = APPLICANT_A, date = "Tue, 06 Oct 2026 11:
       "",
       "Thanks for applying for the Data Engineer role at Northwind Labs. We got your application.",
       "https://jobs.lever.co/northwindlabs/6f1c1c2e-aaaa-4bbb-8ccc-0123456789ab/apply?source=email",
+      `Submitted email: ${to}`,
     ].join("\n"),
   };
 }
 
-export function workdayConfirmation(to = APPLICANT_A, date = "Wed, 07 Oct 2026 08:00:00 +0000"): EmlSpec {
+export function workdayConfirmation(
+  to = APPLICANT_A,
+  date = "Wed, 07 Oct 2026 08:00:00 +0000",
+): EmlSpec {
   return {
     from: '"Contoso" <contoso@myworkday.com>',
     to,
@@ -58,11 +66,16 @@ export function workdayConfirmation(to = APPLICANT_A, date = "Wed, 07 Oct 2026 0
       "Job Title: Platform Engineer",
       "Requisition ID: R-20418",
       "https://contoso.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Platform-Engineer_R-20418?source=LinkedIn",
+      `Submitted email: ${to}`,
     ].join("\n"),
   };
 }
 
-export function interviewInvite(to = APPLICANT_A, date = "Mon, 12 Oct 2026 14:00:00 +0000", applicationId: string | null = "GH-778899"): EmlSpec {
+export function interviewInvite(
+  to = APPLICANT_A,
+  date = "Mon, 12 Oct 2026 14:00:00 +0000",
+  applicationId: string | null = "GH-778899",
+): EmlSpec {
   return {
     from: '"Dana Lee" <dana.lee@acmerobotics.example>',
     to,
@@ -75,6 +88,7 @@ export function interviewInvite(to = APPLICANT_A, date = "Mon, 12 Oct 2026 14:00
       "Thanks for applying. We would like to invite you to interview for the Senior Backend Engineer position.",
       "Please reply with times that work for a first call.",
       applicationId ? `Application ID: ${applicationId}` : "",
+      `Submitted email: ${to}`,
     ].join("\n"),
   };
 }
@@ -90,7 +104,10 @@ export function assessmentInvite(to = APPLICANT_A): EmlSpec {
   };
 }
 
-export function rejection(to = APPLICANT_A, applicationId: string | null = "GH-778899"): EmlSpec {
+export function rejection(
+  to = APPLICANT_A,
+  applicationId: string | null = "GH-778899",
+): EmlSpec {
   return {
     from: '"Acme Robotics" <no-reply@us.greenhouse-mail.io>',
     to,
@@ -103,6 +120,7 @@ export function rejection(to = APPLICANT_A, applicationId: string | null = "GH-7
       "Thank you for your interest in the Senior Backend Engineer position at Acme Robotics.",
       "Unfortunately, we have decided to move forward with other candidates at this time.",
       applicationId ? `Application ID: ${applicationId}` : "",
+      `Submitted email: ${to}`,
     ].join("\n"),
   };
 }
