@@ -183,3 +183,64 @@ Not set yet, deliberately: `ALLOWED_EMAILS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_
 - **Database TLS:** the `pg` driver currently treats `sslmode=require` as `verify-full` and
   warns that `pg` v9 will weaken that. Keep `pg` on v8, or set `sslmode=verify-full` explicitly,
   before upgrading.
+
+## CI/CD, gating and rollback
+
+### What runs
+
+The `Ledger checks` workflow runs on every pull request and on every push to `main`. It has no
+path filter, because a required check that is skipped for some files would block those pull
+requests indefinitely.
+
+| Job | What it proves | Required to merge |
+| --- | --- | --- |
+| `domain` | Type-check, the full test suite (embedded PostgreSQL), synthetic demo | Yes |
+| `browser` | Migrations on a real PostgreSQL 17, the concurrency tests, a production build, and Playwright against the running server | Yes |
+| `audit` | `npm audit` at high severity | No, on purpose: a new advisory must not block a merge that did not cause it |
+
+CI uses **Node 24**, the major version the Vercel project runs. Actions are pinned to full commit
+SHAs, and Dependabot proposes weekly updates for npm packages and for the pinned actions. `pg` major
+upgrades are excluded from automation (see the TLS note above).
+
+### What gates production
+
+`main` is protected by a ruleset: changes arrive only through a pull request whose `domain` and
+`browser` checks pass, and force-pushes and deletion are blocked. Because Vercel's Git integration
+deploys `main` to production, **the merge gate is the production gate.** Vercel itself does not wait
+for GitHub checks, so do not push to `main` any other way.
+
+### Database migrations are still manual
+
+Migrations are **not** part of the build or the deploy. Code and schema therefore change at
+different moments, so every migration must be additive and backward-compatible with the code that is
+currently live (add a column or table first; remove or rename only in a later release).
+
+1. Merge the migration file together with code that works both before and after it is applied.
+2. Apply it: `npm run migrate` with `DATABASE_URL` set to the Neon **unpooled** connection string,
+   from a trusted shell (`vercel env pull` provides it; delete the file afterwards).
+3. Deploy code that depends on the new schema only after step 2 has succeeded.
+
+Migrations are checksummed and serialised by the runner, so re-running is safe.
+
+### Rolling back
+
+Vercel keeps every previous deployment, so reverting application code takes seconds and does not
+touch the database:
+
+```bash
+npx vercel ls ledger --status READY      # find the last good production deployment
+npx vercel promote <deployment-url>      # or: npx vercel rollback
+```
+
+Rolling back code does **not** undo migrations. This is why migrations must stay backward-compatible:
+the previous release has to keep working against the newer schema.
+
+### Not built yet
+
+- Automated deploys from CI (apply migrations, deploy, smoke-test, roll back on failure). This needs
+  a `VERCEL_TOKEN` stored as a GitHub secret and Vercel's own Git auto-deploy turned off.
+- A post-deploy smoke test; the checks recorded above were run by hand.
+- A separate database for preview deployments.
+- The scheduler is silent when its secrets are missing (it exits successfully after printing a
+  notice). GitHub also disables scheduled workflows in public repositories after 60 days without
+  repository activity, so re-enable it if the schedule stops.

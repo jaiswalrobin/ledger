@@ -1,37 +1,27 @@
 name: Ledger checks
 
+# No `paths:` filter on purpose. `domain` and `browser` are required status checks on `main`;
+# a path-filtered workflow never reports on a pull request that touches only other files, which
+# would leave that pull request waiting forever for a check that is never produced.
 on:
   push:
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "scripts/**"
-      - "app/**"
-      - "migrations/**"
-      - "proxy.ts"
-      - "next.config.ts"
-      - "playwright.config.ts"
-      - "package.json"
-      - "package-lock.json"
-      - "tsconfig.json"
-      - ".github/workflows/domain-ci.yml"
+    branches: [main]
   pull_request:
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "scripts/**"
-      - "app/**"
-      - "migrations/**"
-      - "proxy.ts"
-      - "next.config.ts"
-      - "playwright.config.ts"
-      - "package.json"
-      - "package-lock.json"
-      - "tsconfig.json"
-      - ".github/workflows/domain-ci.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# A newer push to the same pull request supersedes the older run. Runs on `main` are never
+# cancelled, so every merge commit keeps a complete result.
+concurrency:
+  group: ledger-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Production (Vercel) runs Node 24; test on the same major.
+  NODE_VERSION: "24"
+  NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
   domain:
@@ -39,12 +29,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "22"
-      - name: Install dev dependencies
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
         run: npm ci --no-audit --no-fund
       - name: Type-check
         run: npm run typecheck
@@ -74,12 +65,13 @@ jobs:
       DATABASE_URL: postgresql://ledger@127.0.0.1:5432/ledger_browser
       APP_URL: http://127.0.0.1:3000
       DEMO_MODE: "true"
-      NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "22"
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run migrate
@@ -94,3 +86,19 @@ jobs:
             sleep 1
           done
           npm run test:browser
+
+  # Informational: reports known-vulnerable dependencies without blocking unrelated work.
+  # Deliberately NOT a required check, because a new advisory can appear on any day and must
+  # not stop a merge that did not cause it. Dependabot raises the fix.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Audit dependencies (high and critical)
+        run: npm audit --audit-level=high
