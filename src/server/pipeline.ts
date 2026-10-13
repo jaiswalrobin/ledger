@@ -12,6 +12,10 @@ import { classifyHeaders } from "../ingestion/header-gate.ts";
 import { hasSensitiveContent } from "../ingestion/privacy.ts";
 import { usableEventDate } from "../ingestion/dates.ts";
 import {
+  isRecruitingSenderDomain,
+  isTrustedAtsDomain,
+} from "../ingestion/ats.ts";
+import {
   TERMINAL_KINDS,
   type ExtractedSignal,
   type ParsedOriginal,
@@ -81,6 +85,10 @@ export type IngestOutcome =
   | { status: "DUPLICATE_OBSERVATION" }
   | { status: "SKIPPED_SENSITIVE" }
   | { status: "NO_SIGNAL" };
+
+/** Marketing digests from job boards: never evidence of an application. */
+const JOB_ALERT =
+  /\b(?:job alerts?|jobs? (?:for you|you may (?:like|be interested in))|recommended jobs?|new jobs?|similar jobs?|is hiring|are hiring|top jobs?|jobs? digest|weekly digest)\b/i;
 
 const sha256 = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
@@ -180,10 +188,7 @@ async function run(
   const trustedSender =
     source.kind === "FORWARDED_EML"
       ? source.syntheticFixture === true
-      : source.senderAuthenticated === true &&
-        /(?:^|\.)(?:greenhouse(?:-mail)?\.io|lever\.co|myworkday(?:jobs)?\.com|ashbyhq\.com|smartrecruiters\.com|icims\.com|jobvite\.com|workable\.com)$/.test(
-          fromDomain,
-        );
+      : source.senderAuthenticated === true && isTrustedAtsDomain(fromDomain);
   const insertArtifact = (
     decision: string,
     subject: string | null,
@@ -279,7 +284,12 @@ async function run(
   if (signal.reasons.includes("conflicting-alternatives"))
     return review(base, "CONFLICTING_ALTERNATIVES", [], []);
   if (!signal.kind) {
-    if (source.kind === "GMAIL") {
+    // A synced message is dismissed only when nothing suggests it is hiring mail. Mixed signals,
+    // or any unrecognised message from a hiring platform, go to a human instead of disappearing.
+    const worthReview =
+      signal.reasons.includes("ambiguous-kind") ||
+      (isRecruitingSenderDomain(fromDomain) && !JOB_ALERT.test(m.subject));
+    if (source.kind === "GMAIL" && !worthReview) {
       await tx.query(
         "UPDATE extracted_signals SET processing_state = 'DISMISSED' WHERE id = $1",
         [signalId],
@@ -548,7 +558,10 @@ async function apply(
   const strongAttempt =
     decision.reason === "Exact application ID" ||
     (decision.reason === "Unique matching submitted email" && strongOpening);
-  if (TERMINAL_KINDS.has(kind) && (!strongAttempt || !c.trustedSender))
+  if (
+    TERMINAL_KINDS.has(kind) &&
+    (!strongAttempt || !c.trustedSender || signal.confidence !== "HIGH")
+  )
     return fail("TERMINAL_NEEDS_REVIEW", [decision.id], [openingId]);
 
   const problem = await automaticEventProblem(tx, event(decision.id));
@@ -587,8 +600,9 @@ async function reconcileWaitingUpdates(
     original_key: string | null;
     source_fingerprint: string;
     sender_authenticated: boolean;
+    confidence: "HIGH" | "LOW";
   }>(
-    `SELECT r.id AS review_id, s.id AS signal_id, s.event_kind, s.fields, a.id AS artifact_id, a.source_kind,
+    `SELECT r.id AS review_id, s.id AS signal_id, s.event_kind, s.fields, s.confidence, a.id AS artifact_id, a.source_kind,
             a.original_message_at, a.original_key, a.source_fingerprint,a.sender_authenticated
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
@@ -609,7 +623,7 @@ async function reconcileWaitingUpdates(
     if (!occurredAt) continue;
     const signal: ExtractedSignal = {
       kind: row.event_kind,
-      confidence: "HIGH",
+      confidence: row.confidence,
       fields: row.fields,
       occurredAt,
       reasons: [],

@@ -4,7 +4,17 @@ import { classifyHeaders } from "../../ingestion/header-gate.ts";
 import type { Db } from "../db.ts";
 import { ingestOriginal, type IngestSource } from "../pipeline.ts";
 import { OAuthError } from "../security/oauth.ts";
-import { GmailError, candidateQueries, type GmailClient } from "./client.ts";
+import {
+  GmailError,
+  candidateQueries,
+  phraseCheckQuery,
+  type GmailClient,
+  type MessageHeadersView,
+} from "./client.ts";
+import {
+  isRecruitingSenderDomain,
+  senderDomain,
+} from "../../ingestion/ats.ts";
 import { TokenUnreadableError } from "./vault.ts";
 
 export type SyncScope = { userId: string } | { system: true };
@@ -446,6 +456,22 @@ export async function syncMailbox(
       );
     };
 
+    /**
+     * Recruiters write subjects like "Quick chat?" or "Acme <> Robin". Before giving up on such a
+     * message, ask Gmail's own index whether its body contains a recruitment phrase. Only a
+     * yes/no (an id list) comes back; Ledger still reads no body it has not approved.
+     */
+    const bodyHasPhrase = async (
+      headers: MessageHeadersView,
+    ): Promise<boolean> => {
+      const q = headers.rfcMessageId
+        ? phraseCheckQuery(headers.rfcMessageId)
+        : null;
+      if (!q) return false;
+      const hits = await client.listMessageIds(q);
+      return hits.ids.includes(headers.id);
+    };
+
     const processTask = async (task: {
       id: string;
       provider_message_id: string;
@@ -483,6 +509,16 @@ export async function syncMailbox(
           counters.skippedOther += 1;
           return void (await finish(task.id, "SKIPPED_OUTBOUND"));
         }
+        if (
+          headers.labelIds.includes("SPAM") &&
+          !(
+            headers.senderAuthenticated === true &&
+            isRecruitingSenderDomain(senderDomain(headers.from))
+          )
+        ) {
+          counters.skippedOther += 1;
+          return void (await finish(task.id, "SKIPPED_SPAM"));
+        }
         const gate = classifyHeaders({
           from: headers.from,
           subject: headers.subject,
@@ -491,7 +527,7 @@ export async function syncMailbox(
           counters.skippedSensitive += 1;
           return void (await finish(task.id, "SKIPPED_SENSITIVE"));
         }
-        if (gate.kind !== "CANDIDATE") {
+        if (gate.kind !== "CANDIDATE" && !(await bodyHasPhrase(headers))) {
           counters.skippedOther += 1;
           return void (await finish(
             task.id,

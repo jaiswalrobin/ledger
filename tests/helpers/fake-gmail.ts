@@ -1,5 +1,6 @@
 import {
   GmailError,
+  RECRUITMENT_PHRASES,
   type GmailClient,
   type MessageHeadersView,
 } from "../../src/server/gmail/client.ts";
@@ -26,11 +27,13 @@ export class FakeGmail implements GmailClient {
     history: 0,
     headers: [] as string[],
     raw: [] as string[],
+    phraseChecks: [] as string[],
   };
   /** message id -> number of times getRaw should throw rate_limited before succeeding */
   rateLimitRaw = new Map<string, number>();
   /** ids whose listing should be omitted from queries (used to model messages missed by a window) */
   hiddenFromQueries = new Set<string>();
+  senderAuthenticated = true;
 
   add(
     id: string,
@@ -58,6 +61,21 @@ export class FakeGmail implements GmailClient {
 
   async listMessageIds(q: string, pageToken?: string) {
     this.calls.list += 1;
+    // Per-message phrase check: emulate Gmail's index over the message body.
+    const byId = /rfc822msgid:(\S+)/.exec(q)?.[1];
+    if (byId) {
+      this.calls.phraseChecks.push(byId);
+      const ids = [...this.messages.entries()]
+        .filter(([, m]) => {
+          const id = /^Message-ID: <?([^>\r\n]+)>?/im.exec(m.raw)?.[1];
+          const text = m.raw.toLowerCase().replace(/\s+/g, " ");
+          return (
+            id === byId && RECRUITMENT_PHRASES.some((p) => text.includes(p))
+          );
+        })
+        .map(([id]) => id);
+      return { ids };
+    }
     const after = Number(/after:(\d+)/.exec(q)?.[1] ?? 0) * 1000;
     const all = [...this.messages.entries()]
       .filter(
@@ -81,8 +99,9 @@ export class FakeGmail implements GmailClient {
       id,
       from: /^From: (.+)$/m.exec(m.raw)?.[1] ?? "",
       subject: /^Subject: (.+)$/m.exec(m.raw)?.[1] ?? "",
+      rfcMessageId: /^Message-ID: (.+)$/im.exec(m.raw)?.[1]?.trim() ?? null,
       labelIds: m.labels,
-      senderAuthenticated: true,
+      senderAuthenticated: this.senderAuthenticated,
     };
   }
 

@@ -38,6 +38,7 @@ Threats:
 **Data minimization**
 - Candidate ID search → metadata/header inspection → restricted transient body fetch only if eligible.
 - Conservative **sensitive-message exclusion** based on sender + subject (OTP, verification, password reset, sign-in links); fail closed when uncertain. Header checks are a partial defense, **not a guarantee** no sensitive body ever enters memory.
+- The transient body screen (`hasSensitiveContent`) discards messages that **deliver or act on a credential**: OTP or verification phrases, "your passcode is …", password-reset or sign-in links (a tokenized URL whose own host/path names login/reset/verify), and bare bearer tokens. Opaque tracking/unsubscribe query tokens and meeting passcodes alone do **not** discard a message; they appear in almost every ATS email, and none of them is persisted (`safeField` rejects URL- and token-shaped values; canonical URLs come only from reviewed ATS schemas, without query strings).
 - Parse only needed plain text; disable remote HTML resource loading, JS evaluation, URL visits, unsafe attachments and active content. Strict MIME/size limits for .eml.
 - Extract typed minimal events and discard raw payloads after request processing. No persistent full email-body, attachment or raw-token storage in V1.
 - Redact credentials, signed URLs, verification codes, and unnecessary PII **before** any model request or persistent evidence excerpt.

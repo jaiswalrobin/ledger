@@ -38,6 +38,16 @@ flowchart TD
 
 Gmail **messages.list** returns IDs and thread IDs, not message bodies. **messages.get** supports METADATA (headers) and FULL (body payload). Build *conservative* candidate queries using known ATS sender domains and recruitment patterns; use multiple paginated queries with overlapping coverage. No single keyword search is comprehensive, and headers alone cannot catch every secret. A privacy gate should fail closed on obvious OTP/reset/login correspondence, but must **not claim zero sensitive-body reads**.
 
+### Recall safeguards
+
+Missing a real recruiting email is the costliest failure, so each stage errs toward review rather than silent loss:
+
+- **Discovery** runs overlapping queries: known hiring-platform senders (`src/ingestion/ats.ts`), inflected subject words (Gmail matches whole words, so `interviews`/`applications` are listed explicitly), job-board confirmation senders, body recruitment phrases, and spam from hiring platforms.
+- **Spam** is accepted only when DMARC-authenticated as a known hiring-platform domain; anything else in spam is finished as `SKIPPED_SPAM`.
+- **Header gate** treats a hiring-platform sender with a non-account subject as a candidate. When headers alone are inconclusive, the worker asks Gmail's own search whether that one message (`rfc822msgid:`) contains a recruitment phrase. Only matching ids come back; no body is read unless that check passes.
+- **Extraction** normalizes typographic quotes, Unicode spaces and hard line wraps before matching, uses the HTML alternative when the text part is a stub, and fills missing fields from it.
+- **Synced messages** are dismissed only when nothing suggests hiring mail. Mixed signals, and unrecognised mail from a hiring platform, become review items. A rejection that also mentions an interview is proposed with low confidence and always needs a human.
+
 Record aggregate counts for ID discovery, header inspection, body fetch, accepted events, exclusions, and ambiguous reviews, **without keeping message bodies, raw headers or secrets in logs**.
 
 ## 4. Rolling 60-day backfill
