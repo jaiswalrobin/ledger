@@ -8,15 +8,17 @@ deploy anything; the first production deployment (synthetic demo mode, no Google
 credentials) was made separately on 2026-10-13 and is recorded in
 [Production deployment record](#production-deployment-record) below.
 
-## Browser preview
+## Production demo
 
-1. Import `jaiswalrobin/ledger` into a Vercel project and select the
-   `feat/first-browser-version` branch for the preview. Framework: Next.js;
-   install: `npm ci`; build: `npm run build`.
+1. Use the existing Vercel `ledger` project for `jaiswalrobin/ledger`, with `main`
+   as its production branch. Framework: Next.js; install: `npm ci`; build:
+   `npm run build`. Automatic Git deployments are disabled on all branches;
+   the protected GitHub CI/CD workflow stages and promotes production releases.
 2. Connect a Neon database through the Vercel integration. Keep its connection
    string in Vercel's secure `DATABASE_URL` setting; use the provider's verified TLS
-   connection settings. Give the preview its own database/branch, separate from
-   production. There is no in-memory or filesystem persistence fallback.
+   connection settings. Keep the database binding in Production only and remove
+   older Preview deployments/bindings with the operations guide. There is no
+   in-memory or filesystem persistence fallback.
 3. Set `APP_URL` to the actual stable HTTPS origin, without a path or query.
    Set `DEMO_MODE=true`. Do not put credentials in `NEXT_PUBLIC_*` variables.
 4. Apply the SQL migrations against that database using `npm run migrate` from a
@@ -28,13 +30,13 @@ credentials) was made separately on 2026-10-13 and is recorded in
    Colliding legacy names keep every company ID, domain, and opening through distinct
    reserved keys. Already applied files and their checksums are unchanged. Older filename-only records acquire
    a checksum baseline on their first upgrade; review those files before upgrading.
-5. Deploy the preview, open it, and choose **Explore the demo**. Each browser gets
+5. Release through the production pipeline, open the public origin, and choose **Explore the demo**. Each browser gets
    an isolated PostgreSQL-backed workspace: four openings, five attempts, and one
    ambiguous update. Import the downloadable sample, open an attempt timeline,
    reject/restore an event, review an update, and reload to confirm persistence.
 
-An actual preview URL is available only after Vercel authenticates the deployment
-and that database is configured and migrated. A successful local build does not
+The production origin becomes usable after Vercel authenticates the deployment
+and its database is configured and migrated. A successful local build does not
 establish a deployed or remotely reachable instance.
 
 ## Google login and dedicated Gmail
