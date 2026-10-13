@@ -3,8 +3,10 @@
 Use **Vercel** for this Next.js app and **Neon PostgreSQL** for persistence. The first
 preview can run the isolated synthetic demo without Google credentials. Cloudflare
 Workers would require an adapter and a different database-connection path; it adds
-work without improving this first version. No deployment has been performed by
-the local build or Git push.
+work without improving this first version. A local build or Git push does not
+deploy anything; the first production deployment (synthetic demo mode, no Google
+credentials) was made separately on 2026-10-13 and is recorded in
+[Production deployment record](#production-deployment-record) below.
 
 ## Browser preview
 
@@ -124,3 +126,60 @@ Chromium binary; web security remains enabled. They verify actual rendered pages
 PostgreSQL persistence, uploads, reviews, mobile navigation, owner isolation, CSRF,
 logout revocation, and deletion. Live processes and Docker container data should
 not be assumed to survive cloud snapshots.
+
+
+## Production deployment record
+
+First production deployment of commit `610bbf4`, made on 2026-10-13 with the Vercel CLI
+from a clean checkout of the pushed branch. It runs the **synthetic demo only**: Google
+login and Gmail are not configured, so `googleReady` is `false` and no mailbox can be
+connected. This record contains no secrets or account identifiers.
+
+| Item | Value |
+| --- | --- |
+| Public origin (`APP_URL`) | `https://ledger.jaiswalrobin.com` |
+| Hosting | Vercel project `ledger`, Hobby plan, Node 24, region `iad1`, Next.js preset |
+| Database | Neon free plan, resource `ledger-db`, AWS `us-east-1`, created through the Vercel Marketplace |
+| Migrations | All 6 applied with `npm run migrate` using the **unpooled** connection string; a re-run applies 0 |
+| DNS | Only the `ledger` subdomain was added; the zone's wildcard already pointed at Vercel and no other record was changed |
+| TLS | Wildcard Let's Encrypt certificate managed by Vercel; HSTS enabled |
+
+Production environment variables that are set (names only):
+
+- `APP_URL`, `DEMO_MODE=true`, `CRON_SECRET` (stored as a hidden secret and not readable back)
+- `DATABASE_URL` and the other connection variables injected by the Neon integration
+
+Not set yet, deliberately: `ALLOWED_EMAILS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+`AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`. Setting all of them is what switches Google login on.
+
+### Checked against the live origin
+
+- Signed-out access to `/api/dashboard` and `/api/openings/...` returns 401.
+- `/api/cron/sync` returns 401 with no or a wrong bearer token; a Vercel-triggered run with the
+  real secret returned 200 in the runtime logs.
+- Cross-origin protection: a write with the configured origin succeeds, while a write with the
+  previous `*.vercel.app` origin, a foreign origin, or no `Origin` header returns 403.
+- Session cookie is `Secure; HttpOnly; SameSite=Lax`; a logout invalidates the session.
+- The demo workspace loads in a real browser under the nonce-based CSP, and uploading the
+  sample `.eml` is applied while a non-`.eml` file is refused with 400.
+
+### Operating notes
+
+- **`APP_URL` is also the CSRF allow-list.** Every write must carry an `Origin` equal to it.
+  After changing it, redeploy: environment changes only apply to new deployments. The
+  `ledger-*.vercel.app` alias still serves pages but rejects writes by design.
+- **Redeploy:** from a checkout linked to the project (`vercel link`), run `vercel deploy --prod`.
+- **Git integration is connected,** so pushes build on Vercel and a push to `main` targets
+  production. Merge the pull request before relying on that, because `main` has no app until then.
+- **Preview and production currently share one Neon database.** Previews have no `APP_URL`,
+  `DEMO_MODE` or `CRON_SECRET`, so they are largely inert, but give previews their own Neon
+  branch before using them for real work.
+- **Scheduler:** `vercel.json` runs the cron once a day (Hobby limit). The 15-minute GitHub
+  Actions workflow needs the `LEDGER_SYNC_URL` and `LEDGER_CRON_SECRET` repository secrets and
+  only runs from the default branch. `CRON_SECRET` cannot be read back from Vercel, so rotate it
+  in both places at once.
+- **Google redirect URIs depend on the origin.** Register
+  `https://ledger.jaiswalrobin.com/api/oauth/callback/login` and `.../gmail`.
+- **Database TLS:** the `pg` driver currently treats `sslmode=require` as `verify-full` and
+  warns that `pg` v9 will weaken that. Keep `pg` on v8, or set `sslmode=verify-full` explicitly,
+  before upgrading.
