@@ -247,9 +247,13 @@ smoke result and whether a rollback happened.
 The environment `production` and its variables (`VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`,
 `PRODUCTION_URL`) already exist. The one remaining credential is a Vercel token:
 
-1. Vercel dashboard, Account Settings, Tokens: create one named `ledger-github-deploy`, scoped to the
-   account, with an expiry.
-2. Store it without echoing it:
+1. Vercel dashboard, Account Settings, Tokens: while signed in as a member of the team that owns the
+   project (`VERCEL_ORG_ID`), create one named `ledger-github-deploy` with that team as its scope and
+   an expiry. It must be a token Vercel ties to a user: see "Credential diagnostics" below.
+2. Check it before storing it, without echoing it (nothing is printed but status codes):
+   `read -rs VERCEL_TOKEN && export VERCEL_TOKEN`, then
+   `VERCEL_ORG_ID=team_... node --experimental-strip-types scripts/check-vercel-token.ts`
+3. Store it without echoing it:
    `gh secret set VERCEL_TOKEN --env production --repo jaiswalrobin/ledger`
 
 Set the secret **before** merging the pull request that introduces the pipeline. Without it the deploy
@@ -309,10 +313,22 @@ Google/Gmail setup and removal of older previews are documented in [google-setup
 
 ## Credential diagnostics
 
-If production inventory succeeds but the CLI reports `User not found`, avoid
-assuming that the token owner is wrong. Inventory uses an explicit API team selector;
-the release CLI now passes `--scope "$VERCEL_ORG_ID"` on every operation, including
-inspect and rollback. Retest the scoped release before replacing credentials.
-If it still fails, distinguish the token's user-profile access from project access,
-and verify the production environment secret (which overrides a repository secret).
-Never share the token value in logs or chat.
+The Vercel CLI's `inspect`, `promote` and `rollback` begin by asking the API who the token
+belongs to (`GET /v2/user`). A token the REST API accepts, as in `production-operations.yml`, can
+still get `404 User not found` there, and then those commands fail with `User not found` whatever
+`--scope` or `--token` say. That is what failed the first releases. With CLI 63.1.2, `deploy` and
+`pull` did not stop at a failed user lookup when `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` are set, so
+a failure at the very first call, `inspect`, is the usual sign.
+
+The deploy job therefore runs `scripts/check-vercel-token.ts` before any CLI call. Reading it:
+
+| `GET /v2/user` | Meaning | Fix |
+|---|---|---|
+| 200, team 200 | Token works for the CLI | none |
+| 403 | Rejected: invalid, expired, revoked, or an older secret is in effect | New token; the environment secret overrides a repository secret of the same name |
+| 404 | Accepted by the REST API but not tied to a user | New token created in the dashboard as a team member |
+| 200, team 403/404 | A user token without access to the team | Recreate with the team as its scope |
+
+If a fresh dashboard token still answers 404, move `inspect`, `promote` and `rollback` to the REST
+API (`GET /v13/deployments`, project promote and rollback endpoints) and keep the CLI for
+`deploy` and `pull`. Never share the token value in logs or chat.

@@ -8,10 +8,10 @@ set -euo pipefail
 : "${PRODUCTION_URL:?PRODUCTION_URL is required}"
 : "${GITHUB_SHA:?GITHUB_SHA is required}"
 VERCEL_CLI_VERSION="${VERCEL_CLI_VERSION:-63.1.2}"
-# The env IDs link deploy/pull to the project, but inspect also needs an explicit
-# scope: otherwise the CLI discovers accounts through its unscoped user/team APIs.
-# The token is passed explicitly as well as through the environment so the CLI never
-# falls back to a stored login when it resolves the account ("User not found").
+# inspect, promote and rollback first ask the API who the token belongs to (GET /v2/user)
+# and fail with "User not found" when no user is behind it; --scope and --token cannot
+# change that. The token check below turns that into a precise message before anything
+# is staged. The flags stay so the CLI never falls back to a stored login or another scope.
 cli() { npx --yes "vercel@${VERCEL_CLI_VERSION}" "$@" --token "$VERCEL_TOKEN" --scope "$VERCEL_ORG_ID"; }
 work_directory="$(mktemp -d)"
 previous_url='' previous_id='' staged_id='' migrations='not run'
@@ -75,6 +75,8 @@ node --input-type=module <<'JS'
 const u=new URL(process.env.PRODUCTION_URL??'');
 if(u.protocol!=='https:'||u.username||u.password||u.search||u.hash||u.pathname!=='/')throw new Error('PRODUCTION_ORIGIN_REQUIRED');
 JS
+# Abort before any Vercel CLI call when the token cannot drive the CLI.
+node --experimental-strip-types scripts/check-vercel-token.ts
 # Abort before staging or touching the database when the rollback target is unknown.
 inspect "$PRODUCTION_URL" "$work_directory/previous.json"
 previous_url="$(pick url "$work_directory/previous.json")"

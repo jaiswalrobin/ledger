@@ -50,6 +50,8 @@ const name=process.argv[1].split('/').at(-1),args=process.argv.slice(2),scenario
 const log=command=>appendFileSync('calls.txt',command+'\n');
 if(name==='node'){
  if(args.includes('scripts/migrate-production.ts')){log('migrate');process.exit(scenario==='migration-failure'?1:0);}
+ // The real check calls api.vercel.com; rehearsals stay offline and only model its verdict.
+ if(args.includes('scripts/check-vercel-token.ts')){if(scenario==='token-rejected'){log('token-check');process.exit(1);}process.exit(0);}
  const child=spawnSync(process.env.REAL_NODE,args,{env:process.env,stdio:'inherit'});process.exit(child.status??1);
 }
 if(name==='npm'){
@@ -142,6 +144,15 @@ for (const scenario of [
     if (scenario.startsWith("lookup") || scenario === "build-failure")
       assert.equal(r.calls.includes("migrate"), false);
   });
+// A token the Vercel CLI cannot use (for example one with no user behind it) must fail the
+// release up front, with nothing staged, migrated or promoted.
+test("deployment: a rejected token stops the release before any Vercel CLI call", async () => {
+  const r = await rehearsal("token-rejected");
+  assert.notEqual(r.code, 0);
+  assert.deepEqual(r.calls, ["token-check"]);
+  assert.match(r.summary, /Staged deployment \| not created/);
+  assert.match(r.summary, /Previous deployment \| not recorded/);
+});
 for (const scenario of [
   "promotion-response-lost",
   "verification-failure",
