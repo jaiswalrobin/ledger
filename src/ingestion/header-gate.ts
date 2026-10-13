@@ -15,7 +15,7 @@ export function classifyHeaders(headers: MessageHeaders): GateDecision {
   const sensitive = /\b(otp|one[\s-]?time|verification code|security code|passcode|password reset|reset your password|two[\s-]?factor|2fa|sign[\s-]?in code|login code|magic link|confirm your (?:email|identity)|verify your (?:email|identity))\b/i;
   if (sensitive.test(subject)) return { kind: "SKIP_SENSITIVE", reason: "Potential credential or account-verification message" };
 
-  const recruitment = /\b(application|applied|applicant|interview|assessment|coding challenge|recruitment|recruiter|hiring process|job offer|candidate|unfortunately|position|role)\b/i;
+  const recruitment = /\b(application|applying|applied|applicant|interview|assessment|coding challenge|recruitment|recruiter|hiring process|job offer|candidate|unfortunately|position|role)\b/i;
   if (recruitment.test(subject)) return { kind: "CANDIDATE", reason: "Recruitment-related subject" };
 
   // Do not classify every message from a recruiting platform as safe.

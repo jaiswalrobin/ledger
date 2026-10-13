@@ -127,3 +127,10 @@ test("unrelated banking messages do not cause body reads", () => {
 test("ATS sender alone cannot justify body retrieval", () => {
   assert.equal(classifyHeaders({ from: "noreply@greenhouse.io", subject: "Your account" }).kind, "REVIEW_HEADERS");
 });
+test("'Thank you for applying' confirmations are candidates, including from ATS senders", () => {
+  assert.equal(classifyHeaders({ from: '"Acme" <no-reply@us.greenhouse-mail.io>', subject: "Thank you for applying to Acme" }).kind, "CANDIDATE");
+  assert.equal(classifyHeaders({ from: '"Northwind" <no-reply@hire.lever.co>', subject: "Thanks for applying to Northwind Labs" }).kind, "CANDIDATE");
+});
+test("a verification code is still skipped when the subject also says applying", () => {
+  assert.equal(classifyHeaders({ from: "no-reply@greenhouse.io", subject: "Your code for applying: 482913 (verification code)" }).kind, "SKIP_SENSITIVE");
+});
