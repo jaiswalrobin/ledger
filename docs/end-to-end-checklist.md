@@ -39,11 +39,11 @@ availability could not be independently checked.
 
 ## Required for a private Gmail pilot
 
-1. **Separate preview and production databases.** The preceding deployment record
-   says previews share the production database. Give Preview its own Neon branch
-   and scoped connection settings before enabling authenticated/real-data previews.
-   Configure its own stable `APP_URL` and OAuth redirects, or leave Google disabled
-   there. A missing `APP_URL` does not isolate database credentials from preview code.
+1. **Production-only hosting.** Automatic Git previews are disabled for all branches.
+   Remove already-created Preview deployments and their Preview database bindings
+   before enabling Google. The production operations workflow inventories/deletes
+   previews using the existing production credential; see [google-setup.md](google-setup.md).
+   A Vercel config change alone does not remove old deployments or their credentials.
 2. **Create a Google web OAuth client.** Enable Gmail API and set the consent app
    to Testing. Add the dedicated test Google accounts as permitted test users.
    Register these exact production redirects:

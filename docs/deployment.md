@@ -172,7 +172,7 @@ Not set yet, deliberately: `ALLOWED_EMAILS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_
   `ledger-*.vercel.app` alias still serves pages but rejects writes by design.
 - **Redeploy:** run the CI/CD workflow on `main`; use explicit staged deployment and promotion for the documented manual recovery path.
 - **Production is deployed by the pipeline, not by Vercel's Git integration.** `vercel.json` turns
-  Git-triggered deployments off for `main`; pull-request previews still build. See
+  Git-triggered deployments off for every branch; automatic pull-request previews are disabled too. See
   [CI/CD](#cicd-gating-and-rollback).
 - **Preview and production currently share one Neon database.** Previews have no `APP_URL`,
   `DEMO_MODE` or `CRON_SECRET`, so they are largely inert, but give previews their own Neon
@@ -302,3 +302,5 @@ release/migration gate, separate preview database, real Google/Gmail validation,
 activation, and remaining public-launch hardening. The original six-migration production
 record above is historical; this remediation adds `0007_submission_date_corrections.sql`.
 Pushing this branch does not apply that migration or update the live deployment.
+
+Google/Gmail setup and removal of older previews are documented in [google-setup.md](google-setup.md). New preview deployments are disabled; historical shared-database preview notes above describe the preceding deployment state, not a completed cleanup.

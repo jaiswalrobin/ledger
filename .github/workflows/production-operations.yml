@@ -1,0 +1,40 @@
+name: Production setup operations
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Production setup operation
+        type: choice
+        options: [remove-previews, configure-google]
+        required: true
+      dry_run:
+        description: Inventory previews without deleting them (cleanup operation only)
+        type: boolean
+        default: true
+permissions:
+  contents: read
+jobs:
+  configure:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - name: Run the selected operation
+        env:
+          OPERATION: ${{ inputs.operation }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          ALLOWED_EMAILS: ${{ secrets.ALLOWED_EMAILS }}
+        run: node --experimental-strip-types scripts/production-operations.ts "$OPERATION"
