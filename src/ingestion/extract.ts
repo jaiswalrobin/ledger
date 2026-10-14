@@ -402,7 +402,7 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
     genericUrl ??= match ? null : genericJobUrl(url);
   }
 
-  const { company, title } = extractCompanyAndTitle({
+  const { company, title, decisions } = extractCompanyAndTitle({
     subject: message.subject,
     fromName: message.fromName,
     fromAddress: message.fromAddress,
@@ -426,6 +426,7 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
   const fields: ExtractedFields = {
     company,
     title,
+    fieldDecisions: decisions,
     location: safeField(labelled(body, "location")),
     atsKey: ats?.key ?? null,
     canonicalUrl: ats?.canonicalUrl || genericUrl,
@@ -440,9 +441,10 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
     fields.canonicalUrl = null;
     reasons.push("ambiguous-job-links");
   }
+  if (Object.values(decisions).some(d => d.state === "AMBIGUOUS")) reasons.push("conflicting-fields");
   return {
     kind,
-    confidence: kind && !reasons.includes("mixed-kind") && jobLinks.size <= 1 && !ibm?.conflict ? "HIGH" : "LOW",
+    confidence: kind && !reasons.includes("mixed-kind") && !reasons.includes("conflicting-fields") && jobLinks.size <= 1 && !ibm?.conflict ? "HIGH" : "LOW",
     fields,
     occurredAt: message.date,
     reasons,
@@ -460,6 +462,7 @@ function conflicts(a: ExtractedSignal, b: ExtractedSignal): boolean {
   if (a.reasons.includes("ambiguous-kind") || b.reasons.includes("ambiguous-kind"))
     return true;
   return (Object.keys(a.fields) as (keyof ExtractedFields)[]).some((field) => {
+    if (field === "fieldDecisions") return false;
     const x = a.fields[field],
       y = b.fields[field];
     if (x == null || y == null) return false;
@@ -487,8 +490,14 @@ export function extractSignal(message: ParsedMessage): ExtractedSignal {
       };
     const fields = { ...merged.fields };
     for (const key of Object.keys(fields) as (keyof ExtractedFields)[])
-      if (fields[key] == null)
+      if (key !== "fieldDecisions" && fields[key] == null)
         (fields as Record<string, unknown>)[key] = alternative.fields[key];
+    if (fields.fieldDecisions && alternative.fields.fieldDecisions) {
+      fields.fieldDecisions = { ...fields.fieldDecisions };
+      for (const key of ["company", "title"] as const)
+        if (fields.fieldDecisions[key].state === "MISSING")
+          fields.fieldDecisions[key] = alternative.fields.fieldDecisions[key];
+    }
     const kind = merged.kind ?? alternative.kind;
     const reasons = [...new Set([...merged.reasons, ...alternative.reasons])];
     merged = {
@@ -496,7 +505,7 @@ export function extractSignal(message: ParsedMessage): ExtractedSignal {
       kind,
       fields,
       reasons,
-      confidence: kind && !reasons.includes("mixed-kind") && !reasons.includes("ambiguous-job-links") ? "HIGH" : "LOW",
+      confidence: kind && !reasons.includes("mixed-kind") && !reasons.includes("ambiguous-job-links") && !reasons.includes("conflicting-fields") ? "HIGH" : "LOW",
     };
   }
   return merged;

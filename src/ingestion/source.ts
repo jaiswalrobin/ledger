@@ -48,10 +48,17 @@ export const TERMINAL_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>([
   "OFFER_RECEIVED",
 ]);
 
+export interface FieldDecision {
+  state: "SUPPORTED" | "AMBIGUOUS" | "MISSING";
+  value: string | null;
+  candidates: readonly { value: string; score: number; sources: readonly string[] }[];
+}
+
 /** Structured, redacted facts lifted from a message. Safe to persist. */
 export interface ExtractedFields {
   company: string | null;
   title: string | null;
+  fieldDecisions?: { company: FieldDecision; title: FieldDecision };
   location: string | null;
   atsKey: AtsKey | null;
   /** Query-free job URL on a known ATS host, or a clean job-path URL. Never a signed link. */

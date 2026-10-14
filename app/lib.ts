@@ -200,6 +200,7 @@ export const reasonText: Record<string, string> = {
   CONFLICTING_EVENTS: "This update conflicts with the accepted timeline.",
   CONFLICTING_ALTERNATIVES:
     "The plain-text and HTML versions disagree. Choose how this update should be interpreted.",
+  CONFLICTING_FIELDS: "This message names conflicting employers or roles. Choose the correct application details.",
   INTERVIEW_CANCELLED:
     "This message says an interview was cancelled or postponed. Decide how it affects the timeline.",
   NOT_SUBMITTED:

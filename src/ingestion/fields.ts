@@ -7,6 +7,7 @@
  * look like a job title or an organisation, because a wrong value is worse than none: it creates a
  * separate job opening.
  */
+import type { FieldDecision } from "./source.ts";
 import { safeField } from "./privacy.ts";
 import { isRecruitingSenderDomain, senderDomain } from "./ats.ts";
 
@@ -21,7 +22,7 @@ export interface FieldInput {
   companyHints?: readonly { value: string; weight: number }[];
 }
 
-type Candidate = { value: string; weight: number; order: number; fromContent: boolean };
+type Candidate = { value: string; order: number; fromContent: boolean; evidence: Map<string, number>; spans: { representation: string; start: number; end: number }[] };
 type Candidates = Map<string, Candidate>;
 
 // ---- validation and cleaning ------------------------------------------------------------
@@ -85,6 +86,7 @@ export function cleanTitle(raw: string | null | undefined, source: FieldSource =
     !(source === "label" ? LABEL_START : NAME_START).test(value) ||
     /https?:|@|\d{4,}$/.test(value) ||
     PROSE.test(value) ||
+    (source !== "label" && /\b(?:position|role|job)\s+(?:at|with|is|has|was|will|been)\b|\bwith candidate\b/i.test(value)) ||
     (source === "label" ? LABEL_NOISE : TITLE_NOISE).test(value)
   )
     return null;
@@ -217,24 +219,37 @@ function scan(re: RegExp, text: string, accept: (m: RegExpExecArray) => boolean)
   }
 }
 
-/** `fromContent` is false only for the sender's own display name, which is weaker evidence. */
-function add(map: Candidates, value: string | null, weight: number, fromContent = true) {
+/** Each representation/rule of the same source contributes only its strongest support. */
+function addCandidate(map: Candidates, value: string | null, weight: number, source: string, fromContent: boolean, span?: { representation: string; start: number; end: number }) {
   if (!value || weight <= 0) return;
-  const key = value.toLowerCase();
-  const existing = map.get(key);
-  if (existing) {
-    existing.weight += weight;
-    existing.fromContent ||= fromContent;
-  } else map.set(key, { value, weight, order: map.size, fromContent });
+  const key = value.normalize("NFKC").toLowerCase();
+  let candidate = map.get(key);
+  if (!candidate) {
+    candidate = { value, order: map.size, fromContent, evidence: new Map(), spans: [] };
+    map.set(key, candidate);
+  }
+  candidate.evidence.set(source, Math.max(weight, candidate.evidence.get(source) ?? 0));
+  candidate.fromContent ||= fromContent;
+  if (span) candidate.spans.push(span);
 }
 
-function pick(map: Candidates): string | null {
-  let best: Candidate | null = null;
-  for (const c of map.values())
-    if (!best || c.weight > best.weight || (c.weight === best.weight && c.order < best.order))
-      best = c;
-  // A single weak mention is not enough to assert a value.
-  return best && best.weight >= 1 ? best.value : null;
+function decide(map: Candidates): FieldDecision {
+  const candidates = [...map.values()].map(c => ({
+    value: c.value,
+    score: [...c.evidence.values()].reduce((sum, weight) => sum + weight, 0),
+    sources: [...c.evidence.keys()].sort(),
+    credible: c.fromContent && [...c.evidence.entries()].some(([source, weight]) => source !== "domain" && weight >= 1.5),
+    order: c.order,
+  })).sort((a, b) => b.score - a.score || a.order - b.order);
+  const best = candidates[0];
+  const ambiguous = candidates.filter(c => c.credible).length > 1 ||
+    (candidates.length > 1 && best!.score === candidates[1]!.score);
+  return {
+    state: ambiguous ? "AMBIGUOUS" : best && best.score >= 1 ? "SUPPORTED" : "MISSING",
+    value: !ambiguous && best && best.score >= 1 ? best.value : null,
+    // Bounded, safe facts only. Never persist matching sentences, addresses, or snippets.
+    candidates: candidates.slice(0, 8).map(({ value, score, sources }) => ({ value, score, sources })),
+  };
 }
 
 /** Splits "A - B" / "A | B" when one side is the employer according to other evidence. */
@@ -250,9 +265,14 @@ function splitPair(text: string, isCompany: (v: string) => boolean) {
 export function extractCompanyAndTitle(input: FieldInput): {
   company: string | null;
   title: string | null;
+  decisions: { company: FieldDecision; title: FieldDecision };
 } {
   const titles: Candidates = new Map();
   const companies: Candidates = new Map();
+  let sourceFamily = "structured";
+  let span: { representation: string; start: number; end: number } | undefined;
+  const add = (map: Candidates, value: string | null, weight: number, fromContent = true) =>
+    addCandidate(map, value, weight, sourceFamily, fromContent, span);
   const { subject, body } = input;
   const flat = body.replace(/\s+/g, " ");
   const lines = body.split("\n").map((l) => l.trim());
@@ -262,6 +282,7 @@ export function extractCompanyAndTitle(input: FieldInput): {
   for (const h of input.titleHints ?? []) add(titles, cleanTitle(h.value), h.weight);
   for (const h of input.companyHints ?? []) add(companies, cleanCompany(h.value), h.weight);
 
+  sourceFamily = "body";
   // Labelled fields: "Job Title: ...", "Company: ...".
   for (const line of lines) {
     const label = /^(job\s*title|position(?:\s*title)?|role|title|job|company|employer|organi[sz]ation)\s*[:\-–]\s*(.{2,100})$/i.exec(line);
@@ -281,23 +302,31 @@ export function extractCompanyAndTitle(input: FieldInput): {
   };
 
   // Role sentences, over the hard-wrapped lines and the flattened text.
-  for (const source of [subject, body, flat])
+  for (const { id, representation, text } of [{ id: "subject", representation: "subject", text: subject }, { id: "body", representation: "body-lines", text: body }, { id: "body", representation: "body-flat", text: flat }]) {
+    sourceFamily = id;
     for (const p of ROLE_SENTENCES)
-      scan(p.re, source, (m) => {
+      scan(p.re, text, (m) => {
         const title = cleanTitle(m[p.title]);
         if (!title) return false;
-        add(titles, title, p.weight / (source === flat ? 2 : 1));
-        if (p.company) add(companies, cleanCompany(fullCompany(m, p.company), false), p.weight / (source === flat ? 2 : 1));
+        const start = m.index + m[0].indexOf(m[p.title]!);
+        span = { representation, start, end: start + m[p.title]!.length };
+        add(titles, title, p.weight);
+        span = undefined;
+        if (p.company) add(companies, cleanCompany(fullCompany(m, p.company), false), p.weight);
         return true;
       });
-  for (const source of [subject, body])
+  }
+  for (const { id, text } of [{ id: "subject", text: subject }, { id: "body", text: body }]) {
+    sourceFamily = id;
     for (const p of COMPANY_SENTENCES)
-      scan(p.re, source, (m) => {
+      scan(p.re, text, (m) => {
         const company = cleanCompany(fullCompany(m, 1), p.strict ?? false);
         add(companies, company, p.weight);
         return !!company;
       });
 
+  }
+  sourceFamily = "subject";
   // Subject templates.
   const prefixed = rx(String.raw`^(?:[^:]{0,40}:\s*)?(${SUBJECT_PREFIX})\s*([:\-–|]|\bfor\b|\bto\b)?\s*(?:the\s+)?(.+)$`).exec(subject);
   let prefixedUsed = false;
@@ -350,6 +379,7 @@ export function extractCompanyAndTitle(input: FieldInput): {
     for (const name of invite[1]!.split(/\s*(?:\/|<>|&|\+|\bx\b|[-–|])\s*/))
       if (matchesDomain(name)) add(companies, cleanCompany(name), 3);
   }
+  sourceFamily = "body";
   for (const line of lines) {
     const event = /^(?:[\w ]{0,30}\binterview|phone screen|onsite|technical screen)\s*[-–:|]\s*(.{2,100})$/i.exec(line);
     if (event) add(titles, cleanTitle(event[1]), 2);
@@ -377,6 +407,7 @@ export function extractCompanyAndTitle(input: FieldInput): {
 
   // The sender: an ATS display name is the employer; elsewhere only when it is a department
   // ("Barclays Recruitment") or the organisation the address belongs to.
+  sourceFamily = "sender";
   const display = input.fromName.replace(/\s+(?:via|from|on behalf of)\s+.*$/i, "").trim();
   const domain = senderDomain(input.fromAddress ?? "");
   if (display) {
@@ -391,17 +422,33 @@ export function extractCompanyAndTitle(input: FieldInput): {
 
   // The sender's own domain confirms a candidate the message itself names; it never invents one,
   // and it does not re-confirm the sender's display name (that would count one source twice).
-  for (const c of companies.values()) if (c.fromContent && matchesDomain(c.value)) c.weight += 2;
+  for (const c of companies.values()) if (c.fromContent && matchesDomain(c.value)) c.evidence.set("domain", 2);
+  sourceFamily = "subject";
   // Capitalised words in the subject that spell the sender's organisation ("Massive Dynamic").
   if (hints.length)
     for (const m of subject.matchAll(/\b([A-Z][\w&'-]*(?:\s+[A-Z][\w&'-]*){0,3})\b/g))
       for (let n = m[1]!.split(" ").length; n >= 1; n--) {
         const phrase = m[1]!.split(" ").slice(0, n).join(" ");
-        if (hints.includes(compact(phrase))) add(companies, cleanCompany(phrase), 1.5);
+        if (hints.includes(compact(phrase)) && ![...companies.values()].some(c => compact(c.value).startsWith(compact(phrase))))
+          add(companies, cleanCompany(phrase), 1.5);
       }
 
   // A title must not be the employer's own name.
-  for (const key of companies.keys()) titles.delete(key);
+  for (const key of companies.keys()) {
+    titles.delete(key);
+    // A less specific rule may capture the employer suffix as part of the title.
+    for (const [titleKey, candidate] of titles)
+      if (!candidate.evidence.has("structured") && /\s(?:at|with)\s/i.test(candidate.value) &&
+          (titleKey.endsWith(` at ${key}`) || titleKey.endsWith(` with ${key}`))) titles.delete(titleKey);
+  }
 
-  return { company: pick(companies), title: pick(titles) };
+  // A general sentence rule can stop at an internal comma. Discard only a proven subspan
+  // of the more specific title in the same representation; distinct mentions still conflict.
+  for (const [key, candidate] of titles)
+    if (candidate.spans.length && [...titles.values()].some(other => other !== candidate &&
+        other.value.toLowerCase().startsWith(`${key},`) && candidate.spans.every(short =>
+          other.spans.some(long => long.representation === short.representation &&
+            long.start <= short.start && long.end > short.end)))) titles.delete(key);
+  const decisions = { company: decide(companies), title: decide(titles) };
+  return { company: decisions.company.value, title: decisions.title.value, decisions };
 }

@@ -71,7 +71,8 @@ export type ReviewReason =
   | "CONFLICTING_EVENTS"
   | "CONFLICTING_ALTERNATIVES"
   | "INTERVIEW_CANCELLED"
-  | "NOT_SUBMITTED";
+  | "NOT_SUBMITTED"
+  | "CONFLICTING_FIELDS";
 
 export type IngestOutcome =
   | {
@@ -308,6 +309,8 @@ async function run(
 
   if (signal.reasons.includes("conflicting-alternatives"))
     return review(base, "CONFLICTING_ALTERNATIVES", [], []);
+  if (signal.reasons.includes("conflicting-fields"))
+    return review(base, "CONFLICTING_FIELDS", [], []);
   if (signal.reasons.includes("ambiguous-kind"))
     return review(base, "UNRECOGNIZED", [], []);
   if (signal.reasons.includes("ambiguous-job-links"))
@@ -419,6 +422,8 @@ async function apply(
       : Promise.resolve({ status: "REVIEW", reviewId: "", reason });
   const kind = signal.kind!;
   const f = signal.fields;
+  if (f.fieldDecisions && Object.values(f.fieldDecisions).some(d => d.state === "AMBIGUOUS"))
+    return fail("CONFLICTING_FIELDS", [], []);
   const isConfirmation = kind === "CONFIRMATION_RECEIVED";
 
   let openingId: string | null = null;

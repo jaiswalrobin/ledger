@@ -69,6 +69,20 @@ const events = async (user: string) =>
   ).rows.map((r) => r.kind);
 
 describe("classification reaches the right outcome", () => {
+  it("field contradictions create review evidence, never an opening or attempt", async () => {
+    const { user, mailbox } = await fresh();
+    const out = await gmail(user, mailbox, {
+      subject: "Application received",
+      text: "We received your application.\nCompany: Acme\nJob Title: Backend Engineer\nFor the Frontend Engineer role at Globex.",
+    });
+    assert.equal(out.status === "REVIEW" && out.reason, "CONFLICTING_FIELDS");
+    assert.deepEqual(await openings(user), []);
+    assert.deepEqual(await events(user), []);
+    const saved = await db.query<{ fields: { fieldDecisions: { title: { state: string } } } }>(
+      "SELECT fields FROM extracted_signals WHERE user_id=$1", [user],
+    );
+    assert.equal(saved.rows[0]!.fields.fieldDecisions.title.state, "AMBIGUOUS");
+  });
   it("a receipt with a talent-community footer creates the application", async () => {
     const { user, mailbox } = await fresh();
     const out = await gmail(user, mailbox, {
