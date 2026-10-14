@@ -123,11 +123,13 @@ export function ImportScreen({
   const odd = files.filter((f) => !/\.eml$/i.test(f.name) && f.type !== "message/rfc822");
   const add = (list: FileList | null) => {
     if (!list) return;
+    // Copy now: the input is cleared right after, which empties its live FileList.
+    const picked = Array.from(list);
     setResults([]);
     // Adding more files appends; picking the same file twice does not duplicate it.
     setFiles((prev) => {
       const seen = new Set(prev.map((f) => `${f.name}:${f.size}`));
-      return [...prev, ...Array.from(list).filter((f) => !seen.has(`${f.name}:${f.size}`))];
+      return [...prev, ...picked.filter((f) => !seen.has(`${f.name}:${f.size}`))];
     });
   };
   const counts = results.reduce<Record<ResultTone, number>>(

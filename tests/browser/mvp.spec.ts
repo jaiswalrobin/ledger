@@ -29,9 +29,8 @@ test("browser MVP: demo, independent attempts, review, corrections, and durable 
     page.locator(".attempt-card").first().locator(".pill.pending"),
   ).toBeVisible();
   await page.reload();
-  await page
-    .getByRole("button", { name: "View Acme Robotics application" })
-    .click();
+  // The open application is part of the URL, so a reload returns to it.
+  await expect(page.getByText("2 independent attempts")).toBeVisible();
   await expect(page.getByRole("button", { name: "Restore" })).toBeVisible();
   await page.getByRole("button", { name: "Restore" }).click();
   await expect(
@@ -333,9 +332,7 @@ test("review creation uses an existing opening without dummy fields, and submiss
   await attempt.getByRole("button", { name: "Save submission date" }).click();
   await expect(page.getByText(/Submission date corrected from/)).toBeVisible();
   await page.reload();
-  await page
-    .getByRole("button", { name: "View Juniper Studio application" })
-    .click();
+  await expect(page.getByText("2 independent attempts")).toBeVisible();
   await expect(page.getByText(/Submission date corrected from/)).toBeVisible();
 });
 
