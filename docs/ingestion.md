@@ -103,24 +103,62 @@ submitted; courtesy lines such as "thank you for your interest" also open talent
 newsletter mail, so they never count alone. Unsubmitted drafts ("complete your application") and
 talent-community sign-ups are not confirmations.
 
-**Company and title** come from weighted candidates in `src/ingestion/fields.ts`. Each source
-proposes values: labelled lines (`Job Title:`), role sentences ("for the X position at Y"), subject
-templates ("Company - Application Received - Title (Req 1)", "Interview Confirmed: X at Y"),
-job-board blocks (LinkedIn, Indeed), calendar event lines, signatures and the sender. Agreement adds
-weight; the sender's own domain confirms a value the message names but never invents one or
-re-confirms the sender's display name. Validators reject sentence fragments, requisition numbers and
-platform names, because a wrong title or company creates a separate job opening.
+**Company and title** come from candidates in `src/ingestion/fields.ts`. Each source proposes
+safe values. Multiple rules, repeated mentions, and wrapped/flattened representations from the same
+source contribute only their strongest support. Credible conflicting names or roles produce an
+`AMBIGUOUS` decision and a `CONFLICTING_FIELDS` review item before any opening or attempt is created.
+The persisted diagnostics contain bounded sanitized candidates and source categories, never source
+sentences. Scores are heuristic support weights, not calibrated probabilities. Candidate and span
+limits prevent adversarial input from growing diagnostics or comparison work without bound.
 
-**Measurement.** `tests/corpus/emails.ts` is a labelled corpus of realistic hiring emails
-(hosted ATS templates, job boards, recruiters, calendar invites, and negatives such as job alerts
-and unfinished-application reminders). `tests/corpus/holdout.ts` holds emails written after tuning
-and never used for it. Run `npm run eval:parser` (or `npm run eval:parser holdout`) for per-field
-accuracy and a list of every miss. `tests/corpus.test.ts` fails if any corpus email regresses, or if
-the held-out set ever yields a wrong or invented value or drops below its accuracy floor.
+`src/ingestion/regions.ts` separates current content, signatures, and quoted history. Quoted text
+cannot supply current event assertions, job links, application IDs, or submitted contact details.
+HTML blockquotes preserve those boundaries. Signatures provide weak employer evidence. LinkedIn
+and Indeed layout extraction requires a board sender, a receipt anchor, and the expected layout;
+ordinary footer adjacency is not a title source.
 
-To improve the extractor: add the failing email to the corpus with its correct labels, make it pass
-without breaking others, then check the held-out score. When a held-out case informs a fix, move it
-into the corpus and write a fresh held-out case, so the held-out score stays honest.
+Employer domain corroboration uses `tldts` and the Public Suffix List, including private tenant
+boundaries. A full normalized name must match the registrable label, or an explicitly supplied
+alias. Prefix matches never establish an employer, and domains never invent missing company names.
+See [Public Suffix List](https://publicsuffix.org/learn/) and
+[tldts](https://github.com/remusao/tldts).
+
+**Calendars.** Bounded `text/calendar` MIME parts pass the same privacy screen as all other
+representations. `ical.js` reads one nonrecurring interview event per part without loading external
+resources or expanding recurrences. Supported REQUESTs retain a hashed UID, revision sequence,
+organizer domain, and an absolute `scheduledFor` time separately from the email's `occurredAt`.
+Floating or unknown-zone times, recurring events, malformed data, conflicting parts, and tentative
+requests require review. CANCEL messages remain review items and never create a scheduled event.
+Accepted UIDs can identify later revisions; duplicate revisions link evidence to the accepted event,
+and stale or conflicting revisions cannot overwrite it. UID matching remains owner-scoped and
+cannot override an explicit conflicting application ID. The formats are specified by
+[RFC 5545](https://www.rfc-editor.org/rfc/rfc5545) and
+[RFC 6047](https://www.rfc-editor.org/rfc/rfc6047).
+
+**Measurement.** `tests/corpus/emails.ts` is the synthetic development/regression corpus.
+`tests/corpus/holdout.ts` retains fixed evaluation cases. Disclosed failures used to guide fixes are
+promoted to development; replacement cases written by the same developer are not independent
+proof of generalization. These small synthetic sets do not establish real-mail accuracy. For that,
+use independently labelled, sanitized data grouped by employer/template family and a fixed test
+set that does not guide development.
+
+Run `npm run eval:parser` or `npm run eval:parser -- holdout` for accuracy, emitted-value precision,
+positive-field recall, coverage, support counts, and individual misses. Correct empty values count
+only toward accuracy, never toward positive recall or precision. Undefined precision/recall is
+reported as `n/a`. `tests/corpus-ingestion.test.ts` also runs every positive development email
+through a strict model of generated Gmail discovery queries, header/privacy gates, extraction, and
+final database processing. This model is not a live Gmail integration test. Mutation tests check
+wrapping, quoted history, footers, and repeated evidence; pipeline tests assert that ambiguous
+values never create false applications.
+
+**Upgrade preview.** `npm run preview:parser -- original.eml --baseline-ref COMMIT` compares the
+current extractor with a locally available Git revision using the current MIME decoding and installed
+dependencies. It creates a temporary checkout for code comparison, screens every representation,
+and prints only safe structured proposals and field changes. It does not read Gmail, access a
+production database, or update events. Sensitive inputs report only `SKIPPED_SENSITIVE`. The
+ordinary recheck still protects all accepted events and review decisions. Inspect preview changes
+and use the existing owner review/correction actions for historical mistakes; a version bump is not
+permission to rewrite accepted history.
 
 ## 7. Reconciliation and provenance
 

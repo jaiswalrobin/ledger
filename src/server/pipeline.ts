@@ -9,7 +9,7 @@ import { atsKeyId } from "../domain/normalization.ts";
 import { redactSubject } from "../ingestion/eml.ts";
 import { EXTRACTOR_VERSION, extractSignal } from "../ingestion/extract.ts";
 import { classifyHeaders } from "../ingestion/header-gate.ts";
-import { hasSensitiveContent } from "../ingestion/privacy.ts";
+import { hasSensitiveMessage } from "../ingestion/privacy.ts";
 import { usableEventDate } from "../ingestion/dates.ts";
 import {
   isRecruitingSenderDomain,
@@ -250,13 +250,7 @@ async function run(
   });
   if (
     gate.kind === "SKIP_SENSITIVE" ||
-    [
-      m.subject,
-      m.text,
-      ...(m.alternativeTexts ?? []),
-      m.inspectionHtml ?? "",
-      ...(m.calendarParts ?? []).map(part => part.content.replace(/\r?\n[ \t]/g, "").replace(/\\[nN]/g, " ")),
-    ].some(hasSensitiveContent)
+    hasSensitiveMessage(m)
   ) {
     // Nothing derived from a credential-like message is kept, including its subject.
     await insertArtifact("SKIPPED_SENSITIVE", null, null, null);

@@ -10,6 +10,20 @@ belong to one opening, and separate submissions remain separate attempts. Emails
 that identify an employer but not a role stay in review. A role absent from the
 email must be supplied by the owner; Ledger does not invent it.
 
+## Previewing a parser improvement
+
+For an original `.eml` already available locally, run:
+
+```sh
+npm run preview:parser -- original.eml --baseline-ref COMMIT
+```
+
+The output compares extractor proposals, not database application outcomes. It uses current MIME
+decoding and installed dependencies for both versions, prints no message bodies, and changes no
+accepted history. Sensitive content is excluded before either extractor runs. The baseline commit
+must already exist locally. Use the preview to identify records needing an owner-reviewed correction;
+rechecking continues to preserve existing decisions.
+
 ## After deploying a parser improvement
 
 1. Merge the reviewed changes and wait for Ledger CI/CD on `main` to succeed.

@@ -10,7 +10,7 @@ import { cleanTitle, extractCompanyAndTitle } from "./fields.ts";
 import { messageRegions } from "./regions.ts";
 import { extractCalendar } from "./calendar.ts";
 
-export const EXTRACTOR_VERSION = "rules-7";
+export const EXTRACTOR_VERSION = "rules-8";
 
 /**
  * Canonical form for matching: typographic quotes/dashes become ASCII, invisible characters are

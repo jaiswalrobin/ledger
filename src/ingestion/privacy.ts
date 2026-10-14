@@ -1,3 +1,5 @@
+import type { ParsedMessage } from "./source.ts";
+
 const URL_PATTERN = /https?:\/\/[^\s<>"')\]]+/gi;
 
 /** Phrases that only appear when a message delivers or acts on a credential. */
@@ -56,6 +58,13 @@ export function hasSensitiveContent(text: string): boolean {
     DELIVERED_SECRET.test(prose) ||
     JWT.test(prose)
   );
+}
+
+/** Every transient representation is screened before extraction, including folded calendar data. */
+export function hasSensitiveMessage(message: ParsedMessage): boolean {
+  return [message.subject, message.text, ...(message.alternativeTexts ?? []), message.inspectionHtml ?? "",
+    ...(message.calendarParts ?? []).map(part => part.content.replace(/\r?\n[ \t]/g, "").replace(/\\[nN]/g, " ")),
+  ].some(hasSensitiveContent);
 }
 
 /** Field-level screen: anything URL-shaped, token-shaped or credential-like is never stored. */
