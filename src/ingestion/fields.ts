@@ -7,6 +7,7 @@
  * look like a job title or an organisation, because a wrong value is worse than none: it creates a
  * separate job opening.
  */
+import { parse as parseDomain } from "tldts";
 import type { FieldDecision } from "./source.ts";
 import { safeField } from "./privacy.ts";
 import { isRecruitingSenderDomain, senderDomain } from "./ats.ts";
@@ -22,6 +23,8 @@ export interface FieldInput {
   /** Extra title suggestions from structured sources (Workday URL slug, employer templates). */
   titleHints?: readonly { value: string; weight: number }[];
   companyHints?: readonly { value: string; weight: number }[];
+  /** Explicit aliases corroborate named candidates only; they never invent an employer. */
+  companyAliases?: readonly { company: string; domain: string }[];
 }
 
 type Candidate = { value: string; order: number; fromContent: boolean; evidence: Map<string, number>; spans: { representation: string; start: number; end: number }[] };
@@ -137,7 +140,7 @@ export function cleanCompany(
   return value;
 }
 
-const compact = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+const compact = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
 // ---- the sender's organisation, as evidence -----------------------------------------------
 
@@ -149,10 +152,8 @@ function domainHints(input: FieldInput): string[] {
   const labels: string[] = [];
   const add = (domain: string) => {
     if (!domain || isRecruitingSenderDomain(domain)) return;
-    const parts = domain.split(".").filter(Boolean);
-    // The registrable label: "careers.acme.co.uk" -> "acme", "hooli.example" -> "hooli".
-    const generic = /^(?:co|com|org|net|ac|gov|edu|example|io|ai|app|dev|careers|jobs|mail|email|hr|recruiting|talent)$/i;
-    const label = [...parts].reverse().find((p, i) => i > 0 && !generic.test(p)) ?? parts[0];
+    const parsed = parseDomain(domain, { allowPrivateDomains: true, validateHostname: true });
+    const label = parsed.isIp ? null : parsed.domainWithoutSuffix;
     if (label && !FREEMAIL.test(label) && !PLATFORMS.test(label) && label.length >= 2)
       labels.push(label.toLowerCase());
   };
@@ -279,7 +280,9 @@ export function extractCompanyAndTitle(input: FieldInput): {
   const flat = body.replace(/\s+/g, " ");
   const lines = body.split("\n").map((l) => l.trim());
   const hints = domainHints(input);
-  const matchesDomain = (v: string) => hints.some((h) => compact(v) === h || (h.length >= 4 && compact(v).startsWith(h)));
+  const matchesDomain = (value: string) => hints.some(h => compact(value) === compact(h)) ||
+    (input.companyAliases ?? []).some(alias => compact(alias.company) === compact(value) &&
+      hints.includes(parseDomain(alias.domain, { allowPrivateDomains: true }).domainWithoutSuffix ?? ""));
 
   for (const h of input.titleHints ?? []) add(titles, cleanTitle(h.value), h.weight);
   for (const h of input.companyHints ?? []) add(companies, cleanCompany(h.value), h.weight);
