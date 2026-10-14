@@ -3,7 +3,7 @@ import { CalendarClock, PencilLine, Sparkles } from "lucide-react";
 import type { Stage, Outcome } from "../../src/domain/types.ts";
 import type { OpeningView, ReviewView } from "../../src/server/queries.ts";
 import { CompanyMark } from "./ui.tsx";
-import { date, label, localInstant, reasonText, relative } from "../lib.ts";
+import { date, label, localInstant, reasonText, relative, gmailMessageUrl } from "../lib.ts";
 
 const EVENT_KINDS = [
   "CONFIRMATION_RECEIVED",
@@ -148,6 +148,8 @@ export function ReviewCard({
         : "",
     ),
     [email, setEmail] = useState(review.fields.applicantEmail ?? "");
+  const [creating,setCreating]=useState(false);
+  const sourceUrl=gmailMessageUrl(review.mailboxAddress,review.providerMessageId);
   const occurredAt = () =>
     review.originalMessageAt && at === localInstant(review.originalMessageAt)
       ? review.originalMessageAt
@@ -182,6 +184,7 @@ export function ReviewCard({
         <span aria-hidden>·</span>
         {review.sourceKind === "GMAIL" ? "Connected Gmail" : "Selected email import"}
       </p>
+      {sourceUrl && <p><a href={sourceUrl} target="_blank" rel="noopener noreferrer">Open source in Gmail ↗</a></p>}
       <div className="review-why">
         <Sparkles size={16} aria-hidden />
         <p>{reasonText[review.reason] ?? "This update needs your review."}</p>
@@ -196,6 +199,17 @@ export function ReviewCard({
           <dd>{review.fields.title ?? "Unknown"}</dd>
         </div>
       </dl>
+      {(["company","title"] as const).map(field=>{
+        const decision=review.fields.fieldDecisions?.[field];
+        if(decision?.state!=="AMBIGUOUS")return null;
+        return <div className="suggestions" key={field}>
+          <span className="suggestions-label">Choose {field==="company"?"an employer":"a role"}</span>
+          <div className="suggestion-list">{decision.candidates.map(candidate=><button type="button" className="suggestion" disabled={busy} key={candidate.value} onClick={()=>{
+            if(field==="company")setCompany(candidate.value);else setTitle(candidate.value);
+            setOpeningId("");setCreating(true);
+          }}>{candidate.value}</button>)}</div>
+        </div>;
+      })}
 
       {review.candidates.length > 0 && (
         <div className="suggestions">
@@ -276,7 +290,7 @@ export function ReviewCard({
           </button>
         </div>
       </div>
-      <details className="correction">
+      <details className="correction" open={creating} onToggle={event=>setCreating(event.currentTarget.open)}>
         <summary>Create an application from this email</summary>
         <div className="create-review">
           <label className="field wide">

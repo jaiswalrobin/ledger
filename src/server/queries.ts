@@ -339,6 +339,8 @@ export interface ReviewView {
   createdAt: string;
   candidates: ReviewCandidate[];
   candidateOpenings: { openingId: string; title: string; company: string }[];
+  mailboxAddress: string | null;
+  providerMessageId: string | null;
 }
 
 export async function listReviews(
@@ -356,12 +358,15 @@ export async function listReviews(
     subject_redacted: string | null;
     source_kind: "GMAIL" | "FORWARDED_EML";
     original_message_at: unknown;
+    mailbox_address: string | null;
+    provider_message_id: string | null;
   }>(
     `SELECT r.id, r.reason_code, r.created_at, r.candidate_attempt_ids, r.candidate_opening_ids, s.event_kind, s.fields,
-            a.subject_redacted, a.source_kind, a.original_message_at
+            a.subject_redacted, a.source_kind, a.original_message_at,m.address AS mailbox_address,a.provider_message_id
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
        JOIN source_artifacts a ON a.id = r.source_artifact_id AND a.user_id = r.user_id
+       LEFT JOIN connected_mailboxes m ON m.id=a.mailbox_id AND m.user_id=a.user_id
       WHERE r.user_id = $1 AND r.state = 'OPEN' ORDER BY r.created_at DESC, r.id`,
     [userId],
   );
@@ -424,6 +429,7 @@ export async function listReviews(
     candidateOpenings: r.candidate_opening_ids.flatMap(
       (id) => openingInfo.get(id) ?? [],
     ),
+    mailboxAddress:r.mailbox_address,providerMessageId:r.provider_message_id,
   }));
 }
 

@@ -187,6 +187,16 @@ export function cleanCompany(
 
 const compact = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
+/** Corroborates an existing employer, never derives one from a domain. Private tenant suffixes
+ * remain boundaries and recruiting/freemail domains do not assert an employer's identity. */
+export function employerDomain(domain:string,company:string):string|null {
+  if(isRecruitingSenderDomain(domain))return null;
+  const parsed=parseDomain(domain,{allowPrivateDomains:true,validateHostname:true});
+  const label=parsed.domainWithoutSuffix;
+  if(!label||parsed.isIp||FREEMAIL.test(label)||PLATFORMS.test(label))return null;
+  return compact(companyKey(company))===compact(label)?parsed.domain:null;
+}
+
 // ---- the sender's organisation, as evidence -----------------------------------------------
 
 const FREEMAIL =

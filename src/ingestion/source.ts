@@ -7,6 +7,9 @@ import type { ApplicationEventKind, AtsKey } from "../domain/types.ts";
  */
 export interface ParsedMessage {
   messageId: string | null;
+  /** Transient RFC identifiers. Only hashes are persisted; ambiguous/oversized chains are ignored. */
+  replyMessageIds?: readonly string[];
+  threadContextUncertain?: boolean;
   fromName: string;
   fromAddress: string | null;
   /** Original To recipients only. Cc/Bcc and forwarding recipients are deliberately excluded. */

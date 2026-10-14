@@ -41,13 +41,23 @@ interface OpeningRow {
 export async function loadOpenings(
   db: Db,
   userId: string,
+  filter?: {id?:string;title?:string;atsKey?:AtsKey|null;canonicalUrl?:string|null},
 ): Promise<JobOpening[]> {
+  const params:unknown[]=[userId];
+  const conditions:string[]=[];
+  const bind=(value:unknown)=>{params.push(value);return `$${params.length}`;};
+  if(filter?.id)conditions.push(`o.id=${bind(filter.id)}::uuid`);
+  else if(filter?.atsKey)conditions.push(`o.ats_provider=${bind(normalizedText(filter.atsKey.provider))} AND o.ats_tenant=${bind(normalizedText(filter.atsKey.tenant))} AND o.requisition_id=${bind(filter.atsKey.requisitionId)}`);
+  else if(filter?.title){
+    const title=`lower(regexp_replace(btrim(o.title),'\\s+',' ','g'))=${bind(normalizedText(filter.title))}`;
+    conditions.push(filter.canonicalUrl?`(${title} OR o.canonical_url=${bind(filter.canonicalUrl)})`:title);
+  }
   const { rows } = await db.query<OpeningRow>(
     `SELECT o.id, c.canonical_name AS company, o.title, o.location, o.ats_provider, o.ats_tenant,
             o.requisition_id, o.canonical_url
        FROM job_openings o JOIN companies c ON c.id = o.company_id AND c.user_id = o.user_id
-      WHERE o.user_id = $1`,
-    [userId],
+      WHERE o.user_id = $1${conditions.length?" AND "+conditions.join(" AND "):""}`,
+    params,
   );
   return rows.map((r) => ({
     id: r.id,

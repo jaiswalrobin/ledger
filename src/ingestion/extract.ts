@@ -407,9 +407,9 @@ function extractOne(
   const detected = detectKind(`${message.subject}.\n${body}`);
   let { kind } = detected;
   const reasons = detected.reasons;
-  if (regions.hasQuotedHistory && /^\s*re\s*:/i.test(message.subject) && !detectKind(body).kind) {
+  if (/^\s*re\s*:/i.test(message.subject) && !detectKind(body).kind) {
     kind = null;
-    reasons.push("quoted-history-only");
+    reasons.push(regions.hasQuotedHistory ? "quoted-history-only" : "reply-subject-only");
   }
   reasons.push(...calendar.reasons);
   if (calendar.reasons.includes("interview-cancelled")) kind = null;
@@ -441,7 +441,7 @@ function extractOne(
   }
 
   const { company, title, decisions } = extractCompanyAndTitle({
-    subject: message.subject,
+    subject: message.subject.replace(/^(?:\s*re\s*:\s*)+/i,""),
     fromName: message.fromName,
     fromAddress: message.fromAddress,
     body,

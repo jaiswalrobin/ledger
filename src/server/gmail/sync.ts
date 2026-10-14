@@ -407,6 +407,7 @@ export async function syncMailbox(
       id: string,
       enveloped: boolean,
       senderAuthenticated: boolean,
+      threadId?: string,
     ): IngestSource =>
       enveloped
         ? { kind: "FORWARDED_EML" }
@@ -415,6 +416,7 @@ export async function syncMailbox(
             mailboxId,
             providerMessageId: id,
             senderAuthenticated,
+            ...(threadId ? {providerThreadId:threadId}:{}),
           };
 
     const finish = (id: string, outcome: string) =>
@@ -568,6 +570,7 @@ export async function syncMailbox(
                 id,
                 original.isAttached === true || original.envelopeDate !== null,
                 headers.senderAuthenticated === true,
+                headers.threadId,
               ),
               original,
               observedAt: now(),

@@ -15,6 +15,11 @@ export const label = (value: string) =>
     .replaceAll("_", " ")
     .replace(/^./, (x) => x.toUpperCase());
 
+export function gmailMessageUrl(address:string|null,id:string|null):string|null {
+  if(!address||!id||!/^[a-f0-9]{8,32}$/i.test(id)||!/^[^\s<>@]+@[^\s<>@]+$/.test(address))return null;
+  return `https://mail.google.com/mail/?authuser=${encodeURIComponent(address)}#all/${id}`;
+}
+
 export const date = (value: string | null) =>
   value
     ? new Date(value).toLocaleDateString(undefined, {

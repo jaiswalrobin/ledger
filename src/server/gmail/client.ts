@@ -31,6 +31,7 @@ export interface MessageHeadersView {
   subject: string;
   labelIds: string[];
   senderAuthenticated?: boolean;
+  threadId?: string;
   /** RFC 5322 Message-ID, used only to ask Gmail search about this one message. */
   rfcMessageId?: string | null;
 }
@@ -268,6 +269,7 @@ export function createGmailClient(
         ? authenticatedGmailDomain(headers) : null;
       return {
         id,
+        ...(typeof r["threadId"]==="string" && /^[a-zA-Z0-9_-]{1,200}$/.test(r["threadId"]) ? {threadId:r["threadId"]} : {}),
         from,
         subject: header("subject"),
         rfcMessageId: header("message-id") || null,

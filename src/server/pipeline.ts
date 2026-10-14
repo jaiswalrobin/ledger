@@ -23,6 +23,8 @@ import {
   type SignalKind,
 } from "../ingestion/source.ts";
 import type { Db } from "./db.ts";
+import {conversationAttempts,employerOpenings,messageIdKey} from "./conversation.ts";
+import {employerDomain} from "../ingestion/fields.ts";
 import {
   acceptSubmissionEvidence,
   findAttemptsByExternalId,
@@ -47,6 +49,7 @@ export type IngestSource =
       mailboxId: string;
       providerMessageId: string;
       senderAuthenticated?: boolean;
+      providerThreadId?: string;
     }
   // Synthetic fixtures are explicitly trusted by internal demo/test code only.
   // The upload route must never accept this field from a request or message.
@@ -151,6 +154,8 @@ interface Context {
   mailboxId: string | null;
   senderDomain: string;
   senderVerified: boolean;
+  replyMessageKeys: readonly string[];
+  providerThreadId: string | null;
 }
 
 export async function ingestOriginal(
@@ -210,6 +215,8 @@ async function run(
   }
 
   const m = original.message;
+  const replyMessageKeys=(m.replyMessageIds??[]).map(messageIdKey).filter((key):key is string=>key!==null);
+  const providerThreadId=source.kind==="GMAIL"&&!m.threadContextUncertain?source.providerThreadId??null:null;
   const usableDate = usableEventDate(m.date, observedAt);
   const artifactId = existing?.id ?? randomUUID();
   const originalKey = originalKeyOf(original);
@@ -226,13 +233,16 @@ async function run(
   ) => existing
     ? tx.query(
         `UPDATE source_artifacts SET body_access_decision=$3, subject_redacted=$4, original_key=$5,
-          extractor_version=$6, original_message_at=$7, sender_authenticated=$8,sender_domain=$9,sender_verified=$10 WHERE id=$1 AND user_id=$2`,
-        [artifactId, userId, decision, subject, key, extractorVersion, usableDate, trustedSender, decision === "SKIPPED_SENSITIVE" ? null : fromDomain.toLowerCase(), source.kind === "GMAIL" && source.senderAuthenticated === true],
+          extractor_version=$6, original_message_at=$7, sender_authenticated=$8,sender_domain=$9,sender_verified=$10,
+          provider_thread_id=$11,message_id_key=$12,reply_message_keys=$13 WHERE id=$1 AND user_id=$2`,
+        [artifactId, userId, decision, subject, key, extractorVersion, usableDate, trustedSender, decision === "SKIPPED_SENSITIVE" ? null : fromDomain.toLowerCase(), source.kind === "GMAIL" && source.senderAuthenticated === true,
+         decision==="SKIPPED_SENSITIVE"?null:providerThreadId,decision==="SKIPPED_SENSITIVE"?null:messageIdKey(m.messageId),decision==="SKIPPED_SENSITIVE"?[]:replyMessageKeys],
       )
     : tx.query(
       `INSERT INTO source_artifacts (id, user_id, source_kind, mailbox_id, provider_message_id, original_rfc_message_id,
-         source_fingerprint, original_message_at, envelope_message_at, body_access_decision, extractor_version, original_key, subject_redacted,sender_authenticated,sender_domain,sender_verified)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+         source_fingerprint, original_message_at, envelope_message_at, body_access_decision, extractor_version, original_key, subject_redacted,sender_authenticated,sender_domain,sender_verified,
+         provider_thread_id,message_id_key,reply_message_keys)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
       [
         artifactId,
         userId,
@@ -250,6 +260,9 @@ async function run(
         trustedSender,
         decision === "SKIPPED_SENSITIVE" ? null : fromDomain.toLowerCase(),
         source.kind === "GMAIL" && source.senderAuthenticated === true,
+        decision==="SKIPPED_SENSITIVE"?null:providerThreadId,
+        decision==="SKIPPED_SENSITIVE"?null:messageIdKey(m.messageId),
+        decision==="SKIPPED_SENSITIVE"?[]:replyMessageKeys,
       ],
     );
   const decision =
@@ -322,6 +335,7 @@ async function run(
     mailboxId: source.kind === "GMAIL" ? source.mailboxId : null,
     senderDomain: fromDomain.toLowerCase(),
     senderVerified: source.kind === "FORWARDED_EML" || source.senderAuthenticated === true,
+    replyMessageKeys,providerThreadId,
   };
 
   if (signal.reasons.includes("conflicting-alternatives"))
@@ -451,6 +465,7 @@ async function apply(
   let strongOpening = false;
   let createdOpening = false;
   let directAttemptId: string | null = null;
+  let directReason = "Exact application ID";
   const calendarPrior = f.calendar ? await latestCalendarRevision(tx,userId,c.signalId,f.calendar.uidKey) : null;
 
   // An accepted calendar UID can link later revisions without inventing applicant contacts.
@@ -468,7 +483,7 @@ async function apply(
           f.calendar.organizerDomain !== calendarPrior.calendar.organizerDomain)
         return fail("CALENDAR_REVISION", known.map(k=>k.attemptId),known.map(k=>k.openingId));
       const { attemptId, openingId: knownOpening } = known[0];
-      const opening = (await loadOpenings(tx, userId)).find((o) => o.id === knownOpening)!;
+      const opening = (await loadOpenings(tx, userId,{id:knownOpening}))[0]!;
       // A revision may omit the company or title, but must not name a different one.
       const differentCompany = f.company && companyKey(f.company) !== companyKey(opening.company);
       const differentTitle = f.title && normalizedText(f.title) !== normalizedText(opening.title);
@@ -476,6 +491,7 @@ async function apply(
         return fail("CALENDAR_REVISION", [attemptId], [opening.id]);
       openingId = opening.id;
       directAttemptId = attemptId;
+      directReason = "Accepted calendar identity";
       strongOpening = true;
     }
   }
@@ -494,9 +510,7 @@ async function apply(
         [...new Set(hits.map((h) => h.openingId))],
       );
     if (hits.length === 1) {
-      const known = (await loadOpenings(tx, userId)).find(
-        (o) => o.id === hits[0]!.openingId,
-      );
+      const known = (await loadOpenings(tx, userId,{id:hits[0]!.openingId}))[0];
       // IDs are scoped to employers/openings. A bare reused ID cannot cross that boundary.
       const matching =
         known &&
@@ -519,9 +533,24 @@ async function apply(
     }
   }
 
+  if (!isConfirmation && !openingId && !f.externalApplicationId && c.mailboxId && c.senderVerified &&
+      (c.replyMessageKeys.length || c.providerThreadId)) {
+    const linked=await conversationAttempts(tx,userId,c.mailboxId,c.senderDomain,c.replyMessageKeys,c.providerThreadId,f);
+    if(linked.some(row=>row.conflicting))return fail("AMBIGUOUS_OPENING",linked.map(row=>row.attemptId),linked.map(row=>row.openingId));
+    if(linked.length>1)return fail("AMBIGUOUS_ATTEMPT",linked.map(row=>row.attemptId),linked.map(row=>row.openingId));
+    if(linked[0]){
+      if(!isTrustedAtsDomain(c.senderDomain)&&!employerDomain(c.senderDomain,linked[0].company))return fail("MISSING_JOB_DETAILS",[linked[0].attemptId],[linked[0].openingId]);
+      openingId=linked[0].openingId;directAttemptId=linked[0].attemptId;directReason="Verified conversation";strongOpening=true;
+    }
+  }
+  if (!isConfirmation && !openingId && (!f.company || !f.title) && c.mailboxId && c.senderVerified && !f.externalApplicationId) {
+    const known=(await employerOpenings(tx,userId,c.senderDomain)).filter(o=>(!f.company||companyKey(f.company)===companyKey(o.company))&&(!f.title||normalizedText(f.title)===normalizedText(o.title)));
+    if(known.length>1)return fail("AMBIGUOUS_OPENING",[],known.map(o=>o.id));
+    if(known[0])openingId=known[0].id;
+  }
   if (!openingId) {
     if (!f.company || !f.title) return fail("MISSING_JOB_DETAILS", [], []);
-    const openings = await loadOpenings(tx, userId);
+    const openings = await loadOpenings(tx, userId,{title:f.title,atsKey:f.atsKey,canonicalUrl:f.canonicalUrl});
     const resolved = resolveOpening(
       {
         company: f.company,
@@ -641,7 +670,7 @@ async function apply(
     ? ({
         kind: "MATCH",
         id: directAttemptId,
-        reason: f.externalApplicationId ? "Exact application ID" : "Accepted calendar identity",
+        reason: directReason,
       } as const)
     : resolveUpdate(openingId, update, attempts);
   if (decision.kind !== "MATCH") {
@@ -658,12 +687,12 @@ async function apply(
   const strongAttempt =
     decision.reason === "Exact application ID" ||
     (decision.reason === "Unique matching submitted email" && strongOpening) ||
-    (decision.reason === SOLE_ATTEMPT &&
+    ((decision.reason === SOLE_ATTEMPT || decision.reason === "Verified conversation") &&
       c.mailboxId !== null &&
       (await attemptConfirmedInMailbox(tx, userId, decision.id, c.mailboxId)));
   if (
     TERMINAL_KINDS.has(kind) &&
-    (!strongAttempt || !c.trustedSender || signal.confidence !== "HIGH")
+    (!strongAttempt || !(c.trustedSender || (c.mailboxId && c.senderVerified && employerDomain(c.senderDomain,(await loadOpenings(tx,userId,{id:openingId}))[0]!.company))) || signal.confidence !== "HIGH")
   )
     return fail("TERMINAL_NEEDS_REVIEW", [decision.id], [openingId]);
 
@@ -732,11 +761,13 @@ export async function reconcileWaitingUpdates(
     mailbox_id: string | null;
     sender_domain: string | null;
     sender_verified: boolean;
+    reply_message_keys: string[];
+    provider_thread_id: string | null;
     confidence: "HIGH" | "LOW";
   }>(
     `SELECT r.id AS review_id, s.id AS signal_id, s.event_kind, s.fields, s.confidence, a.id AS artifact_id, a.source_kind,
             a.original_message_at, a.original_key, a.source_fingerprint, a.sender_authenticated, a.mailbox_id,
-            a.sender_domain,a.sender_verified
+            a.sender_domain,a.sender_verified,a.reply_message_keys,a.provider_thread_id
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
        JOIN source_artifacts a ON a.id = r.source_artifact_id AND a.user_id = r.user_id
@@ -775,6 +806,7 @@ export async function reconcileWaitingUpdates(
         mailboxId: row.mailbox_id,
         senderDomain: row.sender_domain ?? "",
         senderVerified: row.source_kind === "FORWARDED_EML" || row.sender_verified,
+        replyMessageKeys:row.reply_message_keys,providerThreadId:row.provider_thread_id,
       },
       false,
     );
