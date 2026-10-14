@@ -17,7 +17,8 @@
     "migrate": "node --experimental-strip-types scripts/migrate.ts",
     "test:browser": "playwright test",
     "test:postgres": "node --experimental-strip-types --test tests/postgres/*.test.ts",
-    "smoke": "node --experimental-strip-types scripts/smoke.ts"
+    "smoke": "node --experimental-strip-types scripts/smoke.ts",
+    "eval:parser": "node --experimental-strip-types scripts/parser-eval.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.9",

@@ -6,9 +6,9 @@ import type {
   SignalKind,
 } from "./source.ts";
 import { safeField } from "./privacy.ts";
-import { isRecruitingSenderDomain } from "./ats.ts";
+import { cleanTitle, extractCompanyAndTitle } from "./fields.ts";
 
-export const EXTRACTOR_VERSION = "rules-5";
+export const EXTRACTOR_VERSION = "rules-6";
 
 /**
  * Canonical form for matching: typographic quotes/dashes become ASCII, invisible characters are
@@ -82,7 +82,9 @@ const PHRASES: Record<SignalKind, RegExp> = {
     String.raw`\b(?:` +
       [
         String.raw`interview (?:has been |is |was )?(?:confirmed|scheduled|booked|rescheduled|set)`,
-        String.raw`your (?:upcoming |scheduled |next )?interview (?:with|on|at|for|is|tomorrow|today)`,
+        String.raw`your (?:upcoming |scheduled |next )?(?:onsite |on-site |phone |video |virtual |technical |final |panel )?interview (?:with|on|at|for|is|tomorrow|today)`,
+        // "Your onsite interview for the Mechanical Engineer position is confirmed for Monday"
+        String.raw`interview\b[^.!?\n]{0,100}\b(?:is|has been|was|are|have been) (?:now )?(?:confirmed|scheduled|booked|set)`,
         String.raw`calendar invitation`,
         String.raw`confirm(?:ing|ed)? (?:your|the) interview`,
         String.raw`interview (?:details|confirmation|reminder)`,
@@ -101,6 +103,7 @@ const PHRASES: Record<SignalKind, RegExp> = {
         String.raw`invitation to (?:an? )?(?:interview|phone screen)`,
         String.raw`(?:schedule|book|arrange|set up|organize|organise) (?:an? |your |the |some )?(?:first[- ]round |initial |technical |final |video |virtual |phone |quick |brief |short )?(?:interview|phone screen|call|chat|time to (?:talk|chat|speak|meet)|conversation)`,
         String.raw`interview invitation`,
+        String.raw`invite(?:d)? you to (?:complete|take|schedule|record|attend) (?:an? |your |the )?(?:one-way |recorded |video |virtual |online |phone |first |initial )*interview`,
         String.raw`would (?:like|love) to (?:interview|speak with|talk with|talk to|chat|meet|set up)`,
         String.raw`phone screen`,
         String.raw`(?:move|moving|advance|advancing|progress) (?:you )?(?:forward )?to (?:the )?(?:next|interview|first|second|final) (?:round|stage|step)`,
@@ -119,7 +122,8 @@ const PHRASES: Record<SignalKind, RegExp> = {
         String.raw`take[- ]home (?:assignment|exercise|challenge|test|project|task)?`,
         String.raw`technical (?:assessment|challenge|exercise|test|assignment)`,
         String.raw`skills? (?:assessment|test)`,
-        String.raw`hackerrank|codility|codesignal|testgorilla|coderbyte|hirevue`,
+        // HireVue is mostly one-way video interviews, so it is not an assessment signal by itself.
+        String.raw`hackerrank|codility|codesignal|testgorilla|coderbyte`,
         String.raw`assessment (?:link|invitation|invite)`,
         String.raw`(?:complete|take|start|finish) (?:the|an?|your|our) (?:online |technical |short |brief )?(?:assessment|test|challenge|exercise)`,
         String.raw`invited to (?:complete|take) (?:an? |the )?(?:assessment|test|challenge)`,
@@ -127,24 +131,26 @@ const PHRASES: Record<SignalKind, RegExp> = {
       String.raw`)\b`,
     "i",
   ),
+  // Only phrases that say an application was actually received or submitted. Courtesy lines such
+  // as "thank you for your interest" also open talent-community and newsletter mail.
   CONFIRMATION_RECEIVED: new RegExp(
     String.raw`\b(?:` +
       [
-        String.raw`thank(?:s| you) (?:so much |very much )?for (?:applying|your application|your interest|submitting|your submission|considering)`,
+        String.raw`thank(?:s| you) (?:so much |very much )?for (?:applying|your application|submitting|your submission)`,
         String.raw`(?:received|receiving|got) your (?:job )?application`,
-        String.raw`(?:your )?application (?:has been |was |is |had been )?(?:successfully )?(?:received|submitted|sent|complete|completed)`,
+        String.raw`(?:your )?application (?:has been |was |is |had been )?(?:successfully )?(?:received|submitted|sent)`,
         String.raw`successfully (?:submitted|applied|received)`,
-        String.raw`your application (?:to|for|with|at)`,
-        String.raw`you(?:'ve| have)? applied (?:to|for)`,
+        String.raw`you(?:'ve| have)? (?:successfully )?applied (?:to|for)`,
         String.raw`application (?:confirmation|acknowledg(?:e)?ment)`,
         String.raw`confirm(?:ing)? (?:the )?receipt of your`,
-        String.raw`(?:currently )?(?:reviewing|review) your (?:application|candidacy|profile|resume)`,
-        String.raw`your application is (?:now )?(?:under|being) review`,
       ].join("|") +
       String.raw`)\b`,
     "i",
   ),
 };
+
+const NOT_SUBMITTED =
+  /\b(?:haven'?t|have not|has not|not yet)\s+(?:been\s+)?(?:submitted|finished|completed)\b|\bsaved as (?:a )?draft\b|\b(?:complete|finish) your application\b|\bstarted (?:an|your) application\b|\bincomplete application\b|\btalent (?:community|network|pool)\b/i;
 
 const STEP_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>([
   "ASSESSMENT_INVITED",
@@ -169,8 +175,12 @@ export function detectKind(haystack: string): {
   const reasons = hit.map((k) => "phrase:" + k);
   // Boilerplate thank-you text appears inside almost every message, so it only counts alone.
   const specific = hit.filter((k) => k !== "CONFIRMATION_RECEIVED");
-  if (specific.length === 0)
+  if (specific.length === 0) {
+    // A saved draft, an unfinished form or a talent-community sign-up is not a submission.
+    if (hit.length && NOT_SUBMITTED.test(flat))
+      return { kind: null, reasons: [...reasons, "not-submitted"] };
     return { kind: hit.length ? "CONFIRMATION_RECEIVED" : null, reasons };
+  }
   if (specific.length === 1) return { kind: specific[0]!, reasons };
   if (
     specific.length === 2 &&
@@ -307,92 +317,7 @@ function findUrls(text: string): string[] {
   );
 }
 
-// ---- company / title ---------------------------------------------------------------------
-
-/**
- * A captured "title" that is really a status phrase ("Application Update", "Interview
- * Invitation"). Real titles that merely contain such a word ("Application Security Engineer",
- * "Offer Operations Manager") are kept.
- */
-const TITLE_NOISE =
-  /\b(?:update|invitation|status|thank|thanks|confirmation|next steps?|received|submitted|reminder|regarding|your)\b|^(?:job )?(?:application|interview|assessment|offer)s?$|^(?:application|interview|assessment|offer)s? (?:for|with|at|to|from|on|is|has|was)\b/i;
-const COMPANY_CUT =
-  /\s+(?:within|by|before|on|and|for|to|please|as|is|has|we|you|your)\b.*$/i;
-
-function cleanTitle(value: string | null | undefined): string | null {
-  value = safeField(value);
-  if (!value) return null;
-  const title = value
-    .replace(/^["'“]|["'”]$/g, "")
-    .replace(/^(?:(?:position|role|job|post) (?:of|as)|an?)\s+/i, "")
-    .replace(/\s+(?:position|role|job|opening|vacancy)$/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (
-    title.length < 2 ||
-    title.length > 100 ||
-    /https?:|@/.test(title) ||
-    TITLE_NOISE.test(title)
-  )
-    return null;
-  return title;
-}
-
-function cleanCompany(value: string | null | undefined): string | null {
-  value = safeField(value);
-  if (!value) return null;
-  const company = value
-    .replace(COMPANY_CUT, "")
-    .replace(/[\s"'”)]+$/g, "")
-    .replace(
-      /\s+(?:careers|recruiting|recruitment|talent|jobs|hiring|team)$/i,
-      "",
-    )
-    .replace(/\s+/g, " ")
-    .trim();
-  if (
-    company.length < 2 ||
-    company.length > 80 ||
-    // Sentence starts are capitalised; brands like "eBay" or "iRobot" are camel-cased.
-    !/^(?:[A-Z0-9]|[a-z][A-Z])/.test(company) ||
-    /https?:|@/.test(company)
-  )
-    return null;
-  return company;
-}
-
-const BODY = String.raw`[^\n!.?:;]{2,100}?`;
-const COMPANY = String.raw`([A-Z][^!.,\n:]{1,60})`;
-const AT = String.raw`\s+(?:position|role|job)?\s*(?:at|with|@)\s+`;
-
-const P_APPLYING = new RegExp(
-  String.raw`(?:your application (?:to|for|with)|appl(?:ying|ied)\s+(?:to|for|at|with))\s+(?:the\s+)?(${BODY})${AT}${COMPANY}`,
-  "i",
-);
-const P_INTEREST = new RegExp(
-  String.raw`interest in (?:the\s+)?(${BODY})${AT}${COMPANY}`,
-  "i",
-);
-const P_STEP_FOR = new RegExp(
-  String.raw`\b(?:assessment|interview|screen|challenge)\s+for\s+(?:the\s+)?(${BODY})\s+(?:position|role|job)\s+at\s+${COMPANY}`,
-  "i",
-);
-const P_COMPANY_ONLY = new RegExp(
-  String.raw`(?:thank(?:s| you) for (?:applying|your (?:application|interest))\s+(?:to|at|in|with)|your application (?:to|with)|application to)\s+(?:the\s+)?${COMPANY}`,
-  "i",
-);
-const P_INTERVIEW_TITLE = new RegExp(
-  String.raw`interview (?:for|with)\s+(?:the\s+)?(${BODY})\s+(?:position|role|job)\b`,
-  "i",
-);
-const P_APPLICATION_FOR = new RegExp(
-  String.raw`application for (?:the\s+)?(${BODY})\s+(?:position|role|job)\b`,
-  "i",
-);
-const P_SUBJECT_AT = new RegExp(
-  String.raw`^(?:[^:]{2,50}:\s*)?([^:]{2,100}?)\s+(?:at|@)\s+${COMPANY}$`,
-  "i",
-);
+// ---- labelled values -------------------------------------------------------------------
 
 function labelled(text: string, labels: string): string | null {
   const m = new RegExp(
@@ -400,28 +325,6 @@ function labelled(text: string, labels: string): string | null {
     "im",
   ).exec(text);
   return m?.[1]?.trim() ?? null;
-}
-
-function senderCompany(message: ParsedMessage): string | null {
-  const domain = message.fromAddress?.split("@")[1] ?? "";
-  if (!isRecruitingSenderDomain(domain)) return null;
-  const name = message.fromName
-    .replace(/\b(?:via|from)\b.*$/i, "")
-    .replace(
-      /\b(?:careers?|recruit(?:ing|ment)|talent|jobs?|hiring|hr|team|notifications?|no-?reply|do not reply)\b/gi,
-      "",
-    )
-    .replace(/\s+/g, " ")
-    .trim();
-  if (
-    !name ||
-    name.includes("@") ||
-    /^(?:greenhouse|lever|workday|ashby|smartrecruiters|icims|jobvite|workable|taleo|successfactors|bamboohr|jazzhr|recruitee|teamtailor|breezy|pinpoint|comeet|hireology|eightfold|avature|brassring|phenom|jobadder|hackerrank|codility|codesignal|karat|hirevue|testgorilla|coderbyte|modern ?hire|wellfound)$/i.test(
-      name,
-    )
-  )
-    return null;
-  return cleanCompany(name);
 }
 
 /** A job requisition is employer-scoped; Candidate ID must never identify a submission. */
@@ -440,59 +343,6 @@ function ibmJobDetails(message: ParsedMessage, body: string) {
   const conflict = candidates.some(c => c.id !== first.id ||
     (c.title && first.title && c.title.toLowerCase() !== first.title.toLowerCase()));
   return { id: first.id, title: first.title, conflict };
-}
-
-function extractCompanyAndTitle(
-  message: ParsedMessage,
-  body: string,
-  workdaySlugTitle: string | null,
-) {
-  const subject = message.subject;
-  // Hard-wrapped plain text splits "applying for the Senior Backend\nEngineer position at Acme".
-  const flatBody = flatten(body);
-  const both = (re: RegExp) => {
-    for (const source of [subject, body, flatBody]) {
-      const m = re.exec(source);
-      if (m) return { title: cleanTitle(m[1]), company: cleanCompany(m[2]) };
-    }
-    return null;
-  };
-  const first = (re: RegExp, source: string) => re.exec(source)?.[1];
-
-  let title = cleanTitle(
-    labelled(body, "job title|position(?: title)?|role|title"),
-  );
-  let company = cleanCompany(labelled(body, "company|employer|organization"));
-
-  const ibm = ibmJobDetails(message, body);
-  if (ibm && !ibm.conflict) {
-    company ??= "IBM";
-    title ??= ibm.title;
-  }
-
-  for (const re of [P_APPLYING, P_INTEREST, P_STEP_FOR]) {
-    const found = both(re);
-    if (found) {
-      title ??= found.title;
-      company ??= found.company;
-    }
-  }
-  title ??=
-    cleanTitle(first(P_INTERVIEW_TITLE, body)) ??
-    cleanTitle(first(P_APPLICATION_FOR, body)) ??
-    cleanTitle(first(P_INTERVIEW_TITLE, flatBody)) ??
-    cleanTitle(first(P_APPLICATION_FOR, flatBody));
-  for (const source of [subject, body, flatBody]) {
-    company ??= cleanCompany(P_COMPANY_ONLY.exec(source)?.[1]);
-  }
-  const fromSubject = P_SUBJECT_AT.exec(subject);
-  if (fromSubject) {
-    title ??= cleanTitle(fromSubject[1]);
-    company ??= cleanCompany(fromSubject[2]);
-  }
-  title ??= cleanTitle(workdaySlugTitle);
-  company ??= senderCompany(message);
-  return { company, title };
 }
 
 // ---- main ---------------------------------------------------------------------------------
@@ -528,11 +378,17 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
     genericUrl ??= match ? null : genericJobUrl(url);
   }
 
-  const { company, title } = extractCompanyAndTitle(
-    message,
+  const { company, title } = extractCompanyAndTitle({
+    subject: message.subject,
+    fromName: message.fromName,
+    fromAddress: message.fromAddress,
     body,
-    workdaySlugTitle,
-  );
+    titleHints: [
+      ...(workdaySlugTitle ? [{ value: workdaySlugTitle, weight: 1 }] : []),
+      ...(ibm && !ibm.conflict && ibm.title ? [{ value: ibm.title, weight: 3 }] : []),
+    ],
+    companyHints: ibm && !ibm.conflict ? [{ value: "IBM", weight: 3 }] : [],
+  });
   // Candidate IDs identify a person, not a particular submission.
   const externalId =
     /\bapplication\s*(?:id|number|no\.?|#|ref(?:erence)?)\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9_-]{3,40})/i.exec(

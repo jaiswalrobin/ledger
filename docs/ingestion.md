@@ -95,6 +95,33 @@ Workflow: user searches/selects relevant messages in a primary account and choos
 
 Ordinary inline forwards may be partially supported later but are weaker because headers and timestamps can be rewritten, missing or ambiguous.
 
+## 6a. How fields are extracted, and how the extractor is measured
+
+**Type** (confirmation, assessment, interview, rejection, offer) comes from phrase rules in
+`src/ingestion/extract.ts`. A confirmation needs a phrase that says an application was received or
+submitted; courtesy lines such as "thank you for your interest" also open talent-community and
+newsletter mail, so they never count alone. Unsubmitted drafts ("complete your application") and
+talent-community sign-ups are not confirmations.
+
+**Company and title** come from weighted candidates in `src/ingestion/fields.ts`. Each source
+proposes values: labelled lines (`Job Title:`), role sentences ("for the X position at Y"), subject
+templates ("Company - Application Received - Title (Req 1)", "Interview Confirmed: X at Y"),
+job-board blocks (LinkedIn, Indeed), calendar event lines, signatures and the sender. Agreement adds
+weight; the sender's own domain confirms a value the message names but never invents one or
+re-confirms the sender's display name. Validators reject sentence fragments, requisition numbers and
+platform names, because a wrong title or company creates a separate job opening.
+
+**Measurement.** `tests/corpus/emails.ts` is a labelled corpus of realistic hiring emails
+(hosted ATS templates, job boards, recruiters, calendar invites, and negatives such as job alerts
+and unfinished-application reminders). `tests/corpus/holdout.ts` holds emails written after tuning
+and never used for it. Run `npm run eval:parser` (or `npm run eval:parser holdout`) for per-field
+accuracy and a list of every miss. `tests/corpus.test.ts` fails if any corpus email regresses, or if
+the held-out set ever yields a wrong or invented value or drops below its accuracy floor.
+
+To improve the extractor: add the failing email to the corpus with its correct labels, make it pass
+without breaking others, then check the held-out score. When a held-out case informs a fix, move it
+into the corpus and write a fresh held-out case, so the held-out score stays honest.
+
 ## 7. Reconciliation and provenance
 
 Every source item becomes a normalized **source artifact** with:
