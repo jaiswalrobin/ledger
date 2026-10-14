@@ -72,7 +72,9 @@ export type ReviewReason =
   | "CONFLICTING_ALTERNATIVES"
   | "INTERVIEW_CANCELLED"
   | "NOT_SUBMITTED"
-  | "CONFLICTING_FIELDS";
+  | "CONFLICTING_FIELDS"
+  | "UNCERTAIN_CALENDAR"
+  | "CALENDAR_REVISION";
 
 export type IngestOutcome =
   | {
@@ -122,6 +124,7 @@ export function originalKeyOf(original: ParsedOriginal): string | null {
       normalized(m.subject),
       normalized(m.text),
       [...new Set((m.alternativeTexts ?? []).map(normalized))].sort(),
+      ...(m.calendarParts?.length ? [m.calendarParts.map(part => [part.method, normalized(part.content)]).sort()] : []),
     ]),
   );
 }
@@ -252,6 +255,7 @@ async function run(
       m.text,
       ...(m.alternativeTexts ?? []),
       m.inspectionHtml ?? "",
+      ...(m.calendarParts ?? []).map(part => part.content.replace(/\r?\n[ \t]/g, "").replace(/\\[nN]/g, " ")),
     ].some(hasSensitiveContent)
   ) {
     // Nothing derived from a credential-like message is kept, including its subject.
@@ -317,6 +321,8 @@ async function run(
     return review(base, "AMBIGUOUS_OPENING", [], []);
   if (signal.reasons.includes("interview-cancelled"))
     return review(base, "INTERVIEW_CANCELLED", [], []);
+  if (signal.reasons.includes("uncertain-calendar"))
+    return review(base, "UNCERTAIN_CALENDAR", [], []);
   // Receipt wording next to "not submitted"/"not received": contradictory, so never dismissed.
   if (signal.reasons.includes("not-submitted"))
     return review(base, "NOT_SUBMITTED", [], []);
@@ -432,6 +438,31 @@ async function apply(
   let strongOpening = false;
   let createdOpening = false;
   let directAttemptId: string | null = null;
+
+  // An accepted calendar UID can link later revisions without inventing applicant contacts.
+  // Explicit application IDs take precedence; conflicting identities never fall back to a UID.
+  if (!isConfirmation && !f.externalApplicationId && f.calendar) {
+    const known = await tx.query<{ attempt_id: string; opening_id: string }>(
+      `SELECT DISTINCT e.attempt_id,a.job_opening_id AS opening_id FROM extracted_signals s
+       JOIN event_evidence ev ON ev.artifact_id=s.source_artifact_id AND ev.user_id=s.user_id
+       JOIN application_events e ON e.id=ev.event_id AND e.user_id=ev.user_id
+       JOIN application_attempts a ON a.id=e.attempt_id AND a.user_id=e.user_id
+       WHERE s.user_id=$1 AND s.id<>$2 AND e.review_state='ACCEPTED'
+         AND s.fields->'calendar'->>'uidKey'=$3`,
+      [userId, c.signalId, f.calendar.uidKey],
+    );
+    if (known.rows.length > 1)
+      return fail("CALENDAR_REVISION", known.rows.map(row => row.attempt_id), known.rows.map(row => row.opening_id));
+    if (known.rows[0]) {
+      const opening = (await loadOpenings(tx, userId)).find(item => item.id === known.rows[0]!.opening_id)!;
+      if ((f.company && f.company.toLowerCase() !== opening.company.toLowerCase()) ||
+          (f.title && f.title.toLowerCase() !== opening.title.toLowerCase()))
+        return fail("CALENDAR_REVISION", [known.rows[0].attempt_id], [opening.id]);
+      openingId = opening.id;
+      directAttemptId = known.rows[0].attempt_id;
+      strongOpening = true;
+    }
+  }
 
   // An observed application id is the strongest link for any update.
   if (!isConfirmation && f.externalApplicationId) {
@@ -608,6 +639,32 @@ async function apply(
   )
     return fail("TERMINAL_NEEDS_REVIEW", [decision.id], [openingId]);
 
+  if (f.calendar) {
+    const previous = await tx.query<{
+      event_id: string; attempt_id: string; fields: ExtractedSignal["fields"];
+    }>(
+      `SELECT e.id AS event_id,e.attempt_id,s.fields FROM extracted_signals s
+       JOIN event_evidence ev ON ev.artifact_id=s.source_artifact_id AND ev.user_id=s.user_id
+       JOIN application_events e ON e.id=ev.event_id AND e.user_id=ev.user_id
+       WHERE s.user_id=$1 AND s.id<>$2 AND e.review_state='ACCEPTED'
+         AND s.fields->'calendar'->>'uidKey'=$3
+       ORDER BY (s.fields->'calendar'->>'sequence')::bigint DESC LIMIT 1`,
+      [userId, c.signalId, f.calendar.uidKey],
+    );
+    const prior = previous.rows[0];
+    if (prior?.fields.calendar) {
+      if (prior.attempt_id !== decision.id || f.calendar.sequence < prior.fields.calendar.sequence)
+        return fail("CALENDAR_REVISION", [decision.id, prior.attempt_id], [openingId]);
+      if (f.calendar.sequence === prior.fields.calendar.sequence) {
+        if ((["uidKey", "sequence", "method", "status", "scheduledFor", "organizerDomain"] as const)
+          .some(key => f.calendar![key] !== prior.fields.calendar![key]))
+          return fail("CALENDAR_REVISION", [decision.id], [openingId]);
+        await linkEvidence(tx, userId, prior.event_id, c.artifactId);
+        return { status: "APPLIED", attemptId: decision.id, openingId, kind,
+          createdAttempt: false, createdOpening: false, reconciled: 0 };
+      }
+    }
+  }
   const problem = await automaticEventProblem(tx, event(decision.id));
   if (problem) return fail(problem, [decision.id], [openingId]);
 

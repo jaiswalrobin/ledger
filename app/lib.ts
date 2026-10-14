@@ -201,6 +201,8 @@ export const reasonText: Record<string, string> = {
   CONFLICTING_ALTERNATIVES:
     "The plain-text and HTML versions disagree. Choose how this update should be interpreted.",
   CONFLICTING_FIELDS: "This message names conflicting employers or roles. Choose the correct application details.",
+  UNCERTAIN_CALENDAR: "The calendar invitation needs review before its time or status can be accepted.",
+  CALENDAR_REVISION: "This calendar update is older than, or conflicts with, an accepted invitation.",
   INTERVIEW_CANCELLED:
     "This message says an interview was cancelled or postponed. Decide how it affects the timeline.",
   NOT_SUBMITTED:

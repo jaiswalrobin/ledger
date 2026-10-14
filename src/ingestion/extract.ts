@@ -8,6 +8,7 @@ import type {
 import { safeField } from "./privacy.ts";
 import { cleanTitle, extractCompanyAndTitle } from "./fields.ts";
 import { messageRegions } from "./regions.ts";
+import { extractCalendar } from "./calendar.ts";
 
 export const EXTRACTOR_VERSION = "rules-7";
 
@@ -387,6 +388,17 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
     kind = null;
     reasons.push("quoted-history-only");
   }
+  const calendar = extractCalendar(message);
+  reasons.push(...calendar.reasons);
+  if (calendar.reasons.includes("interview-cancelled")) kind = null;
+  else if (calendar.event && !calendar.reasons.length) {
+    if (!kind || STEP_KINDS.has(kind)) kind = "INTERVIEW_SCHEDULED";
+    else reasons.push("uncertain-calendar");
+  }
+  const calendarFields = calendar.event ? extractCompanyAndTitle({
+    subject: calendar.event.summary, body: `${calendar.event.summary}\n${calendar.event.description}\nOrganizer: ${calendar.event.organizer}`,
+    fromName: message.fromName, fromAddress: message.fromAddress,
+  }) : null;
 
   let ats: AtsMatch | null = null;
   let workdaySlugTitle: string | null = null;
@@ -417,10 +429,14 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
     body,
     signature: regions.signature,
     titleHints: [
+      ...(calendarFields?.title ? [{ value: calendarFields.title, weight: 3 }] : []),
       ...(workdaySlugTitle ? [{ value: workdaySlugTitle, weight: 1 }] : []),
       ...(ibm && !ibm.conflict && ibm.title ? [{ value: ibm.title, weight: 3 }] : []),
     ],
-    companyHints: ibm && !ibm.conflict ? [{ value: "IBM", weight: 3 }] : [],
+    companyHints: [
+      ...(ibm && !ibm.conflict ? [{ value: "IBM", weight: 3 }] : []),
+      ...(calendarFields?.company ? [{ value: calendarFields.company, weight: 3 }] : []),
+    ],
   });
   // Candidate IDs identify a person, not a particular submission.
   const externalId =
@@ -436,6 +452,7 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
     company,
     title,
     fieldDecisions: decisions,
+    ...(calendar.event ? { calendar: calendar.event.facts } : {}),
     location: safeField(labelled(body, "location")),
     atsKey: ats?.key ?? null,
     canonicalUrl: ats?.canonicalUrl || genericUrl,
@@ -451,9 +468,10 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
     reasons.push("ambiguous-job-links");
   }
   if (Object.values(decisions).some(d => d.state === "AMBIGUOUS")) reasons.push("conflicting-fields");
+  if (calendarFields && Object.values(calendarFields.decisions).some(d => d.state === "AMBIGUOUS")) reasons.push("conflicting-fields");
   return {
     kind,
-    confidence: kind && !reasons.includes("mixed-kind") && !reasons.includes("conflicting-fields") && jobLinks.size <= 1 && !ibm?.conflict ? "HIGH" : "LOW",
+    confidence: kind && !reasons.includes("mixed-kind") && !reasons.includes("conflicting-fields") && !reasons.includes("uncertain-calendar") && jobLinks.size <= 1 && !ibm?.conflict ? "HIGH" : "LOW",
     fields,
     occurredAt: message.date,
     reasons,
@@ -514,7 +532,7 @@ export function extractSignal(message: ParsedMessage): ExtractedSignal {
       kind,
       fields,
       reasons,
-      confidence: kind && !reasons.includes("mixed-kind") && !reasons.includes("ambiguous-job-links") && !reasons.includes("conflicting-fields") ? "HIGH" : "LOW",
+      confidence: kind && !reasons.includes("mixed-kind") && !reasons.includes("ambiguous-job-links") && !reasons.includes("conflicting-fields") && !reasons.includes("uncertain-calendar") ? "HIGH" : "LOW",
     };
   }
   return merged;
