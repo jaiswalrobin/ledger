@@ -7,6 +7,7 @@ import type {
 } from "./source.ts";
 import { safeField } from "./privacy.ts";
 import { cleanTitle, extractCompanyAndTitle } from "./fields.ts";
+import { messageRegions } from "./regions.ts";
 
 export const EXTRACTOR_VERSION = "rules-7";
 
@@ -377,8 +378,15 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
     subject: normalizeForMatching(raw.subject).replace(/\s+/g, " ").trim(),
     fromName: normalizeForMatching(raw.fromName).replace(/\s+/g, " ").trim(),
   };
-  const body = normalizeForMatching(raw.text);
-  const { kind, reasons } = detectKind(`${message.subject}\n${body}`);
+  const regions = messageRegions(normalizeForMatching(raw.text));
+  const body = regions.current;
+  const detected = detectKind(`${message.subject}\n${body}`);
+  let { kind } = detected;
+  const reasons = detected.reasons;
+  if (regions.hasQuotedHistory && /^\s*re\s*:/i.test(message.subject) && !detectKind(body).kind) {
+    kind = null;
+    reasons.push("quoted-history-only");
+  }
 
   let ats: AtsMatch | null = null;
   let workdaySlugTitle: string | null = null;
@@ -407,6 +415,7 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
     fromName: message.fromName,
     fromAddress: message.fromAddress,
     body,
+    signature: regions.signature,
     titleHints: [
       ...(workdaySlugTitle ? [{ value: workdaySlugTitle, weight: 1 }] : []),
       ...(ibm && !ibm.conflict && ibm.title ? [{ value: ibm.title, weight: 3 }] : []),

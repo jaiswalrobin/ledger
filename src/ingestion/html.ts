@@ -1,3 +1,5 @@
+import { QUOTE_START, QUOTE_END } from "./regions.ts";
+
 /** A bounded, single-pass text scanner. No rendering, DOM execution, or resource loading. */
 export class HtmlInspectionError extends Error {
   constructor() {
@@ -54,6 +56,10 @@ export function htmlText(html: string): string {
     if (!name) continue;
     const closing = !!name[1];
     const kind = name[2]!.toLowerCase();
+    if (kind === "blockquote") {
+      out.push(`\n${closing ? QUOTE_END : QUOTE_START}\n`);
+      continue;
+    }
     if (!closing && ["script", "style", "head"].includes(kind)) {
       let close = lower.indexOf(`</${kind}`, i);
       while (

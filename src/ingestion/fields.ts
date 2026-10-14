@@ -17,6 +17,8 @@ export interface FieldInput {
   fromAddress: string | null;
   /** Normalized body with its line structure. */
   body: string;
+  /** Signature text may name the employer, but cannot assert a new event or title. */
+  signature?: string;
   /** Extra title suggestions from structured sources (Workday URL slug, employer templates). */
   titleHints?: readonly { value: string; weight: number }[];
   companyHints?: readonly { value: string; weight: number }[];
@@ -387,18 +389,25 @@ export function extractCompanyAndTitle(input: FieldInput): {
 
   // Job-board blocks: a company line followed by a title line (LinkedIn), or a title line followed
   // by "Company - Place" (Indeed).
-  for (let i = 0; i + 1 < lines.length; i++) {
-    const here = lines[i]!, next = lines[i + 1]!;
+  const boardDomain = senderDomain(input.fromAddress ?? "");
+  const isBoard = /(?:^|\.)(?:linkedin\.com|indeed\.com)$/.test(boardDomain);
+  const anchor = lines.findIndex(line => /\b(?:application (?:was |has been |successfully )?(?:sent|submitted|received)|you(?:'ve| have) applied)\b/i.test(line));
+  const boardLines = isBoard && anchor >= 0 ? lines.slice(anchor + 1, anchor + 16) : [];
+  for (let i = 0; i + 1 < boardLines.length; i++) {
+    const here = boardLines[i]!, next = boardLines[i + 1]!;
     const placeLine = /^(.{2,60}?)\s+[-–]\s+(?:[A-Z][\w .'-]+,\s*[A-Z]{2}\b|remote|hybrid|[A-Z][\w .'-]+,\s*[A-Z][a-z]+)/.exec(next);
     if (placeLine && cleanTitle(here) && !PROSE.test(here)) {
       add(titles, cleanTitle(here), 1.5);
       add(companies, cleanCompany(placeLine[1]), 1.5);
     }
-    if (companies.has(here.toLowerCase()) && cleanTitle(next) && here.length <= 60) add(titles, cleanTitle(next), 1.5);
+    const location = boardLines[i + 2] ?? "";
+    const hasLocation = /^(?:remote|hybrid|on[- ]site|[\p{L} .'-]+,\s*[\p{L} .'-]+)/iu.test(location);
+    if (companies.has(here.toLowerCase()) && cleanTitle(next) && here.length <= 60 && hasLocation)
+      add(titles, cleanTitle(next), 1.5);
   }
 
   // Signatures: "Stripe Recruiting", "The Datadog Recruiting Team", "Technical Recruiter, Acme".
-  for (const line of lines.slice(-8)) {
+  for (const line of [...lines.slice(-8), ...(input.signature ?? "").split("\n").map(line => line.trim())]) {
     const team = /^(?:the\s+)?(.{2,50}?)\s+(?:recruit(?:ing|ment)|talent(?:\s+acquisition)?|careers|hr|people)(?:\s+team)?$/i.exec(line);
     if (team) add(companies, cleanCompany(team[1]), 1.5);
     const role = /^(?:senior\s+|lead\s+)?(?:technical\s+)?(?:recruiter|talent\s+partner|talent\s+acquisition[\w ]*|hiring\s+manager|hr\s+[\w ]+),\s*(.{2,50})$/i.exec(line);

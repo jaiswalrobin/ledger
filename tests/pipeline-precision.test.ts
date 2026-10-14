@@ -69,6 +69,15 @@ const events = async (user: string) =>
   ).rows.map((r) => r.kind);
 
 describe("classification reaches the right outcome", () => {
+  it("footer adjacency cannot create a fake Privacy Policy application", async () => {
+    const { user, mailbox } = await fresh();
+    const out = await gmail(user, mailbox, {
+      subject: "Application received",
+      text: "We received your application.\nCompany: Acme\nAcme\nPrivacy Policy",
+    });
+    assert.equal(out.status === "REVIEW" && out.reason, "MISSING_JOB_DETAILS");
+    assert.deepEqual(await openings(user), []);
+  });
   it("field contradictions create review evidence, never an opening or attempt", async () => {
     const { user, mailbox } = await fresh();
     const out = await gmail(user, mailbox, {
