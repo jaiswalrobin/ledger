@@ -1,5 +1,6 @@
 import type { Db } from "./db.ts";
 import { pruneDemos } from "./demo.ts";
+import { drainReviewReconciliations } from "./pipeline.ts";
 import {
   syncAllMailboxes,
   type SyncDeps,
@@ -19,6 +20,8 @@ export interface SchedulerReport {
   demosPruned: number;
   /** Demo retention cleanup failed; mailbox sync still ran. */
   pruneFailed: boolean;
+  reviewUpdatesApplied: number;
+  reconciliationFailed: boolean;
   /**
    * "healthy": every mailbox synced or saved progress.
    * "attention": a mailbox needs its owner (revoked token, failed messages) but the run worked.
@@ -38,17 +41,18 @@ const emptyStatuses = (): Record<SyncStatus, number> => ({
 
 export function summarize(
   runs: readonly SyncResult[],
-  extra: { gmailConfigured: boolean; demosPruned: number; pruneFailed: boolean },
+  extra: { gmailConfigured: boolean; demosPruned: number; pruneFailed: boolean;
+    reviewUpdatesApplied?: number; reconciliationFailed?: boolean },
 ): SchedulerReport {
   const statuses = emptyStatuses();
   for (const run of runs) statuses[run.status] += 1;
   const outcome =
     statuses.FAILED > 0
       ? "failed"
-      : statuses.DEGRADED > 0 || extra.pruneFailed
+      : statuses.DEGRADED > 0 || extra.pruneFailed || extra.reconciliationFailed
         ? "attention"
         : "healthy";
-  return { ...extra, mailboxes: runs.length, statuses, outcome };
+  return { reviewUpdatesApplied: 0, reconciliationFailed: false, ...extra, mailboxes: runs.length, statuses, outcome };
 }
 
 /**
@@ -69,11 +73,18 @@ export async function runScheduledSync(input: {
   } catch {
     pruneFailed = true;
   }
+  let reviewUpdatesApplied = 0, reconciliationFailed = false;
+  try {
+    const result = await drainReviewReconciliations(input.db, input.sync?.now?.() ?? new Date());
+    reviewUpdatesApplied = result.applied;
+    reconciliationFailed = result.failed > 0;
+  } catch { reconciliationFailed = true; }
+  const extra = { demosPruned, pruneFailed, reviewUpdatesApplied, reconciliationFailed };
   if (!input.sync)
-    return summarize([], { gmailConfigured: false, demosPruned, pruneFailed });
+    return summarize([], { gmailConfigured: false, ...extra });
   const runs = await syncAllMailboxes(
     { ...input.sync, db: input.db },
     { system: true },
   );
-  return summarize(runs, { gmailConfigured: true, demosPruned, pruneFailed });
+  return summarize(runs, { gmailConfigured: true, ...extra });
 }

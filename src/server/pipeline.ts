@@ -378,10 +378,10 @@ async function run(
       "UPDATE extracted_signals SET processing_state = 'APPLIED' WHERE id = $1",
       [signalId],
     );
-    if (outcome.createdAttempt)
+    if (outcome.kind === "CONFIRMATION_RECEIVED")
       return {
         ...outcome,
-        reconciled: await reconcileWaitingUpdates(tx, userId, observedAt),
+        reconciled: await reconcileWaitingUpdates(tx, userId, observedAt, outcome.openingId),
       };
   }
   return outcome;
@@ -738,15 +738,33 @@ async function apply(
 /**
  * Updates can arrive before the submission they belong to (Gmail lists newest first, forwards
  * come in any order). Once a new attempt exists, re-evaluate waiting updates under exactly the
- * same rules; anything still ambiguous stays in review untouched. Both reasons can become
- * resolvable: NO_KNOWN_SUBMISSION (no attempt yet) and AMBIGUOUS_ATTEMPT (an application ID that
- * an earlier attempt on the same opening did not carry, now owned by the new attempt).
+ * same rules; anything still ambiguous stays in review untouched. Recheck only candidates for
+ * the changed opening, in bounded batches. The scheduler resumes remaining work after commit.
  */
 export async function reconcileWaitingUpdates(
   tx: Db,
   userId: string,
   observedAt: Date,
+  openingId: string,
 ): Promise<number> {
+  await tx.query(`INSERT INTO review_reconciliation_jobs(user_id,job_opening_id) VALUES($1,$2)
+    ON CONFLICT(user_id,job_opening_id) DO UPDATE SET requested_at=now(),through_created_at=now(),
+      last_created_at=NULL,last_review_id=NULL`, [userId, openingId]);
+  return reconcileReviewBatch(tx, userId, observedAt, openingId);
+}
+
+const RECONCILIATION_BATCH_SIZE = 25;
+
+/** Called while holding the owner's domain lock; the job cursor advances with domain writes. */
+async function reconcileReviewBatch(tx: Db, userId: string, observedAt: Date, openingId: string): Promise<number> {
+  const jobs = await tx.query<{ through_created_at: unknown; last_created_at: unknown; last_review_id: string | null }>(
+    "SELECT through_created_at,last_created_at,last_review_id FROM review_reconciliation_jobs WHERE user_id=$1 AND job_opening_id=$2 FOR UPDATE",
+    [userId, openingId],
+  );
+  const job = jobs.rows[0];
+  if (!job) return 0;
+  const opening = (await loadOpenings(tx, userId, { id: openingId }))[0];
+  if (!opening) return 0;
   const { rows } = await tx.query<{
     review_id: string;
     signal_id: string;
@@ -764,16 +782,36 @@ export async function reconcileWaitingUpdates(
     reply_message_keys: string[];
     provider_thread_id: string | null;
     confidence: "HIGH" | "LOW";
+    review_created_at: unknown;
   }>(
     `SELECT r.id AS review_id, s.id AS signal_id, s.event_kind, s.fields, s.confidence, a.id AS artifact_id, a.source_kind,
             a.original_message_at, a.original_key, a.source_fingerprint, a.sender_authenticated, a.mailbox_id,
-            a.sender_domain,a.sender_verified,a.reply_message_keys,a.provider_thread_id
+            a.sender_domain,a.sender_verified,a.reply_message_keys,a.provider_thread_id,r.created_at AS review_created_at
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
        JOIN source_artifacts a ON a.id = r.source_artifact_id AND a.user_id = r.user_id
-      WHERE r.user_id = $1 AND r.state = 'OPEN' AND r.reason_code IN ('NO_KNOWN_SUBMISSION', 'AMBIGUOUS_ATTEMPT')
-      ORDER BY a.original_message_at, r.created_at, r.id`,
-    [userId],
+      WHERE r.user_id=$1 AND r.state='OPEN' AND r.reason_code IN ('NO_KNOWN_SUBMISSION','AMBIGUOUS_ATTEMPT','MISSING_JOB_DETAILS')
+        AND s.event_kind IS NOT NULL AND s.event_kind<>'CONFIRMATION_RECEIVED'
+        AND r.created_at<=$3 AND ($4::timestamptz IS NULL OR (r.created_at,r.id)>($4,$5::uuid))
+        AND ($2::uuid=ANY(r.candidate_opening_ids)
+          OR lower(regexp_replace(btrim(s.fields->>'title'),'\\s+',' ','g'))=$6
+          OR ($7::text IS NOT NULL AND s.fields->>'canonicalUrl'=$7)
+          OR ($8::text IS NOT NULL AND s.fields->'atsKey'->>'provider'=$8
+            AND s.fields->'atsKey'->>'tenant'=$9 AND s.fields->'atsKey'->>'requisitionId'=$10)
+          OR EXISTS (SELECT 1 FROM application_attempts known WHERE known.user_id=$1 AND known.job_opening_id=$2
+            AND known.external_application_id=s.fields->>'externalApplicationId')
+          OR EXISTS (SELECT 1 FROM application_events e JOIN application_attempts known ON known.id=e.attempt_id AND known.user_id=e.user_id
+            JOIN event_evidence ev ON ev.event_id=e.id AND ev.user_id=e.user_id
+            JOIN source_artifacts prior ON prior.id=ev.artifact_id AND prior.user_id=ev.user_id
+            WHERE e.user_id=$1 AND known.job_opening_id=$2 AND e.review_state='ACCEPTED'
+              AND prior.mailbox_id=a.mailbox_id AND prior.sender_domain=a.sender_domain AND prior.sender_verified
+              AND (prior.message_id_key=ANY(a.reply_message_keys)
+                OR (a.provider_thread_id IS NOT NULL AND prior.provider_thread_id=a.provider_thread_id)
+                OR (s.fields->>'title' IS NULL AND a.sender_verified))))
+      ORDER BY r.created_at,r.id LIMIT $11`,
+    [userId, openingId, job.through_created_at, job.last_created_at, job.last_review_id,
+      normalizedText(opening.title), opening.canonicalUrl, opening.atsKey?.provider ?? null,
+      opening.atsKey?.tenant ?? null, opening.atsKey?.requisitionId ?? null, RECONCILIATION_BATCH_SIZE],
   );
   let applied = 0;
   for (const row of rows) {
@@ -821,5 +859,36 @@ export async function reconcileWaitingUpdates(
     );
     applied += 1;
   }
+  if (rows.length < RECONCILIATION_BATCH_SIZE) {
+    await tx.query("DELETE FROM review_reconciliation_jobs WHERE user_id=$1 AND job_opening_id=$2", [userId, openingId]);
+  } else {
+    const last = rows.at(-1)!;
+    await tx.query(`UPDATE review_reconciliation_jobs SET last_created_at=$3,last_review_id=$4,requested_at=now()
+      WHERE user_id=$1 AND job_opening_id=$2`, [userId, openingId, last.review_created_at, last.review_id]);
+  }
   return applied;
+}
+
+/** Scheduled continuation runs even without Gmail credentials. Each opening is isolated. */
+export async function drainReviewReconciliations(db: Db, observedAt = new Date(), maxJobs = 4): Promise<{ applied: number; failed: number }> {
+  const jobs = await db.query<{ user_id: string; job_opening_id: string }>(
+    "SELECT user_id,job_opening_id FROM review_reconciliation_jobs ORDER BY requested_at,user_id,job_opening_id LIMIT $1",
+    [Math.max(1, Math.min(20, Math.floor(maxJobs)))],
+  );
+  let applied = 0, failed = 0;
+  for (const job of jobs.rows) {
+    try {
+      applied += await db.transaction(async tx => {
+        const owner = await tx.query("SELECT id FROM ledger_users WHERE id=$1 FOR UPDATE", [job.user_id]);
+        if (!owner.rows.length) return 0;
+        return reconcileReviewBatch(tx, job.user_id, observedAt, job.job_opening_id);
+      });
+    } catch {
+      failed++;
+      // Keep the failed sweep durable, but let other openings run before retrying it.
+      await db.query("UPDATE review_reconciliation_jobs SET requested_at=now() WHERE user_id=$1 AND job_opening_id=$2",
+        [job.user_id, job.job_opening_id]).catch(() => undefined);
+    }
+  }
+  return { applied, failed };
 }

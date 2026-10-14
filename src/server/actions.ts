@@ -266,7 +266,7 @@ export async function resolveReviewAssign(
   await db.transaction(async (tx) => {
     await serializeOwner(tx, userId);
     const ctx = await loadOpenReview(tx, userId, reviewId);
-    await ownedAttempt(tx, userId, attemptId);
+    const { openingId } = await ownedAttempt(tx, userId, attemptId);
     const { kind, occurredAt } = resolveKindAndTime(ctx, overrides);
     if (kind === "CONFIRMATION_RECEIVED")
       await acceptSubmissionEvidence(tx,userId,attemptId,ctx.evidenceKey,occurredAt,ctx.fields);
@@ -286,7 +286,7 @@ export async function resolveReviewAssign(
       ctx.artifactId,
     );
     await closeReview(tx, userId, reviewId, ctx, "RESOLVED", "ASSIGNED");
-    if (kind === "CONFIRMATION_RECEIVED") await reconcileWaitingUpdates(tx,userId,new Date());
+    if (kind === "CONFIRMATION_RECEIVED") await reconcileWaitingUpdates(tx,userId,new Date(),openingId);
   });
 }
 
@@ -362,7 +362,7 @@ export async function resolveReviewCreate(
     );
     await closeReview(tx, userId, reviewId, ctx, "RESOLVED", "CREATED");
     // The new attempt may be what waiting updates were missing, as after an automatic one.
-    await reconcileWaitingUpdates(tx, userId, new Date());
+    await reconcileWaitingUpdates(tx, userId, new Date(), openingId);
     return { attemptId, openingId };
   });
 }
