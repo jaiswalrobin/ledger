@@ -30,6 +30,8 @@ export function htmlText(html: string): string {
   const lower = html.toLowerCase();
   const out: string[] = [];
   const links: (string | null)[] = [];
+  const containers: { kind: string; quoted: boolean }[] = [];
+  const rows: { start: number; cells: string[]; cellStart: number | null }[] = [];
   let i = 0;
   while (i < html.length) {
     const open = html.indexOf("<", i);
@@ -56,9 +58,41 @@ export function htmlText(html: string): string {
     if (!name) continue;
     const closing = !!name[1];
     const kind = name[2]!.toLowerCase();
-    if (kind === "blockquote") {
-      out.push(`\n${closing ? QUOTE_END : QUOTE_START}\n`);
-      continue;
+    if (kind === "blockquote" || kind === "div") {
+      if (!closing) {
+        if (containers.length >= 40) throw new HtmlInspectionError();
+        const classes = /\bclass\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
+        const id = /\bid\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
+        const quoted = kind === "blockquote" ||
+          /(?:^|\s)(?:gmail_quote|yahoo_quoted)(?:\s|$)/i.test(classes?.[1] ?? classes?.[2] ?? "") ||
+          /^appendonsend$/i.test(id?.[1] ?? id?.[2] ?? "");
+        containers.push({ kind, quoted });
+        if (quoted) out.push(`\n${QUOTE_START}\n`);
+      } else {
+        let match = containers.length - 1;
+        while (match >= 0 && containers[match]!.kind !== kind) match--;
+        if (match >= 0) for (const container of containers.splice(match))
+          if (container.quoted) out.push(`\n${QUOTE_END}\n`);
+      }
+    }
+    if (kind === "tr") {
+      if (!closing) {
+        if (rows.length >= 20) throw new HtmlInspectionError();
+        rows.push({ start: out.length, cells: [], cellStart: null });
+      } else {
+        const row = rows.pop();
+        if (row?.cells.length === 2 && /^(?:company|employer|job\s*title|role|position|location|application\s*(?:id|number|reference)|submitted email|applicant email)\s*:?$/i.test(row.cells[0]!)) {
+          out.splice(row.start, out.length - row.start, `${row.cells[0]!.replace(/:$/, "")}: ${row.cells[1]}`);
+        }
+      }
+    }
+    if ((kind === "td" || kind === "th") && rows.length) {
+      const row = rows.at(-1)!;
+      if (!closing) row.cellStart = out.length;
+      else if (row.cellStart !== null) {
+        if (row.cells.length < 3) row.cells.push(out.slice(row.cellStart).join("").replace(/\s+/g, " ").trim());
+        row.cellStart = null;
+      }
     }
     if (!closing && ["script", "style", "head"].includes(kind)) {
       let close = lower.indexOf(`</${kind}`, i);
