@@ -10,7 +10,7 @@ import type { ApplicationEventKind, Outcome, Stage } from "../domain/types.ts";
 import type { ExtractedFields, SignalKind } from "../ingestion/source.ts";
 import type { Db } from "./db.ts";
 import type { ReviewReason } from "./pipeline.ts";
-import { iso } from "./store.ts";
+import { iso, CALENDAR_REVISION_ORDER } from "./store.ts";
 
 export interface AttemptView {
   id: string;
@@ -78,7 +78,7 @@ async function attemptViews(
        SELECT DISTINCT ON (attempt_id,calendar_uid_key) attempt_id,scheduled_for
        FROM application_events WHERE user_id=$1 AND attempt_id=ANY($2::uuid[])
          AND review_state='ACCEPTED' AND calendar_uid_key IS NOT NULL
-       ORDER BY attempt_id,calendar_uid_key,calendar_sequence DESC,occurred_at DESC,observed_at DESC,id DESC
+       ORDER BY attempt_id,calendar_uid_key,${CALENDAR_REVISION_ORDER}
      ) current_calendar WHERE scheduled_for >= $3 GROUP BY attempt_id`,
     [userId, attemptIds, now.toISOString()],
   );
@@ -243,8 +243,12 @@ export async function getOpening(
     calendar_uid_key: string | null;
     calendar_sequence: number | null;
     scheduled_for: unknown;
+    current_schedule: boolean;
   }>(
-    `SELECT id, attempt_id, event_kind, occurred_at, review_state, origin,calendar_uid_key,calendar_sequence,scheduled_for FROM application_events
+    `SELECT id, attempt_id, event_kind, occurred_at, review_state, origin,calendar_uid_key,calendar_sequence,scheduled_for,
+       calendar_uid_key IS NOT NULL AND review_state='ACCEPTED' AND id=first_value(id) OVER (
+         PARTITION BY attempt_id,calendar_uid_key ORDER BY CASE WHEN review_state='ACCEPTED' THEN 0 ELSE 1 END,${CALENDAR_REVISION_ORDER}
+       ) AS current_schedule FROM application_events
       WHERE user_id = $1 AND attempt_id = ANY($2::uuid[]) ORDER BY occurred_at, id`,
     [userId, ids],
   );
@@ -278,11 +282,6 @@ export async function getOpening(
     evidenceByEvent.set(e.event_id, list);
   }
   const eventViews = new Map<string, EventView[]>();
-  const currentCalendars = new Map<string, (typeof events.rows)[number]>();
-  for (const e of events.rows) if (e.review_state === "ACCEPTED" && e.calendar_uid_key) {
-    const key = `${e.attempt_id}:${e.calendar_uid_key}`, current = currentCalendars.get(key);
-    if (!current || Number(e.calendar_sequence) >= Number(current.calendar_sequence)) currentCalendars.set(key,e);
-  }
   for (const e of events.rows) {
     const list = eventViews.get(e.attempt_id) ?? [];
     list.push({
@@ -294,7 +293,7 @@ export async function getOpening(
       evidence: evidenceByEvent.get(e.id) ?? [],
       scheduledFor: e.scheduled_for ? iso(e.scheduled_for) : null,
       calendarRevision: e.calendar_sequence === null ? null : Number(e.calendar_sequence),
-      currentSchedule: !!e.calendar_uid_key && currentCalendars.get(`${e.attempt_id}:${e.calendar_uid_key}`)?.id === e.id,
+      currentSchedule: e.current_schedule,
     });
     eventViews.set(e.attempt_id, list);
   }

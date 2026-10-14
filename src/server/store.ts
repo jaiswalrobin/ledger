@@ -17,6 +17,8 @@ import type { CalendarFacts } from "../ingestion/source.ts";
 export const iso = (value: unknown): string =>
   (value instanceof Date ? value : new Date(String(value))).toISOString();
 
+export const CALENDAR_REVISION_ORDER = "calendar_sequence DESC,occurred_at DESC,observed_at DESC,id DESC";
+
 export function isUniqueViolation(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -414,7 +416,7 @@ export async function latestCalendarRevision(db: Db,userId: string,_excludeSigna
   const {rows}=await db.query<{id:string;attempt_id:string;calendar_uid_key:string;calendar_sequence:number;calendar_method:string;calendar_status:string;calendar_organizer_domain:string|null;calendar_sender_domain:string|null;scheduled_for:unknown}>(
     `SELECT id,attempt_id,calendar_uid_key,calendar_sequence,calendar_method,calendar_status,calendar_organizer_domain,calendar_sender_domain,scheduled_for
      FROM application_events WHERE user_id=$1 AND calendar_uid_key=$2 AND review_state='ACCEPTED'
-     ORDER BY calendar_sequence DESC,occurred_at DESC,id LIMIT 1`,[userId,uidKey]);
+     ORDER BY ${CALENDAR_REVISION_ORDER} LIMIT 1`,[userId,uidKey]);
   const r=rows[0];
   return r?{eventId:r.id,attemptId:r.attempt_id,senderDomain:r.calendar_sender_domain,calendar:{uidKey:r.calendar_uid_key,sequence:Number(r.calendar_sequence),method:r.calendar_method,status:r.calendar_status,organizerDomain:r.calendar_organizer_domain,scheduledFor:r.scheduled_for?iso(r.scheduled_for):null}}:null;
 }

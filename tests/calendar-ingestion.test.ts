@@ -9,6 +9,7 @@ import { getOpening } from "../src/server/queries.ts";
 import { setEventState, setAttemptStatus } from "../src/server/actions.ts";
 import { resolveReviewCreate } from "../src/server/actions.ts";
 import { createHash, randomUUID } from "node:crypto";
+import { insertOpening, insertAttempt, latestCalendarRevision } from "../src/server/store.ts";
 
 function calendar(sequence = 1, start = "20261021T100000Z", extra = "", method = "REQUEST") {
   return ["BEGIN:VCALENDAR", "VERSION:2.0", `METHOD:${method}`, "BEGIN:VEVENT", "UID:private-calendar-uid@example.com",
@@ -16,6 +17,28 @@ function calendar(sequence = 1, start = "20261021T100000Z", extra = "", method =
     "DESCRIPTION:Interview for the Backend Engineer role at Acme.", "ORGANIZER:mailto:recruiting@acme.example",
     extra, "END:VEVENT", "END:VCALENDAR", ""].filter(line => line !== "").join("\r\n");
 }
+
+it("detail and agenda choose the same latest owner-accepted calendar revision when sequences tie", async () => {
+  const t = await createTestDb();
+  try {
+    const user = await seedUser(t.db);
+    const opening = await insertOpening(t.db, user, {company:"Acme",title:"Engineer",location:null,atsKey:null,canonicalUrl:null});
+    const attempt = await insertAttempt(t.db, user, opening, {applicantEmail:null,externalApplicationId:null,submittedAt:null,evidenceKey:"manual",submissionEvidence:false});
+    const older="ffffffff-ffff-4fff-8fff-fffffffffff1", newer="00000000-0000-4000-8000-000000000001";
+    for (const [id, observed, time] of [[older,"2026-10-13T10:00:00Z","2026-10-21T10:00:00Z"], [newer,"2026-10-14T10:00:00Z","2026-10-22T10:00:00Z"]])
+      await t.db.query(`INSERT INTO application_events(id,user_id,attempt_id,event_kind,occurred_at,observed_at,review_state,source_type,origin,dedupe_key,calendar_uid_key,calendar_sequence,scheduled_for)
+        VALUES($1::uuid,$2,$3,'INTERVIEW_SCHEDULED','2026-10-12T10:00:00Z',$4,'ACCEPTED','MANUAL','MANUAL',$1::text,$5,1,$6)`, [id,user,attempt,observed,"a".repeat(64),time]);
+    const now=new Date("2026-10-20T00:00:00Z");
+    const detail=await getOpening(t.db,user,opening,now);
+    assert.equal(detail!.attempts[0]!.nextInterviewAt,"2026-10-22T10:00:00.000Z");
+    assert.equal(detail!.attempts[0]!.events.find(e=>e.currentSchedule)!.id,newer);
+    assert.equal((await latestCalendarRevision(t.db,user,"unused-proposal","a".repeat(64)))!.eventId,newer);
+    await setEventState(t.db,user,newer,"REJECTED");
+    const reverted=await getOpening(t.db,user,opening,now);
+    assert.equal(reverted!.attempts[0]!.nextInterviewAt,"2026-10-21T10:00:00.000Z");
+    assert.equal(reverted!.attempts[0]!.events.find(e=>e.currentSchedule)!.id,older);
+  } finally {await t.close();}
+});
 
 async function parsed(content: string, method = "REQUEST", text = "Application ID: APP-12345") {
   return (await parseEml(new TextEncoder().encode(buildEml({
