@@ -8,7 +8,7 @@ import type {
 import { safeField } from "./privacy.ts";
 import { cleanTitle, extractCompanyAndTitle } from "./fields.ts";
 
-export const EXTRACTOR_VERSION = "rules-6";
+export const EXTRACTOR_VERSION = "rules-7";
 
 /**
  * Canonical form for matching: typographic quotes/dashes become ASCII, invisible characters are
@@ -149,8 +149,10 @@ const PHRASES: Record<SignalKind, RegExp> = {
   ),
 };
 
+// Only wording about the application itself. Receipts carry footers such as "join our talent
+// community" or "if you have not yet completed your profile", which must not veto them.
 const NOT_SUBMITTED =
-  /\b(?:haven'?t|have not|has not|not yet)\s+(?:been\s+)?(?:submitted|finished|completed)\b|\bsaved as (?:a )?draft\b|\b(?:complete|finish) your application\b|\bstarted (?:an|your) application\b|\bincomplete application\b|\btalent (?:community|network|pool)\b/i;
+  /\bapplication\b[^.!?\n]{0,60}\b(?:has not|hasn'?t|is not|isn'?t|was not|wasn'?t)\s+(?:yet\s+)?(?:been\s+)?(?:submitted|finished|completed)\b|\b(?:haven'?t|have not|not yet)\s+(?:yet\s+)?(?:submitted|finished|completed)\s+(?:it|your application|the application)\b|\bsaved as (?:a )?draft\b|\b(?:complete|finish) your application\b|\bstarted (?:an|your) application\b|\bincomplete application\b/i;
 
 const STEP_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>([
   "ASSESSMENT_INVITED",

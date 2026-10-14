@@ -65,7 +65,8 @@ export function cleanTitle(raw: string | null | undefined): string | null {
     value.length < 2 ||
     value.length > 100 ||
     value.split(" ").length > 12 ||
-    !/^[A-Z0-9]/.test(value) ||
+    // Sentence starts are capitalised; titles like "iOS Engineer" or "eCommerce Lead" are camel-cased.
+    !/^(?:[A-Z0-9]|[a-z][A-Z])/.test(value) ||
     /https?:|@|\d{4,}$/.test(value) ||
     PROSE.test(value) ||
     TITLE_NOISE.test(value)
@@ -74,7 +75,15 @@ export function cleanTitle(raw: string | null | undefined): string | null {
   return value;
 }
 
-export function cleanCompany(raw: string | null | undefined): string | null {
+/** A capture that is a role phrase ("Software Engineer role at Acme"), not an organisation. */
+const ROLE_SHAPED = /\b(?:position|role|job|opening|vacancy|opportunity)(?:\s+(?:at|with|in)\b|$)/i;
+
+/**
+ * `strict` also rejects hiring platforms and tools. Use it where the value comes from a sender,
+ * a venue or a loose phrase ("join Zoom", "assessment from HackerRank"); a sentence that names the
+ * employer ("the Engineer position at Google") may name a company that also runs a platform.
+ */
+export function cleanCompany(raw: string | null | undefined, strict = true): string | null {
   let value = safeField(raw, 120);
   if (!value) return null;
   value = value
@@ -83,18 +92,19 @@ export function cleanCompany(raw: string | null | undefined): string | null {
     .replace(/\s+(?:within|by|before|on|and|for|to|please|as|is|has|we|you|your|via|from)\b.*$/i, "")
     .replace(/[\s"'”’)!.,;:]+$/g, "")
     .replace(DEPARTMENT, "")
-    .replace(/'s$/i, "")
     .replace(/\s+/g, " ")
     .trim();
   if (
     value.length < 2 ||
     value.length > 60 ||
-    value.split(" ").length > 6 ||
+    // Long names are real ("University of Texas MD Anderson Cancer Center"); longer is a sentence.
+    value.split(" ").length > 10 ||
     // Sentence starts are capitalised; brands like "eBay" or "iRobot" are camel-cased.
     !/^(?:[A-Z0-9]|[a-z][A-Z])/.test(value) ||
     /https?:|@|\d{5,}/.test(value) ||
     PROSE.test(value) ||
-    PLATFORMS.test(value) ||
+    ROLE_SHAPED.test(value) ||
+    (strict && PLATFORMS.test(value)) ||
     GENERIC_COMPANY.test(value)
   )
     return null;
@@ -138,8 +148,8 @@ const rx = (source: string, flags = "i") => new RegExp(source, flags);
 /** Sentences naming a role, optionally followed by the employer. Highest-precision patterns first. */
 const ROLE_SENTENCES: { re: RegExp; title: number; company?: number; weight: number }[] = [
   // "for the Senior Data Analyst position at Visa", "to our Software Engineer, Payments role"
-  { re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:the|our|a|an|this)\s+${TITLE}\s+${ROLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
-  { re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:the|our|a|an|this)\s+${TITLE}\s+${ROLE}\b`), title: 1, weight: 2.5 },
+  { re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:(?:the|our|a|an|this)\s+)?${TITLE}\s+${ROLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
+  { re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:(?:the|our|a|an|this)\s+)?${TITLE}\s+${ROLE}\b`), title: 1, weight: 2.5 },
   // "the position Backend Engineer at Klarna", "the position Data Engineer."
   { re: rx(String.raw`\bthe\s+${ROLE}\s+(?:of\s+)?${TITLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
   { re: rx(String.raw`\bthe\s+${ROLE}\s+(?:of\s+)?${TITLE}${END}`), title: 1, weight: 2 },
@@ -152,18 +162,19 @@ const ROLE_SENTENCES: { re: RegExp; title: number; company?: number; weight: num
 ];
 
 /** Phrases that name only the employer. */
-const COMPANY_SENTENCES: { re: RegExp; weight: number }[] = [
+const COMPANY_SENTENCES: { re: RegExp; weight: number; strict?: boolean }[] = [
   { re: rx(String.raw`\b(?:applying|applied|application|apply|interest|candidacy|career|future)\s+(?:to|at|with|in)\s+${COMPANY}${END}`), weight: 1.5 },
   { re: rx(String.raw`\bemployment\s+(?:with|at)\s+${COMPANY}${END}`), weight: 2 },
   { re: rx(String.raw`\b(?:sent|submitted)\s+to\s+${COMPANY}${END}`), weight: 2 },
   { re: rx(String.raw`\b(?:viewed|reviewed)\s+by\s+${COMPANY}${END}`), weight: 2 },
   { re: rx(String.raw`\bon\s+behalf\s+of\s+${COMPANY}${END}`), weight: 2 },
-  { re: rx(String.raw`\b(?:test|assessment|challenge|invitation|offer)\s+from\s+${COMPANY}${END}`), weight: 2 },
+  // "assessment from HackerRank" names the tool as often as the employer.
+  { re: rx(String.raw`\b(?:test|assessment|challenge|invitation|offer)\s+from\s+${COMPANY}${END}`), weight: 2, strict: true },
   { re: rx(String.raw`(?:^|\n|\.\s+)${COMPANY}\s+(?:has|have)\s+invited\s+you\b`, "i"), weight: 2.5 },
   { re: rx(String.raw`\binterview(?:ing)?\s+with\s+${COMPANY}${END}`), weight: 1.5 },
   // "I'm a recruiter at Aperture", "the hiring team at Hooli"
   { re: rx(String.raw`\b(?:recruiter|recruiting|talent\s+partner|hiring\s+manager|hiring\s+team|team|coordinator)\s+(?:at|with)\s+${COMPANY}${END}`), weight: 1.5 },
-  { re: rx(String.raw`\b(?:join|joining|welcome\s+to)\s+(?:the\s+)?${COMPANY}${END}`), weight: 1 },
+  { re: rx(String.raw`\b(?:join|joining|welcome\s+to)\s+(?:the\s+)?${COMPANY}${END}`), weight: 1, strict: true },
 ];
 
 /** Subject lines: an event phrase followed by "Title", "Title at Company" or "Title - Company". */
@@ -244,13 +255,13 @@ export function extractCompanyAndTitle(input: FieldInput): {
         const title = cleanTitle(m[p.title]);
         if (!title) return false;
         add(titles, title, p.weight / (source === flat ? 2 : 1));
-        if (p.company) add(companies, cleanCompany(m[p.company]), p.weight / (source === flat ? 2 : 1));
+        if (p.company) add(companies, cleanCompany(m[p.company], false), p.weight / (source === flat ? 2 : 1));
         return true;
       });
   for (const source of [subject, body])
     for (const p of COMPANY_SENTENCES)
       scan(p.re, source, (m) => {
-        const company = cleanCompany(m[1]);
+        const company = cleanCompany(m[1], p.strict ?? false);
         add(companies, company, p.weight);
         return !!company;
       });
