@@ -11,6 +11,7 @@ import type {
   Stage,
 } from "../domain/types.ts";
 import type { Db } from "./db.ts";
+import type { CalendarFacts } from "../ingestion/source.ts";
 
 /** Postgres returns timestamptz as Date; the domain speaks ISO strings. */
 export const iso = (value: unknown): string =>
@@ -369,3 +370,55 @@ export async function recordEvent(
   await reproject(db, e.userId, e.attemptId);
   return result;
 }
+
+// ---- calendar revisions ---------------------------------------------------------------------
+// Both lookups repeat the partial-index predicate (fields ? 'calendar') so the planner can use
+// idx_signals_calendar_uid.
+
+/** Attempts whose accepted events came from an invitation with this calendar UID. */
+export async function attemptsForCalendarUid(
+  db: Db,
+  userId: string,
+  excludeSignalId: string,
+  uidKey: string,
+): Promise<{ attemptId: string; openingId: string }[]> {
+  const { rows } = await db.query<{ attempt_id: string; opening_id: string }>(
+    `SELECT DISTINCT e.attempt_id, a.job_opening_id AS opening_id
+       FROM extracted_signals s
+       JOIN event_evidence ev ON ev.artifact_id = s.source_artifact_id AND ev.user_id = s.user_id
+       JOIN application_events e ON e.id = ev.event_id AND e.user_id = ev.user_id
+       JOIN application_attempts a ON a.id = e.attempt_id AND a.user_id = e.user_id
+      WHERE s.user_id = $1 AND s.id <> $2 AND e.review_state = 'ACCEPTED'
+        AND s.fields ? 'calendar' AND s.fields->'calendar'->>'uidKey' = $3`,
+    [userId, excludeSignalId, uidKey],
+  );
+  return rows.map((r) => ({ attemptId: r.attempt_id, openingId: r.opening_id }));
+}
+
+/** The accepted revision of this calendar UID with the highest SEQUENCE, if any. */
+export async function latestCalendarRevision(
+  db: Db,
+  userId: string,
+  excludeSignalId: string,
+  uidKey: string,
+): Promise<{ eventId: string; attemptId: string; calendar: CalendarFacts } | null> {
+  const { rows } = await db.query<{ event_id: string; attempt_id: string; calendar: CalendarFacts }>(
+    `SELECT e.id AS event_id, e.attempt_id, s.fields->'calendar' AS calendar
+       FROM extracted_signals s
+       JOIN event_evidence ev ON ev.artifact_id = s.source_artifact_id AND ev.user_id = s.user_id
+       JOIN application_events e ON e.id = ev.event_id AND e.user_id = ev.user_id
+      WHERE s.user_id = $1 AND s.id <> $2 AND e.review_state = 'ACCEPTED'
+        AND s.fields ? 'calendar' AND s.fields->'calendar'->>'uidKey' = $3
+      ORDER BY (s.fields->'calendar'->>'sequence')::bigint DESC
+      LIMIT 1`,
+    [userId, excludeSignalId, uidKey],
+  );
+  const row = rows[0];
+  return row ? { eventId: row.event_id, attemptId: row.attempt_id, calendar: row.calendar } : null;
+}
+
+const CALENDAR_IDENTITY = ["uidKey", "sequence", "method", "status", "scheduledFor", "organizerDomain"] as const;
+
+/** Two observations of one invitation revision: every safe calendar fact agrees. */
+export const sameCalendarRevision = (a: CalendarFacts, b: CalendarFacts): boolean =>
+  CALENDAR_IDENTITY.every((key) => a[key] === b[key]);

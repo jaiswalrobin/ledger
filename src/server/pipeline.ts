@@ -5,7 +5,7 @@ import {
   resolveUpdate,
 } from "../domain/resolution.ts";
 import type { JobOpening } from "../domain/types.ts";
-import { atsKeyId } from "../domain/normalization.ts";
+import { atsKeyId, companyKey, normalizedText } from "../domain/normalization.ts";
 import { redactSubject } from "../ingestion/eml.ts";
 import { EXTRACTOR_VERSION, extractSignal } from "../ingestion/extract.ts";
 import { classifyHeaders } from "../ingestion/header-gate.ts";
@@ -33,6 +33,9 @@ import {
   weakOpeningCandidates,
   linkEvidence,
   reproject,
+  attemptsForCalendarUid,
+  latestCalendarRevision,
+  sameCalendarRevision,
   automaticEventProblem,
 } from "./store.ts";
 
@@ -436,24 +439,23 @@ async function apply(
   // An accepted calendar UID can link later revisions without inventing applicant contacts.
   // Explicit application IDs take precedence; conflicting identities never fall back to a UID.
   if (!isConfirmation && !f.externalApplicationId && f.calendar) {
-    const known = await tx.query<{ attempt_id: string; opening_id: string }>(
-      `SELECT DISTINCT e.attempt_id,a.job_opening_id AS opening_id FROM extracted_signals s
-       JOIN event_evidence ev ON ev.artifact_id=s.source_artifact_id AND ev.user_id=s.user_id
-       JOIN application_events e ON e.id=ev.event_id AND e.user_id=ev.user_id
-       JOIN application_attempts a ON a.id=e.attempt_id AND a.user_id=e.user_id
-       WHERE s.user_id=$1 AND s.id<>$2 AND e.review_state='ACCEPTED'
-         AND s.fields->'calendar'->>'uidKey'=$3`,
-      [userId, c.signalId, f.calendar.uidKey],
-    );
-    if (known.rows.length > 1)
-      return fail("CALENDAR_REVISION", known.rows.map(row => row.attempt_id), known.rows.map(row => row.opening_id));
-    if (known.rows[0]) {
-      const opening = (await loadOpenings(tx, userId)).find(item => item.id === known.rows[0]!.opening_id)!;
-      if ((f.company && f.company.toLowerCase() !== opening.company.toLowerCase()) ||
-          (f.title && f.title.toLowerCase() !== opening.title.toLowerCase()))
-        return fail("CALENDAR_REVISION", [known.rows[0].attempt_id], [opening.id]);
+    const known = await attemptsForCalendarUid(tx, userId, c.signalId, f.calendar.uidKey);
+    if (known.length > 1)
+      return fail(
+        "CALENDAR_REVISION",
+        known.map((k) => k.attemptId),
+        known.map((k) => k.openingId),
+      );
+    if (known[0]) {
+      const { attemptId, openingId: knownOpening } = known[0];
+      const opening = (await loadOpenings(tx, userId)).find((o) => o.id === knownOpening)!;
+      // A revision may omit the company or title, but must not name a different one.
+      const differentCompany = f.company && companyKey(f.company) !== companyKey(opening.company);
+      const differentTitle = f.title && normalizedText(f.title) !== normalizedText(opening.title);
+      if (differentCompany || differentTitle)
+        return fail("CALENDAR_REVISION", [attemptId], [opening.id]);
       openingId = opening.id;
-      directAttemptId = known.rows[0].attempt_id;
+      directAttemptId = attemptId;
       strongOpening = true;
     }
   }
@@ -633,30 +635,25 @@ async function apply(
   )
     return fail("TERMINAL_NEEDS_REVIEW", [decision.id], [openingId]);
 
-  if (f.calendar) {
-    const previous = await tx.query<{
-      event_id: string; attempt_id: string; fields: ExtractedSignal["fields"];
-    }>(
-      `SELECT e.id AS event_id,e.attempt_id,s.fields FROM extracted_signals s
-       JOIN event_evidence ev ON ev.artifact_id=s.source_artifact_id AND ev.user_id=s.user_id
-       JOIN application_events e ON e.id=ev.event_id AND e.user_id=ev.user_id
-       WHERE s.user_id=$1 AND s.id<>$2 AND e.review_state='ACCEPTED'
-         AND s.fields->'calendar'->>'uidKey'=$3
-       ORDER BY (s.fields->'calendar'->>'sequence')::bigint DESC LIMIT 1`,
-      [userId, c.signalId, f.calendar.uidKey],
-    );
-    const prior = previous.rows[0];
-    if (prior?.fields.calendar) {
-      if (prior.attempt_id !== decision.id || f.calendar.sequence < prior.fields.calendar.sequence)
-        return fail("CALENDAR_REVISION", [decision.id, prior.attempt_id], [openingId]);
-      if (f.calendar.sequence === prior.fields.calendar.sequence) {
-        if ((["uidKey", "sequence", "method", "status", "scheduledFor", "organizerDomain"] as const)
-          .some(key => f.calendar![key] !== prior.fields.calendar![key]))
-          return fail("CALENDAR_REVISION", [decision.id], [openingId]);
-        await linkEvidence(tx, userId, prior.event_id, c.artifactId);
-        return { status: "APPLIED", attemptId: decision.id, openingId, kind,
-          createdAttempt: false, createdOpening: false, reconciled: 0 };
-      }
+  // Calendar revisions: a lower SEQUENCE, or one belonging to another attempt, never applies; the
+  // same SEQUENCE is a repeat of the accepted revision only if every calendar fact agrees.
+  const prior = f.calendar && (await latestCalendarRevision(tx, userId, c.signalId, f.calendar.uidKey));
+  if (f.calendar && prior) {
+    if (prior.attemptId !== decision.id || f.calendar.sequence < prior.calendar.sequence)
+      return fail("CALENDAR_REVISION", [decision.id, prior.attemptId], [openingId]);
+    if (f.calendar.sequence === prior.calendar.sequence) {
+      if (!sameCalendarRevision(f.calendar, prior.calendar))
+        return fail("CALENDAR_REVISION", [decision.id], [openingId]);
+      await linkEvidence(tx, userId, prior.eventId, c.artifactId);
+      return {
+        status: "APPLIED",
+        attemptId: decision.id,
+        openingId,
+        kind,
+        createdAttempt: false,
+        createdOpening: false,
+        reconciled: 0,
+      };
     }
   }
   const problem = await automaticEventProblem(tx, event(decision.id));
