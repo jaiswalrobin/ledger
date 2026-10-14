@@ -1,4 +1,5 @@
 import { EML_LIMITS } from "../../ingestion/eml.ts";
+import { authenticatedGmailDomain } from "./authentication.ts";
 import { RECRUITMENT_SUBJECT_TERMS } from "../../ingestion/header-gate.ts";
 import {
   RECRUITING_SENDER_DOMAINS,
@@ -263,14 +264,8 @@ export function createGmailClient(
       const from = header("from");
       // The address, not an "@" inside a display name such as "jobs@acme via Greenhouse".
       const domain = senderDomain(from);
-      const authentication = header("authentication-results");
-      const authenticatedDomain =
-        authentication.length <= 4096 &&
-        /^\s*mx\.google\.com;/i.test(authentication)
-          ? /(?:^|;)\s*dmarc=pass\b[^;]*\bheader\.from="?([A-Za-z0-9.-]+)/i
-              .exec(authentication)?.[1]
-              ?.toLowerCase()
-          : null;
+      const authenticatedDomain = headers.filter(h=>h.name.toLowerCase()==="from").length===1
+        ? authenticatedGmailDomain(headers) : null;
       return {
         id,
         from,
