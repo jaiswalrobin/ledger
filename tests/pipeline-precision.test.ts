@@ -25,7 +25,7 @@ let sequence = 0;
 async function gmail(
   user: string,
   mailbox: string,
-  mail: { subject: string; text: string; from?: string; date?: string },
+  mail: { subject: string; text: string; from?: string; date?: string; authenticated?: boolean },
 ): Promise<IngestOutcome> {
   sequence += 1;
   const raw = buildEml({
@@ -39,7 +39,12 @@ async function gmail(
   const [original] = await parseEml(new TextEncoder().encode(raw));
   return ingestOriginal(db, {
     userId: user,
-    source: { kind: "GMAIL", mailboxId: mailbox, providerMessageId: `p-${sequence}` },
+    source: {
+      kind: "GMAIL",
+      mailboxId: mailbox,
+      providerMessageId: `p-${sequence}`,
+      senderAuthenticated: mail.authenticated ?? false,
+    },
     original: original!,
     observedAt: new Date("2026-10-20T12:00:00Z"),
   });
@@ -185,5 +190,56 @@ describe("links in hiring mail", () => {
       text: "Open your dashboard: https://acme.example/portal?token=Zx81Qp",
     });
     assert.equal(out.status, "SKIPPED_SENSITIVE");
+  });
+});
+
+describe("follow-ups without an application ID or submitted email", () => {
+  const ats = '"Acme" <no-reply@us.greenhouse-mail.io>';
+  const confirm = {
+    from: ats,
+    authenticated: true,
+    subject: "Thank you for applying to Acme",
+    text: "Hi Robin,\n\nThank you for applying to Acme. We've received your application for the Data Engineer position.",
+  };
+
+  it("an interview invite and an authenticated rejection reach the only attempt", async () => {
+    const { user, mailbox } = await fresh();
+    assert.equal((await gmail(user, mailbox, confirm)).status, "APPLIED");
+    const invite = await gmail(user, mailbox, {
+      from: ats, authenticated: true, date: "Tue, 13 Oct 2026 09:30:00 +0000",
+      subject: "Interview invitation - Data Engineer",
+      text: "Hi Robin,\n\nWe would like to invite you to interview for the Data Engineer position at Acme.",
+    });
+    assert.equal(invite.status, "APPLIED");
+    const reject = await gmail(user, mailbox, {
+      from: ats, authenticated: true, date: "Wed, 14 Oct 2026 09:30:00 +0000",
+      subject: "Your application to Acme",
+      text: "Hi Robin,\n\nThank you for your interest in the Data Engineer position at Acme. Unfortunately, we have decided to move forward with other candidates.",
+    });
+    assert.equal(reject.status, "APPLIED");
+    assert.deepEqual(await events(user), ["CONFIRMATION_RECEIVED", "INTERVIEW_INVITED", "REJECTION_RECEIVED"]);
+  });
+
+  it("a rejection from an unauthenticated sender still needs a person", async () => {
+    const { user, mailbox } = await fresh();
+    await gmail(user, mailbox, confirm);
+    const reject = await gmail(user, mailbox, {
+      from: ats, authenticated: false, date: "Wed, 14 Oct 2026 09:30:00 +0000",
+      subject: "Your application to Acme",
+      text: "Hi Robin,\n\nUnfortunately, we have decided to move forward with other candidates for the Data Engineer position at Acme.",
+    });
+    assert.equal(reject.status === "REVIEW" && reject.reason, "TERMINAL_NEEDS_REVIEW");
+  });
+
+  it("a rejection in another mailbox than the confirmation still needs a person", async () => {
+    const { user, mailbox } = await fresh();
+    await gmail(user, mailbox, confirm);
+    const other = await seedMailbox(db, user, "second@example.com");
+    const reject = await gmail(user, other, {
+      from: ats, authenticated: true, date: "Wed, 14 Oct 2026 09:30:00 +0000",
+      subject: "Your application to Acme",
+      text: "Hi Robin,\n\nUnfortunately, we have decided to move forward with other candidates for the Data Engineer position at Acme.",
+    });
+    assert.equal(reject.status === "REVIEW" && reject.reason, "TERMINAL_NEEDS_REVIEW");
   });
 });

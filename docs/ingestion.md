@@ -185,6 +185,14 @@ Every source item becomes a normalized **source artifact** with:
 
 Classify → extract → identify opening → identify attempt → validate → accept or review. Extraction logic must never call a "set status" endpoint directly.
 
+**Identifying the attempt.** Real ATS mail rarely repeats an application ID or the submitted email,
+so an update that states neither matches the opening's only attempt (`SOLE_ATTEMPT` in
+`src/domain/resolution.ts`). An identity the attempt contradicts (a different ID, email or phone)
+never falls back to it, and an opening with several attempts still needs an identifier or review.
+Assessment and interview updates apply on that match. A rejection or offer additionally needs an
+authenticated hiring-platform sender, high confidence, and the attempt's confirmation to have
+arrived in the same Gmail mailbox; otherwise it goes to review as `TERMINAL_NEEDS_REVIEW`.
+
 ## 8. Failure and safety cases
 
 | Case | Expected behavior |

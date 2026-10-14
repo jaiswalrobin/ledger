@@ -218,17 +218,20 @@ test("replay after a crash keeps exclusions instead of counting them as processe
   }
 });
 
-test("IBM requisition joins related updates to the opening, but never guesses the applicant identity", async () => {
+test("IBM requisition joins a related update to the only attempt, never via the Candidate ID", async () => {
   const { userId, mailboxId, fake, deps } = await setup();
   fake.add("ibm", ibm);
   fake.add("assessment", { ...ibm, messageId: "<assessment@example.org>", subject: "Action Required: IBM Coding Assessment", text: "Ref: 123456 - Senior Frontend Engineer I - Confluent\nPlease complete your coding assessment. Candidate ID - 98765432" });
   await syncMailbox(deps, mailboxId, { userId });
-  const openings = await listOpenings(t.db, userId, NOW), reviews = await listReviews(t.db, userId);
+  const openings = await listOpenings(t.db, userId, NOW);
   assert.equal(openings.length, 1);
-  assert.equal(reviews.length, 1, "without a submission-specific ID or declared applicant email, assigning to an attempt requires review");
-  assert.equal(reviews[0]!.fields.externalApplicationId, null);
-  assert.equal(reviews[0]!.fields.title, openings[0]!.title);
-  assert.equal(reviews[0]!.kind, "ASSESSMENT_INVITED");
+  assert.deepEqual(await listReviews(t.db, userId), [], "a non-terminal update joins the opening's only attempt");
+  const { rows } = await t.db.query<{ event_kind: string }>(
+    "SELECT event_kind FROM application_events WHERE user_id=$1 AND review_state='ACCEPTED' ORDER BY occurred_at, event_kind", [userId]);
+  assert.deepEqual(rows.map(r => r.event_kind).sort(), ["ASSESSMENT_INVITED", "CONFIRMATION_RECEIVED"]);
+  const attempts = await t.db.query<{ external_application_id: string | null }>(
+    "SELECT external_application_id FROM application_attempts WHERE user_id=$1", [userId]);
+  assert.deepEqual(attempts.rows, [{ external_application_id: null }], "a Candidate ID never becomes an application ID");
 });
 
 test("contradictory IBM requisitions in subject and body require review", async () => {

@@ -82,9 +82,24 @@ test("phone mismatch on otherwise matching email is not auto-accepted", () => {
   const result = resolveUpdate(job.id, { applicantEmail: "a@example.com", phoneLookupKey: "hmac-b", externalApplicationId: null }, [attempt("a", "a@example.com", null, "hmac-a")]);
   assert.equal(result.kind, "REVIEW");
 });
-test("no attempt identity means unresolved even with one known attempt", () => {
+test("an update with no identity matches the only attempt, as weaker evidence", () => {
   const result = resolveUpdate(job.id, { applicantEmail: null, phoneLookupKey: null, externalApplicationId: null }, [attempt("a", "a@example.com")]);
+  assert.deepEqual(result, { kind: "MATCH", id: "a", reason: "Sole attempt on the opening" });
+});
+test("no attempt identity stays unresolved when the opening has two attempts", () => {
+  const result = resolveUpdate(job.id, { applicantEmail: null, phoneLookupKey: null, externalApplicationId: null }, [attempt("a", "a@example.com"), attempt("b", "b@example.com")]);
   assert.equal(result.kind, "REVIEW");
+});
+test("an identity the only attempt contradicts never falls back to it", () => {
+  for (const update of [
+    { applicantEmail: null, phoneLookupKey: null, externalApplicationId: "GH-2" },
+    { applicantEmail: "other@example.com", phoneLookupKey: null, externalApplicationId: null },
+  ])
+    assert.equal(resolveUpdate(job.id, update, [attempt("a", "a@example.com", "GH-1")]).kind, "REVIEW");
+});
+test("an identity the only attempt never recorded does not contradict it", () => {
+  const result = resolveUpdate(job.id, { applicantEmail: "a@example.com", phoneLookupKey: null, externalApplicationId: "GH-9" }, [attempt("a", null)]);
+  assert.deepEqual(result, { kind: "MATCH", id: "a", reason: "Sole attempt on the opening" });
 });
 test("attempt state remains independent across two submissions", () => {
   const events = [

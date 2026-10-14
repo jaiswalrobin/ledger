@@ -3,6 +3,7 @@ import {
   resolveOpening,
   resolveSubmission,
   resolveUpdate,
+  SOLE_ATTEMPT,
 } from "../domain/resolution.ts";
 import type { JobOpening } from "../domain/types.ts";
 import { atsKeyId, companyKey, normalizedText } from "../domain/normalization.ts";
@@ -37,6 +38,7 @@ import {
   latestCalendarRevision,
   sameCalendarRevision,
   automaticEventProblem,
+  attemptConfirmedInMailbox,
 } from "./store.ts";
 
 export type IngestSource =
@@ -145,6 +147,8 @@ interface Context {
   signal: ExtractedSignal;
   occurredAt: string;
   trustedSender: boolean;
+  /** The Gmail mailbox that received this message; null for forwarded files. */
+  mailboxId: string | null;
 }
 
 export async function ingestOriginal(
@@ -311,6 +315,7 @@ async function run(
     sourceType: source.kind,
     signal,
     trustedSender,
+    mailboxId: source.kind === "GMAIL" ? source.mailboxId : null,
   };
 
   if (signal.reasons.includes("conflicting-alternatives"))
@@ -629,11 +634,16 @@ async function apply(
       [openingId],
     );
   }
-  // Rejections and offers are irreversible-feeling: only an exact application id, or a unique email
-  // on a strongly matched opening, may apply them without a human.
+  // Rejections and offers are irreversible-feeling: only an exact application id, a unique email
+  // on a strongly matched opening, or the opening's only attempt when its confirmation reached the
+  // same mailbox, may apply them without a human (and always from an authenticated hiring
+  // platform, with high confidence).
   const strongAttempt =
     decision.reason === "Exact application ID" ||
-    (decision.reason === "Unique matching submitted email" && strongOpening);
+    (decision.reason === "Unique matching submitted email" && strongOpening) ||
+    (decision.reason === SOLE_ATTEMPT &&
+      c.mailboxId !== null &&
+      (await attemptConfirmedInMailbox(tx, userId, decision.id, c.mailboxId)));
   if (
     TERMINAL_KINDS.has(kind) &&
     (!strongAttempt || !c.trustedSender || signal.confidence !== "HIGH")
@@ -697,10 +707,11 @@ async function reconcileWaitingUpdates(
     original_key: string | null;
     source_fingerprint: string;
     sender_authenticated: boolean;
+    mailbox_id: string | null;
     confidence: "HIGH" | "LOW";
   }>(
     `SELECT r.id AS review_id, s.id AS signal_id, s.event_kind, s.fields, s.confidence, a.id AS artifact_id, a.source_kind,
-            a.original_message_at, a.original_key, a.source_fingerprint,a.sender_authenticated
+            a.original_message_at, a.original_key, a.source_fingerprint, a.sender_authenticated, a.mailbox_id
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
        JOIN source_artifacts a ON a.id = r.source_artifact_id AND a.user_id = r.user_id
@@ -736,6 +747,7 @@ async function reconcileWaitingUpdates(
         signal,
         occurredAt,
         trustedSender: row.sender_authenticated,
+        mailboxId: row.mailbox_id,
       },
       false,
     );

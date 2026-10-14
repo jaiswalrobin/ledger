@@ -87,9 +87,17 @@ export function resolveSubmission(
   return { kind: "CREATE", reason: "New observed submission with no competing attempt identity" };
 }
 
+/** Reason for matching the only attempt on an opening without an identifier. Callers treat it as
+ * weaker evidence than an ID or email match (rejections and offers need more; see pipeline). */
+export const SOLE_ATTEMPT = "Sole attempt on the opening";
+
 /**
  * A status email is not submission proof. Ambiguous updates are NEVER assigned
  * to an arbitrary attempt, especially for rejection/offer messages.
+ *
+ * Real ATS mail rarely repeats an application ID or the submitted email, so an update that names
+ * no identity matches the opening's only attempt (SOLE_ATTEMPT). An identity that the attempt
+ * contradicts (a different ID, email or phone) never falls back to it.
  */
 export function resolveUpdate(
   openingId: string,
@@ -98,13 +106,19 @@ export function resolveUpdate(
 ): Resolution {
   const scoped = attempts.filter(a => a.openingId === openingId);
   if (!scoped.length) return { kind: "REVIEW", candidateIds: [], reason: "No known submission attempt" };
+  const email = normalizeEmail(update.applicantEmail);
+  const only = scoped.length === 1 ? scoped[0]! : null;
+  const contradicts = (a: ApplicationAttempt) =>
+    (!!update.externalApplicationId && !!a.externalApplicationId && a.externalApplicationId !== update.externalApplicationId) ||
+    (!!email && !!a.applicantEmail && normalizeEmail(a.applicantEmail) !== email) ||
+    (!!update.phoneLookupKey && !!a.phoneLookupKey && a.phoneLookupKey !== update.phoneLookupKey);
+  const sole = (): Resolution | null => (only && !contradicts(only) ? { kind: "MATCH", id: only.id, reason: SOLE_ATTEMPT } : null);
 
   if (update.externalApplicationId) {
     const strong = scoped.filter(a => a.externalApplicationId === update.externalApplicationId);
     if (strong.length) return choose(strong.map(a => a.id), "Exact application ID");
-    return { kind: "REVIEW", candidateIds: scoped.map(a => a.id), reason: "Application ID not recognized" };
+    return sole() ?? { kind: "REVIEW", candidateIds: scoped.map(a => a.id), reason: "Application ID not recognized" };
   }
-  const email = normalizeEmail(update.applicantEmail);
   if (email) {
     const matched = scoped.filter(a => normalizeEmail(a.applicantEmail) === email);
     if (matched.length === 1) {
@@ -114,7 +128,7 @@ export function resolveUpdate(
       }
       return { kind: "MATCH", id: selected.id, reason: "Unique matching submitted email" };
     }
-    return {
+    return (matched.length ? null : sole()) ?? {
       kind: "REVIEW",
       candidateIds: matched.length ? matched.map(a => a.id) : scoped.map(a => a.id),
       reason: "Update email does not uniquely identify a submission",
@@ -122,5 +136,5 @@ export function resolveUpdate(
   }
 
   // A shared phone is an ATS deduplication hint, not proof of application identity.
-  return { kind: "REVIEW", candidateIds: scoped.map(a => a.id), reason: "Missing unambiguous application identity" };
+  return sole() ?? { kind: "REVIEW", candidateIds: scoped.map(a => a.id), reason: "Missing unambiguous application identity" };
 }

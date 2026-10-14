@@ -422,3 +422,21 @@ const CALENDAR_IDENTITY = ["uidKey", "sequence", "method", "status", "scheduledF
 /** Two observations of one invitation revision: every safe calendar fact agrees. */
 export const sameCalendarRevision = (a: CalendarFacts, b: CalendarFacts): boolean =>
   CALENDAR_IDENTITY.every((key) => a[key] === b[key]);
+
+/** Whether one of the attempt's confirmations was received by this Gmail mailbox. */
+export async function attemptConfirmedInMailbox(
+  db: Db,
+  userId: string,
+  attemptId: string,
+  mailboxId: string,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    `SELECT 1 FROM application_attempts t
+       JOIN source_artifacts a ON a.user_id = t.user_id
+        AND (a.original_key = ANY(t.submission_evidence_ids) OR a.source_fingerprint = ANY(t.submission_evidence_ids))
+      WHERE t.user_id = $1 AND t.id = $2 AND a.mailbox_id = $3
+      LIMIT 1`,
+    [userId, attemptId, mailboxId],
+  );
+  return rows.length > 0;
+}
