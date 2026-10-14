@@ -187,7 +187,8 @@ export function detectKind(haystack: string): {
   kind: SignalKind | null;
   reasons: string[];
 } {
-  const flat = flatten(normalizeForMatching(haystack));
+  // Phrases are prose: a hostname in a link ("www.hackerrank.com/...") is not a mention.
+  const flat = flatten(normalizeForMatching(haystack).replace(/https?:\/\/\S+/gi, " "));
   // "Thank you for taking the time to interview with us" opens most post-interview rejections;
   // a thank-you sentence describes the past, so it never proposes an interview/assessment step.
   const withoutThanks = flat.replace(
@@ -539,9 +540,15 @@ export function extractSignal(message: ParsedMessage): ExtractedSignal {
         (fields as Record<string, unknown>)[key] = alternative.fields[key];
     if (fields.fieldDecisions && alternative.fields.fieldDecisions) {
       fields.fieldDecisions = { ...fields.fieldDecisions };
-      for (const key of ["company", "title"] as const)
-        if (fields.fieldDecisions[key].state === "MISSING")
-          fields.fieldDecisions[key] = alternative.fields.fieldDecisions[key];
+      for (const key of ["company", "title"] as const) {
+        const other = alternative.fields.fieldDecisions[key];
+        // A conflict in any representation is a conflict: the merged decision, the value and the
+        // "conflicting-fields" reason must agree, or the pipeline and the evaluation diverge.
+        if (fields.fieldDecisions[key].state === "MISSING" || other.state === "AMBIGUOUS") {
+          fields.fieldDecisions[key] = other;
+          if (other.state === "AMBIGUOUS") fields[key] = null;
+        }
+      }
     }
     const kind = merged.kind ?? alternative.kind;
     const reasons = [...new Set([...merged.reasons, ...alternative.reasons])];

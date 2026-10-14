@@ -550,6 +550,13 @@ export function extractCompanyAndTitle(input: FieldInput): {
           titles.delete(key);
     }
 
+  // "applying to the Software Engineer, Editor role" also reads "Software Engineer" as an employer:
+  // a company that is the part of a title before its comma is a clipped title.
+  for (const [key, company] of companies)
+    if ([...company.forms.keys()].some((form) =>
+          [...titles.values()].some((t) => [...t.forms.keys()].some((title) => titleKey(title).startsWith(`${titleKey(form)},`)))))
+      companies.delete(key);
+
   // A general sentence rule can stop at an internal comma. Discard only a proven subspan
   // of the more specific title in the same representation; distinct mentions still conflict.
   for (const [key, candidate] of titles)
