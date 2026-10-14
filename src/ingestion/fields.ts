@@ -84,6 +84,9 @@ const LABEL_START = /^[\p{L}\p{N}]/u;
 const SCHEDULE_WORDS =
   /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|tonight)\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)(?![\p{L}])|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\b/iu;
 
+const CALENDAR_WORD =
+  /^(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december|today|tomorrow|(?:this|next|last) (?:week|month|year))$/i;
+
 /** Where a value was read. `label` is an explicit "Field: value" line; `prose` is anything else. */
 export type FieldSource = "label" | "prose";
 
@@ -123,6 +126,9 @@ export function cleanTitle(raw: string | null | undefined, source: FieldSource =
     PROSE.test(value) ||
     (source !== "label" && SCHEDULE_WORDS.test(value)) ||
     (source !== "label" && /\b(?:position|role|job)\s+(?:at|with|is|has|was|will|been)\b|\bwith candidate\b/i.test(value)) ||
+    // "North America for the Backend Engineer": an earlier preposition swallowed the one that
+    // introduces the role. Rejecting it lets the scan retry from the later preposition.
+    (source !== "label" && /\b(?:for|to|in|at|with|about|from)\s+(?:the|our|a|an|this|your)\b/i.test(value)) ||
     (source === "label" ? LABEL_NOISE : TITLE_NOISE).test(value)
   )
     return null;
@@ -141,17 +147,22 @@ export function cleanCompany(
   raw: string | null | undefined,
   strict = true,
   source: FieldSource = "prose",
+  /** The whole phrase is the sender's own organisation: keep connectors ("Code for America"). */
+  senderNamed = false,
 ): string | null {
   let value = safeField(raw, 120);
   if (!value) return null;
   value = value
     .replace(/^["'“‘]+|["'”’]+$/g, "")
     .replace(/^the\s+/i, "")
-    .replace(/\s*[:|]\s*(?:next steps?|application update|interview invitation|assessment invitation)\b.*$/i, "")
-    // A trailing clause ends the name; "and" only before a lower-case word, since "Barnes and
-    // Noble" and "Johnson & Johnson" are names.
-    .replace(/\s+(?:within|by|before|on|for|to|please|as|is|has|we|you|your|via|from)\b.*$/i, "")
-    .replace(/\s+and\s+\p{Ll}.*$/u, "")
+    .replace(/\s*[:|]\s*(?:next steps?|application update|interview invitation|assessment invitation)\b.*$/i, "");
+  // A trailing clause ends the name; "and" only before a lower-case word, since "Barnes and
+  // Noble" and "Johnson & Johnson" are names.
+  if (!senderNamed)
+    value = value
+      .replace(/\s+(?:within|by|before|on|for|to|please|as|is|has|we|you|your|via|from)\b.*$/i, "")
+      .replace(/\s+and\s+\p{Ll}.*$/u, "");
+  value = value
     .replace(/[\s"'”’)!.,;:]+$/g, "")
     .replace(DEPARTMENT, "")
     .replace(/\s+/g, " ")
@@ -165,6 +176,8 @@ export function cleanCompany(
     /https?:|@|\d{5,}/.test(value) ||
     PROSE.test(value) ||
     ROLE_SHAPED.test(value) ||
+    // "your application in October": a date is never the employer.
+    CALENDAR_WORD.test(value) ||
     (strict && PLATFORMS.test(value)) ||
     GENERIC_COMPANY.test(value)
   )
@@ -200,7 +213,10 @@ function domainHints(input: FieldInput): string[] {
 const ROLE = String.raw`(?:position|role|job|opening|vacancy|opportunity)`;
 const TITLE = String.raw`([\p{L}\p{N}][^\n.!?;:]{1,100}?)`;
 const COMPANY = String.raw`([\p{L}\p{N}][^\n!?;:,.]{0,60}?)`;
-const END = String.raw`(?=\s*(?:[.,!?;:]|\n|$|\s+(?:and|is|has|we|team|as|on|for|to|please|where|who|in\s+[A-Z])\b))`;
+// A company ends at punctuation or a connecting word. Patterns compile with the i flag, so case
+// cannot tell "in Berlin" from "in Tech": "in" ends a name like "for" and "to" do, and a name
+// that continues past a connector is recovered only when the sender's domain spells it.
+const END = String.raw`(?=\s*(?:[.,!?;:]|\n|$|\s+(?:and|is|has|we|team|as|on|for|to|please|where|who|in)\b))`;
 
 const rx = (source: string, flags = "iu") => new RegExp(source, flags);
 
@@ -355,14 +371,31 @@ export function extractCompanyAndTitle(input: FieldInput): {
     else add(titles, cleanTitle(label[2], "label"), 4, "body:label");
   }
 
-  // A company capture stops at " and" (END). In "Barnes and Noble" the name continues.
+  // A company capture stops at a connector (END). The name continues when:
+  // - "and"/"&" joins capitalised words up to the end of the clause ("Barnes and Noble");
+  // - the longer phrase is the sender's own organisation ("Code for America" from
+  //   codeforamerica.org, "Women in Tech" from womenintech.org), but not "Zalando in Berlin".
+  const companyFrom = (m: RegExpExecArray, group: number, strict: boolean) => {
+    const value = fullCompany(m, group);
+    return value && value !== m[group] && matchesDomain(value)
+      ? cleanCompany(value, strict, "prose", true)
+      : cleanCompany(value, strict);
+  };
   const fullCompany = (m: RegExpExecArray, group: number) => {
     const value = m[group];
-    if (!value) return value;
+    if (!value || !m[0].endsWith(value)) return value;
     const end = m.index + m[0].length;
-    if (!m[0].endsWith(value)) return value;
-    const rest = /^\s+(?:and|&)\s+(\p{Lu}[\p{L}\p{N}'&.-]*(?:\s+\p{Lu}[\p{L}\p{N}'&.-]*){0,3})(?=\s*(?:[.,!?;:\n]|$))/u.exec(m.input.slice(end));
-    return rest ? m.input.slice(m.index + m[0].length - value.length, end + rest[0].length) : value;
+    const start = end - value.length;
+    const following = m.input.slice(end);
+    const joined = /^\s+(?:and|&)\s+(\p{Lu}[\p{L}\p{N}'&.-]*(?:\s+\p{Lu}[\p{L}\p{N}'&.-]*){0,3})(?=\s*(?:[.,!?;:\n]|$))/u.exec(following);
+    if (joined) return m.input.slice(start, end + joined[0].length);
+    const clause = /^[^\n.,!?;:]{0,80}/.exec(following)![0];
+    const words = clause.split(/\s+/).filter(Boolean).slice(0, 6);
+    for (let n = words.length; n >= 1; n--) {
+      const longer = `${value} ${words.slice(0, n).join(" ")}`;
+      if (matchesDomain(longer)) return longer;
+    }
+    return value;
   };
 
   // Employer-agnostic requisition labels identify a title, never an application attempt ID.
@@ -383,13 +416,13 @@ export function extractCompanyAndTitle(input: FieldInput): {
         if (!title) return false;
         const start = m.index + m[0].indexOf(m[p.title]!);
         add(titles, title, p.weight, source, { span: { representation, start, end: start + m[p.title]!.length } });
-        if (p.company) add(companies, cleanCompany(fullCompany(m, p.company), false), p.weight, source);
+        if (p.company) add(companies, companyFrom(m, p.company, false), p.weight, source);
         return true;
       });
   for (const { source, text } of sentenceSources.slice(0, 2))
     for (const p of COMPANY_SENTENCES)
       scan(p.re, text, (m) => {
-        const company = cleanCompany(fullCompany(m, 1), p.strict ?? false);
+        const company = companyFrom(m, 1, p.strict ?? false);
         add(companies, company, p.weight, source);
         return !!company;
       });

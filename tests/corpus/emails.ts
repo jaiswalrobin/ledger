@@ -722,4 +722,29 @@ export const CORPUS: CorpusEmail[] = [
     text: "Hi Robin,\n\nWe are delighted to extend an offer for you to join us as a Data Scientist at Initech. The written offer letter is attached.\n\nMorgan",
     expect: { kind: "OFFER_RECEIVED", company: "Initech", title: "Data Scientist" },
   },
+  // ---- round 6: boundary bugs from a pipeline review ----------------------------------------
+  {
+    id: "r6-location-after-company",
+    note: "A location after the employer is not part of its name",
+    from: '"Zalando Careers" <jobs@zalando.example>',
+    subject: "Thank you for your application",
+    text: "Hi Robin,\n\nThank you for applying for the Software Engineer position at Zalando in Berlin. We have received your application.",
+    expect: { kind: "CONFIRMATION_RECEIVED", company: "Zalando", title: "Software Engineer" },
+  },
+  {
+    id: "r6-connector-in-name",
+    note: "A connector inside the employer's name, confirmed by the sender's domain",
+    from: '"Careers" <careers@codeforamerica.example>',
+    subject: "Thank you for your application",
+    text: "Hi Robin,\n\nThank you for applying for the Product Manager position at Code for America. We have received your application.",
+    expect: { kind: "CONFIRMATION_RECEIVED", company: "Code for America", title: "Product Manager" },
+  },
+  {
+    id: "r6-swallowed-preposition",
+    note: "An earlier preposition must not swallow the one that introduces the role",
+    from: '"Acme Careers" <careers@acme.example>',
+    subject: "Your application",
+    text: "Hi Robin,\n\nWe received your application in October for the Backend Engineer role at Acme.",
+    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Backend Engineer" },
+  },
 ];
