@@ -75,6 +75,16 @@ const events = async (user: string) =>
   ).rows.map((r) => r.kind);
 
 describe("classification reaches the right outcome", () => {
+  it("an exact application and ATS key cannot override a contradictory employer assertion", async () => {
+    const { user, mailbox } = await fresh();
+    const link = "https://boards.greenhouse.io/acme/jobs/4012345";
+    assert.equal((await gmail(user, mailbox, { subject: "Application received",
+      text: `We received your application for the Backend Engineer role at Acme.\nApplication ID: APP-11111\n${link}` })).status, "APPLIED");
+    const update = await gmail(user, mailbox, { subject: "Interview invitation",
+      text: `Please schedule your interview for the Backend Engineer role at OtherCo.\nApplication ID: APP-11111\n${link}` });
+    assert.equal(update.status === "REVIEW" && update.reason, "AMBIGUOUS_OPENING");
+    assert.deepEqual(await events(user), ["CONFIRMATION_RECEIVED"]);
+  });
   it("footer adjacency cannot create a fake Privacy Policy application", async () => {
     const { user, mailbox } = await fresh();
     const out = await gmail(user, mailbox, {

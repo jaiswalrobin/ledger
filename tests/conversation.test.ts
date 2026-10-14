@@ -4,7 +4,8 @@ import {createTestDb,seedUser,seedMailbox} from "./helpers/db.ts";
 import {parseEml} from "../src/ingestion/eml.ts";
 import {buildEml} from "./helpers/eml.ts";
 import {ingestOriginal} from "../src/server/pipeline.ts";
-import {messageIdKey} from "../src/server/conversation.ts";
+import {messageIdKey,employerOpenings} from "../src/server/conversation.ts";
+import type {Db} from "../src/server/db.ts";
 import {gmailMessageUrl} from "../app/lib.ts";
 
 it("verified replies resolve the accepted conversation among multiple attempts without inventing fields",async()=>{
@@ -53,4 +54,12 @@ it("source links stay on Gmail and opaque hashes never expose raw Message-IDs",(
   assert.match(messageIdKey("<private@example.com>")!,/^[a-f0-9]{64}$/);
   assert.equal(gmailMessageUrl("robin@example.com","../evil"),null);
   assert.equal(new URL(gmailMessageUrl("robin@example.com","18abcde123456789")!).hostname,"mail.google.com");
+});
+
+it("an overflowing employer context cannot become unique after filtering truncated candidates",async()=>{
+  const rows=Array.from({length:33},(_,i)=>({id:String(i),company:i?"Other Company":"Acme",title:"Engineer"}));
+  const fake={query:async()=>({rows,rowCount:rows.length})} as unknown as Db;
+  const context=await employerOpenings(fake,"owner","acme.example");
+  assert.equal(context.overflow,true);
+  assert.equal(context.openings.length,33,"the caller must review the overflow before filtering company or title");
 });

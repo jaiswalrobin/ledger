@@ -1,6 +1,6 @@
 # System architecture
 
-**Status:** Proposed, 2026-10-13. The repository currently contains specifications only.
+**Status:** Implemented Next.js/PostgreSQL prototype, updated 2026-10-14. Runtime isolation and a separate worker deployment remain planned.
 
 ## 1. Design goals and invariants
 
@@ -24,7 +24,7 @@ flowchart TD
     W[Next.js web UI] --> API[Typed application API]
     API --> DB[(PostgreSQL)]
     API --> Q[(Durable job queue)]
-    Q --> WORKER[Background worker]
+    Q --> WORKER[HTTP-triggered sync runner]
     WORKER --> GC[Gmail connector - restricted credentials]
     GC <--> GM[Gmail API: dedicated inboxes]
     WORKER --> GATE[Header-level privacy gate]
@@ -36,7 +36,12 @@ flowchart TD
     DB --> W
 ```
 
-**Security boundary:** only the Gmail connector can decrypt/use Gmail credentials. The rest of the application works on minimal typed source artifacts and extracted signals. The application API never needs raw email bodies. Enforce this boundary by code/package interfaces **and** runtime permissions, not only coding convention.
+**Current boundary:** connector modules access encrypted Gmail tokens through the vault, and
+domain/read models use minimal typed facts. The API and connector share one runtime and the
+server holds the decryption key; this is not a zero-knowledge vault or runtime credential
+isolation. Separate connector execution and key permissions are deployment work. Bodies are
+parsed transiently; source links and sanitized field candidates provide review context without
+persisting body excerpts.
 
 ## 3. Modules and responsibilities
 
@@ -52,7 +57,10 @@ flowchart TD
 | UI/read model | Timeline, evidence explanation, coverage, user reviews | Treating inactivity as rejection |
 | Observability | Safe operational metrics/audit trail | Storing raw message bodies or secrets in logs |
 
-A PostgreSQL-backed durable queue is an initial proposal (e.g. pg-boss); persistence and worker execution should be separate processes. No Kafka, Kubernetes, or separate AI service in V1.
+PostgreSQL `processing_tasks` and per-opening reconciliation jobs persist work and checkpoints.
+The scheduled endpoint and owner-triggered sync currently execute bounded runs inside HTTP
+invocations. Mailbox leases fence bookkeeping; owner locks serialize domain writes. A future
+separate worker can reuse these contracts without changing accepted event provenance.
 
 ## 4. Ingestion paths converge on one contract
 
@@ -127,7 +135,7 @@ Per mailbox: last success, last attempt, history cursor age, scan completeness, 
 
 ## 10. Key open decisions
 
-- Framework and deployment target (NestJS vs Fastify, managed Postgres/provider).
+- Separate worker deployment and runtime credential/key isolation.
 - Whether model-assisted extraction is needed after rule-based benchmarks.
 - Exact retention/deletion policy and operational encryption key management.
 - Gmail production compliance and restricted-scope review before external launch.

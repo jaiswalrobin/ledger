@@ -27,7 +27,7 @@ rechecking continues to preserve existing decisions.
 ## After deploying a parser improvement
 
 1. Merge the reviewed changes and wait for Ledger CI/CD on `main` to succeed.
-   This release applies `0008_mailbox_recheck.sql` before promotion. Google settings
+   The release applies all pending migrations before promotion. Google settings
    and `DEMO_MODE=false` must already be configured for a private production app.
 2. Open **Connections → Recheck last 60 days**. This starts a fresh, bounded search
    and retries previously skipped candidates using the current parser. It does
@@ -42,17 +42,18 @@ rechecking continues to preserve existing decisions.
 5. Verify the IBM confirmation against Gmail: employer IBM, actual role, and
    September 30 confirmation date. The job requisition scopes the opening;
    Candidate ID identifies a person and never identifies an application attempt.
-   Updates without a submission-specific identity require review.
+   A verified unique conversation or the opening's sole compatible attempt may identify an
+   update without repeated submission fields; contradictions or multiple candidates require review.
 
 Rechecks are owner-scoped, rate-limited, refuse active workers, and use a generation
 to avoid requeuing a message twice across overlapping queries. Existing accepted,
 rejected, assigned, or dismissed evidence is protected by transaction checks.
 An old source whose provider payload changed is not silently overwritten.
 
-Privacy checks still exclude OTPs, sign-in/reset/verification links, bearer JWTs,
-and unknown token-bearing access links. Clearly identified tracking/unsubscribe
-links may accompany a legitimate recruiting message, but those links and their
-tokens are never stored. Parsing limits and damaged attachments are reported;
+Privacy checks still exclude delivered OTPs, credential/reset/verification messages and bearer
+secrets. Portal/assessment/scheduling access links may accompany independently recognized hiring
+content; their tokens and URLs are discarded. Clearly identified tracking/unsubscribe links are
+also never persisted. Parsing limits and damaged attachments are reported;
 valid sibling originals can be imported with an explicit partial-processing result.
 Missing dates remain unknown rather than being inferred from mail-routing headers.
 

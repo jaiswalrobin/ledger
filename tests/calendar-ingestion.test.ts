@@ -107,6 +107,8 @@ it("calendar identity cannot override a submitted contact or a changed organizer
     assert.equal(contradict.status==="REVIEW"&&contradict.reason,"CALENDAR_REVISION");
     const organizer=await ingest(await parsed(calendar(2).replace("recruiting@acme.example","other@unrelated.example"),"REQUEST","A new time."));
     assert.equal(organizer.status==="REVIEW"&&organizer.reason,"CALENDAR_REVISION");
+    const wrongAts=await ingest(await parsed(calendar(2),"REQUEST","A new time.\nhttps://boards.greenhouse.io/other/jobs/987654"));
+    assert.equal(wrongAts.status==="REVIEW"&&wrongAts.reason,"CALENDAR_REVISION");
     const shadowUid="dismissed-proposal@example.com";
     const artifact=(await t.db.query<{id:string}>("SELECT id FROM source_artifacts WHERE user_id=$1 AND provider_message_id='identity-3'",[userId])).rows[0]!;
     await t.db.query(`INSERT INTO extracted_signals(id,user_id,source_artifact_id,extractor_version,event_kind,fields,confidence,processing_state) VALUES($1,$2,$3,'old-proposal',NULL,$4::jsonb,'LOW','DISMISSED')`,[randomUUID(),userId,artifact.id,JSON.stringify({calendar:{uidKey:createHash("sha256").update(shadowUid).digest("hex"),sequence:1}})]);

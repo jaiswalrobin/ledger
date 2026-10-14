@@ -487,7 +487,8 @@ async function apply(
       // A revision may omit the company or title, but must not name a different one.
       const differentCompany = f.company && companyKey(f.company) !== companyKey(opening.company);
       const differentTitle = f.title && normalizedText(f.title) !== normalizedText(opening.title);
-      if (differentCompany || differentTitle)
+      const differentAts = f.atsKey && (!opening.atsKey || atsKeyId(f.atsKey) !== atsKeyId(opening.atsKey));
+      if (differentCompany || differentTitle || differentAts)
         return fail("CALENDAR_REVISION", [attemptId], [opening.id]);
       openingId = opening.id;
       directAttemptId = attemptId;
@@ -526,6 +527,9 @@ async function apply(
         known.atsKey &&
         atsKeyId(f.atsKey) === atsKeyId(known.atsKey);
       if (stable || (matching && !f.atsKey)) {
+        if (known && ((f.company && companyKey(f.company) !== companyKey(known.company)) ||
+            (f.title && normalizedText(f.title) !== normalizedText(known.title))))
+          return fail("AMBIGUOUS_OPENING", [hits[0]!.id], [known.id]);
         openingId = hits[0]!.openingId;
         directAttemptId = hits[0]!.id;
         strongOpening = true;
@@ -544,7 +548,9 @@ async function apply(
     }
   }
   if (!isConfirmation && !openingId && (!f.company || !f.title) && c.mailboxId && c.senderVerified && !f.externalApplicationId) {
-    const known=(await employerOpenings(tx,userId,c.senderDomain)).filter(o=>(!f.company||companyKey(f.company)===companyKey(o.company))&&(!f.title||normalizedText(f.title)===normalizedText(o.title)));
+    const context=await employerOpenings(tx,userId,c.senderDomain);
+    if(context.overflow)return fail("AMBIGUOUS_OPENING",[],context.openings.map(o=>o.id));
+    const known=context.openings.filter(o=>(!f.company||companyKey(f.company)===companyKey(o.company))&&(!f.title||normalizedText(f.title)===normalizedText(o.title)));
     if(known.length>1)return fail("AMBIGUOUS_OPENING",[],known.map(o=>o.id));
     if(known[0])openingId=known[0].id;
   }

@@ -1,6 +1,6 @@
 # Ingestion, historical import, and Gmail synchronization
 
-**Status:** Proposed. Two V1 source adapters share the same extraction pipeline.
+**Status:** Implemented browser prototype. Gmail and selected `.eml` sources share the rules-9 extraction pipeline. Deployment hardening and live-provider validation remain separate work.
 
 ## 1. Source modes
 
@@ -16,7 +16,7 @@ Do not ask the user to grant primary-inbox OAuth merely for old data. The source
 
 1. User explicitly connects **one** dedicated Gmail account using OAuth with offline access and PKCE where appropriate.
 2. Validate mailbox profile and bind the stable Google subject to the user's Ledger account.
-3. Encrypt refresh token before persistence; constrain decrypt/use to Gmail worker.
+3. Encrypt refresh tokens before persistence. The connector uses the token vault; it currently shares the API runtime and is not a separate credential boundary.
 4. Set the connection to CONNECTED_INITIALIZING. Persist the baseline mailbox history ID **before** historical scanning.
 5. Queue a bounded 60-day backfill and then a catch-up history scan from the baseline ID.
 6. Mark backfill complete only when every page and durable processing step in the requested window has been accounted for; record counts and gaps.
@@ -45,7 +45,7 @@ Missing a real recruiting email is the costliest failure, so each stage errs tow
 - **Discovery** runs overlapping queries: known hiring-platform senders (`src/ingestion/ats.ts`), inflected subject words (Gmail matches whole words, so `interviews`/`applications` are listed explicitly), job-board confirmation senders, body recruitment phrases, and spam from hiring platforms.
 - **Spam** is accepted only when DMARC-authenticated as a known hiring-platform domain; anything else in spam is finished as `SKIPPED_SPAM`.
 - **Header gate** treats a hiring-platform sender with a non-account subject as a candidate. When headers alone are inconclusive, the worker asks Gmail's own search whether that one message (`rfc822msgid:`) contains a recruitment phrase. Only matching ids come back; no body is read unless that check passes.
-- **Extraction** normalizes typographic quotes, Unicode spaces and hard line wraps before matching, uses the HTML alternative when the text part is a stub, and fills missing fields from it.
+- **Extraction** normalizes typographic quotes, Unicode spaces and hard line wraps before matching. All distinct MIME alternatives contribute consistent field decisions; ambiguity in either representation remains ambiguity. Repeated alternatives do not add votes, and calendar parts are parsed once per original message.
 - **Synced messages** are dismissed only when nothing suggests hiring mail. Mixed signals, and unrecognised mail from a hiring platform, become review items. A rejection that also mentions an interview is proposed with low confidence and always needs a human.
 
 Record aggregate counts for ID discovery, header inspection, body fetch, accepted events, exclusions, and ambiguous reviews, **without keeping message bodies, raw headers or secrets in logs**.
@@ -121,13 +121,19 @@ Employer spellings that differ only in case, punctuation or legal form ("Acme", 
 "Acme, Inc.") share one candidate via `companyKey()`; a shared prefix ("Acme" / "Acme Robotics")
 never merges. Credible conflicting names or roles produce an
 `AMBIGUOUS` decision and a `CONFLICTING_FIELDS` review item before any opening or attempt is created.
+This conflict veto is deliberate: support weights are not calibrated probabilities, and a high
+score does not authorize ignoring another explicit employer/role assertion. Fix false captures or
+their region/role binding rather than introducing an arbitrary score-ratio override.
 The persisted diagnostics contain bounded sanitized candidates and source categories, never source
 sentences. Scores are heuristic support weights, not calibrated probabilities. Candidate and span
 limits prevent adversarial input from growing diagnostics or comparison work without bound.
 
 `src/ingestion/regions.ts` separates current content, signatures, and quoted history. Quoted text
 cannot supply current event assertions, job links, application IDs, or submitted contact details.
-HTML blockquotes preserve those boundaries. Signatures provide weak employer evidence. LinkedIn
+HTML blockquotes and recognized quoted containers preserve those boundaries. Short inline quotes
+do not suppress following authored text; wrapped reply headers and recognized HTML metadata tables
+are handled structurally. A standalone early "Thanks" does not hide later application facts.
+Signatures provide weak employer evidence. LinkedIn
 and Indeed layout extraction requires a board sender, a receipt anchor, and the expected layout;
 ordinary footer adjacency is not a title source.
 
@@ -143,11 +149,18 @@ resources or expanding recurrences. Supported REQUESTs retain a hashed UID, revi
 organizer domain, and an absolute `scheduledFor` time separately from the email's `occurredAt`.
 Floating or unknown-zone times, recurring events, malformed data, conflicting parts, and tentative
 requests require review. CANCEL messages remain review items and never create a scheduled event.
-Accepted UIDs can identify later revisions; duplicate revisions link evidence to the accepted event,
+Accepted UIDs can identify later revisions only with a verified source and a compatible known
+organizer, sender, opening and applicant identity. Duplicate revisions link evidence to the accepted event,
 and stale or conflicting revisions cannot overwrite it. UID matching remains owner-scoped and
 cannot override an explicit conflicting application ID. The formats are specified by
 [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545) and
 [RFC 6047](https://www.rfc-editor.org/rfc/rfc6047).
+
+Events store typed calendar facts and evidence links point to the exact accepted signal version.
+Historical, dismissed parser proposals cannot participate in calendar identity matching. Accepted
+revision history remains visible; the latest accepted revision supplies the current interview time
+and the dashboard agenda. Legacy provenance is backfilled only when unambiguous. Cancelling or
+rejecting an interpretation requires review/owner action; revisions do not erase accepted history.
 
 **Measurement.** `tests/corpus/emails.ts` is the synthetic development/regression corpus.
 `tests/corpus/holdout.ts` retains fixed evaluation cases. Disclosed failures used to guide fixes are
@@ -190,8 +203,28 @@ so an update that states neither matches the opening's only attempt (`SOLE_ATTEM
 `src/domain/resolution.ts`). An identity the attempt contradicts (a different ID, email or phone)
 never falls back to it, and an opening with several attempts still needs an identifier or review.
 Assessment and interview updates apply on that match. A rejection or offer additionally needs an
-authenticated hiring-platform sender, high confidence, and the attempt's confirmation to have
+authenticated hiring-platform or verified matching employer sender, high confidence, and the attempt's confirmation to have
 arrived in the same Gmail mailbox; otherwise it goes to review as `TERMINAL_NEEDS_REVIEW`.
+
+Verified replies can inherit a unique accepted conversation in the same owner/mailbox/sender
+scope through hashed Message-ID references or Gmail thread IDs. A verified employer can identify
+its unique pending opening without a repeated title. These are resolver decisions: they do not
+invent extracted company/title or submitted contact fields. Contradictions, shared/unknown sender
+domains, multiple compatible attempts, and candidate overflow remain in review. Receiving `To`
+addresses are not submission snapshots. Gmail authentication parsing excludes comments/quoted
+reasons and requires aligned Google results; trust still depends on Gmail's receiving boundary.
+
+Both automatic and owner-reviewed confirmations share submission-evidence bookkeeping. Relevant
+waiting updates are reconsidered in batches of 25 per changed opening; a durable cursor lets the
+scheduler resume the remainder, including when no Gmail grant is configured. Dismissed reviews
+remain dismissed. Review cards show sanitized facts/candidates and source links, never body excerpts.
+
+Sync bookkeeping locks only the mailbox; domain mutations retain the owner lock for deduplication.
+Task registration and cursor changes remain atomic and lease-fenced. Workers stop starting tasks
+when the run budget expires; the next successful lease closes abandoned RUNNING audit records
+while retaining checkpointed counters. Processing still runs in bounded HTTP-triggered invocations;
+separate worker deployment, cancellation across every dependency, and runtime credential isolation
+are not implemented by these changes.
 
 ## 8. Failure and safety cases
 

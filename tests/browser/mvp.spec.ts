@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { buildEml } from "../helpers/eml.ts";
 
 test("browser MVP: demo, independent attempts, review, corrections, and durable reload", async ({
   page,
@@ -91,6 +92,44 @@ test("email upload runs the real parser and survives reload", async ({
   await expect(page.getByText("Test Company", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText("Test Company", { exact: true })).toBeVisible();
+});
+
+test("calendar imports show an upcoming interview and rejecting it removes the agenda entry", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Explore the demo" }).click();
+  await page.getByRole("button", { name: "Import emails", exact: true }).first().click();
+  const now = Date.now(), start = new Date(now + 2 * 86400000);
+  const stamp = (date: Date) => date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const common = { from: "Agenda Labs Careers <careers@agendalabs.example>", to: "applicant@example.com" };
+  const receipt = buildEml({ ...common, subject: "Application received", date: new Date(now - 7200000).toUTCString(),
+    text: "We received your application for the Backend Engineer role at Agenda Labs.\nApplication ID: AGENDA-11111" });
+  const calendar = ["BEGIN:VCALENDAR", "VERSION:2.0", "METHOD:REQUEST", "BEGIN:VEVENT",
+    "UID:browser-agenda@example.com", "SEQUENCE:1", `DTSTAMP:${stamp(new Date(now - 3600000))}`,
+    `DTSTART:${stamp(start)}`, "SUMMARY:Technical Interview - Backend Engineer",
+    "DESCRIPTION:Interview for the Backend Engineer role at Agenda Labs.",
+    "ORGANIZER:mailto:careers@agendalabs.example", "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
+  const invitation = buildEml({ ...common, subject: "Interview invitation", date: new Date(now - 3600000).toUTCString(),
+    text: "Application ID: AGENDA-11111", attachments: [{ filename: "interview.ics", mime: "text/calendar; method=REQUEST", content: calendar }] });
+  await page.getByLabel("Email files").setInputFiles([
+    { name: "agenda-receipt.eml", mimeType: "message/rfc822", buffer: Buffer.from(receipt) },
+    { name: "agenda-invitation.eml", mimeType: "message/rfc822", buffer: Buffer.from(invitation) },
+  ]);
+  await page.getByRole("button", { name: "Import selected emails" }).click();
+  await expect(page.getByText("Added to your timeline", { exact: true })).toHaveCount(2);
+  await page.getByRole("button", { name: "View your ledger" }).click();
+  const agenda = page.getByRole("region", { name: "Upcoming interviews" });
+  await expect(agenda).toBeVisible();
+  const entry = agenda.getByRole("button", { name: /Agenda Labs/ });
+  await expect(entry.locator("time")).toHaveAttribute("datetime", new Date(Math.floor(start.getTime() / 1000) * 1000).toISOString());
+  await entry.click();
+  const scheduled = page.locator(".timeline-event").filter({ hasText: "Interview scheduled" });
+  await expect(scheduled.getByText(/Current interview time:/)).toBeVisible();
+  await scheduled.getByRole("button", { name: "Reject update" }).click();
+  await expect(scheduled.getByRole("button", { name: "Restore" })).toBeVisible();
+  await page.getByRole("navigation").getByRole("button", { name: "Applications", exact: true }).click();
+  await expect(agenda).toHaveCount(0);
+  await page.reload();
+  await expect(agenda).toHaveCount(0);
 });
 
 test("HTTP ownership, CSRF, cron authentication, and logout revocation fail closed", async ({

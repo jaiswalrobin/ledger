@@ -11,7 +11,7 @@ import { messageRegions } from "./regions.ts";
 import { extractCalendar } from "./calendar.ts";
 import { companyKey } from "../domain/normalization.ts";
 
-export const EXTRACTOR_VERSION = "rules-8";
+export const EXTRACTOR_VERSION = "rules-9";
 
 /**
  * Canonical form for matching: typographic quotes/dashes become ASCII, invisible characters are

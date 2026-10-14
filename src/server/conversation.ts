@@ -29,13 +29,16 @@ export async function conversationAttempts(db:Db,userId:string,mailboxId:string,
   return compatible.length?compatible:rows.map(r=>({attemptId:r.attempt_id,openingId:r.opening_id,company:r.company,title:r.title,conflicting:true}));
 }
 
-export async function employerOpenings(db:Db,userId:string,sender:string):Promise<{id:string;company:string;title:string}[]>{
+export async function employerOpenings(db:Db,userId:string,sender:string):Promise<{openings:{id:string;company:string;title:string}[];overflow:boolean}>{
   const domain=parseDomain(sender,{allowPrivateDomains:true,validateHostname:true});
-  if(!domain.domainWithoutSuffix||!domain.domain)return [];
+  if(!domain.domainWithoutSuffix||!domain.domain)return {openings:[],overflow:false};
   const {rows}=await db.query<{id:string;company:string;title:string}>(
     `SELECT DISTINCT o.id,c.canonical_name AS company,o.title FROM companies c JOIN job_openings o ON o.company_id=c.id AND o.user_id=c.user_id
      JOIN application_attempts a ON a.job_opening_id=o.id AND a.user_id=o.user_id
      WHERE c.user_id=$1 AND a.outcome='PENDING' AND (c.normalized_domain=$2 OR regexp_replace(lower(c.canonical_name),'[^[:alnum:]]','','g')=$3)
      LIMIT 33`,[userId,domain.domain,domain.domainWithoutSuffix]);
-  return rows.filter(r=>employerDomain(sender,r.company));
+  // Filtering a truncated candidate set can manufacture a unique result while an omitted
+  // candidate also matches. Report overflow before any compatibility filter is applied.
+  if(rows.length>32)return {openings:rows,overflow:true};
+  return {openings:rows.filter(r=>employerDomain(sender,r.company)),overflow:false};
 }
