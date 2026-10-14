@@ -697,4 +697,29 @@ export const CORPUS: CorpusEmail[] = [
     text: "Dear Robin,\n\nThank you for submitting your application to Globex.\n\nRef: 77881 - Network Engineer\n\nGlobex Careers",
     expect: { kind: "CONFIRMATION_RECEIVED", company: "Globex", title: "Network Engineer" },
   },
+  // ---- round 5: generalised forms of rules first written from held-out misses -------------
+  {
+    id: "r5-interview-referent",
+    note: "Next sentence refers back to the interview ('This call has been booked for')",
+    from: '"Initech Recruiting" <recruiting@initech.example>',
+    subject: "Your interview",
+    text: "Hi Robin,\n\nThanks for confirming a time for your interview for the QA Engineer position at Initech. This call has been booked for Monday at 2 PM ET.\n\nInitech Recruiting",
+    expect: { kind: "INTERVIEW_SCHEDULED", company: "Initech", title: "QA Engineer" },
+  },
+  {
+    id: "r5-interview-moved",
+    note: "'We have moved your interview to'",
+    from: '"Initech Recruiting" <recruiting@initech.example>',
+    subject: "Schedule change",
+    text: "Hi Robin,\n\nWe have moved your phone interview to Tuesday at 11 AM for the QA Engineer position at Initech.\n\nInitech Recruiting",
+    expect: { kind: "INTERVIEW_SCHEDULED", company: "Initech", title: "QA Engineer" },
+  },
+  {
+    id: "r5-offer-join-as",
+    note: "Offer phrased 'join us as a <title> at <company>'",
+    from: '"Morgan Lee" <morgan.lee@initech.example>',
+    subject: "Offer",
+    text: "Hi Robin,\n\nWe are delighted to extend an offer for you to join us as a Data Scientist at Initech. The written offer letter is attached.\n\nMorgan",
+    expect: { kind: "OFFER_RECEIVED", company: "Initech", title: "Data Scientist" },
+  },
 ];

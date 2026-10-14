@@ -90,7 +90,12 @@ const PHRASES: Record<SignalKind, RegExp> = {
         String.raw`your (?:onsite |on-site |phone |video |virtual |technical |final |panel )?interview (?:with|on|at|tomorrow|today)\b`,
         // "Your onsite interview for the Mechanical Engineer position is confirmed for Monday"
         String.raw`interview\b[^.!?\n]{0,100}\b(?:is|has been|was|are|have been) (?:now )?(?:confirmed|scheduled|booked|set)`,
-        String.raw`interview\b[^.!?]{0,160}[.!?]?\s+(?:it is|it\'s) (?:now )?(?:confirmed|scheduled|booked)`,
+        // The next sentence refers back to the interview: "...your interview for X. It is now
+        // scheduled for Thursday", "...the interview. This call has been booked for 3 PM".
+        String.raw`interview\b[^.!?]{0,160}[.!?]\s+(?:(?:this|that|the) (?:call|meeting|session|interview|appointment)|it|this|that)(?: is|'s| has been| was) (?:now )?(?:confirmed|scheduled|booked|set|rescheduled|moved) (?:for|to|on|at)\b`,
+        // "We have moved your interview to Friday", "your interview time has changed to 2 PM".
+        String.raw`(?:moved|rescheduled|changed) (?:your|the) (?:[\w-]+ )?interview (?:to|for)\b`,
+        String.raw`interview (?:time |date |slot )?(?:has been |was |is )?(?:moved|changed|rescheduled) to\b`,
         String.raw`calendar invitation`,
         String.raw`confirm(?:ing|ed)? (?:your|the) interview`,
         String.raw`interview (?:details|confirmation|reminder)`,

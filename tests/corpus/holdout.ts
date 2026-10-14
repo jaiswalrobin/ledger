@@ -8,6 +8,9 @@
  * cases stay fixed. No replacement synthetic cases are claimed to be independent evidence.
  * Round 3: h2-interview-rescheduled moved to emails.ts after a review named its cause (the
  * "account" title filter); h3-interview-moved replaces it.
+ * Round 5: six h5 cases written before the round-5 rule changes and scored once afterwards. They
+ * are synthetic and share an author with the corpus, so they guard against overfitting to exact
+ * wording; they are not independent evidence of real-world accuracy.
  */
 import type { CorpusEmail } from "./emails.ts";
 
@@ -83,5 +86,54 @@ export const HOLDOUT: CorpusEmail[] = [
     subject: "How was your interview experience?",
     text: "Hi Robin,\n\nWe'd love your feedback on your recent interview experience with Acme. The survey takes 2 minutes.\n\nAcme Careers",
     expect: { kind: null, company: "Acme", title: null },
+  },
+  // ---- round 5 ---------------------------------------------------------------------------
+  {
+    id: "h5-lever-thanks",
+    note: "Lever confirmation: role named after 'for', no article",
+    from: '"Brightline" <no-reply@hire.lever.co>',
+    subject: "Thanks for applying to Brightline",
+    text: "Hi Robin,\n\nThanks for your interest in Brightline! We've received your application for Staff Data Scientist and our team will be in touch if there's a fit.\n\nBest,\nBrightline Talent",
+    expect: { kind: "CONFIRMATION_RECEIVED", company: "Brightline", title: "Staff Data Scientist" },
+  },
+  {
+    id: "h5-recruiter-reject",
+    note: "Recruiter rejection in a reply thread, signature names the employer",
+    from: '"Dana Osei" <dana.osei@halcyon.example>',
+    subject: "Re: Senior iOS Engineer",
+    text: "Hi Robin,\n\nThanks again for speaking with the team last week. After a lot of discussion, we've decided not to move forward with your candidacy for the Senior iOS Engineer role. I appreciate the time you invested.\n\nDana\nTalent Partner, Halcyon",
+    expect: { kind: "REJECTION_RECEIVED", company: "Halcyon", title: "Senior iOS Engineer" },
+  },
+  {
+    id: "h5-interview-booked",
+    note: "Booked video interview, 'opening' instead of 'role'",
+    from: '"Orbital Recruiting" <recruiting@orbital.example>',
+    subject: "Interview confirmed: Product Designer",
+    text: "Hi Robin,\n\nYou're all set! Your video interview for the Product Designer opening at Orbital is booked for Wednesday, Nov 11 at 10:00 AM PT. A video link will follow.\n\nOrbital Recruiting",
+    expect: { kind: "INTERVIEW_SCHEDULED", company: "Orbital", title: "Product Designer" },
+  },
+  {
+    id: "h5-assessment",
+    note: "Coding assessment, comma inside the title",
+    from: '"Nimbus Hiring" <hiring@nimbus.example>',
+    subject: "Next step: coding assessment",
+    text: "Hi Robin,\n\nAs the next step for the Backend Engineer, Platform role at Nimbus Labs, please complete the coding assessment on CodeSignal within 5 days.\n\nNimbus Hiring",
+    expect: { kind: "ASSESSMENT_INVITED", company: "Nimbus Labs", title: "Backend Engineer, Platform" },
+  },
+  {
+    id: "h5-offer",
+    note: "Offer from a hiring manager, written letter to follow",
+    from: '"Priya Raman" <priya@quanta.example>',
+    subject: "Great news",
+    text: "Hi Robin,\n\nI'm thrilled to let you know that we'd like to offer you the Solutions Engineer position at Quanta Systems. I'll send the written offer letter tomorrow.\n\nPriya",
+    expect: { kind: "OFFER_RECEIVED", company: "Quanta Systems", title: "Solutions Engineer" },
+  },
+  {
+    id: "h5-newsletter-negative",
+    note: "Career newsletter mentioning interviews (negative)",
+    from: '"Hired Weekly" <news@hiredweekly.example>',
+    subject: "5 tips to ace your next interview",
+    text: "This week: how to prepare for a technical interview, salary negotiation basics, and 20 companies hiring now.",
+    expect: { kind: null, company: null, title: null },
   },
 ];

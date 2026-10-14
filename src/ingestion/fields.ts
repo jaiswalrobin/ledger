@@ -80,6 +80,10 @@ const LABEL_NOISE = /^(?:update|status|confirmation|reminder|n\/?a|none|tbd|job|
 const NAME_START = /^(?:[\p{Lu}\p{Lt}\p{Lo}\p{N}]|\p{Ll}\p{Lu})/u;
 const LABEL_START = /^[\p{L}\p{N}]/u;
 
+/** A date or clock time is never part of a job title: "Tuesday at 11 AM for the QA Engineer". */
+const SCHEDULE_WORDS =
+  /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|tonight)\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)(?![\p{L}])|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\b/iu;
+
 /** Where a value was read. `label` is an explicit "Field: value" line; `prose` is anything else. */
 export type FieldSource = "label" | "prose";
 
@@ -117,6 +121,7 @@ export function cleanTitle(raw: string | null | undefined, source: FieldSource =
     !(source === "label" ? LABEL_START : NAME_START).test(value) ||
     /https?:|@|\d{4,}$/.test(value) ||
     PROSE.test(value) ||
+    (source !== "label" && SCHEDULE_WORDS.test(value)) ||
     (source !== "label" && /\b(?:position|role|job)\s+(?:at|with|is|has|was|will|been)\b|\bwith candidate\b/i.test(value)) ||
     (source === "label" ? LABEL_NOISE : TITLE_NOISE).test(value)
   )
@@ -201,7 +206,9 @@ const rx = (source: string, flags = "iu") => new RegExp(source, flags);
 
 /** Sentences naming a role, optionally followed by the employer. Highest-precision patterns first. */
 const ROLE_SENTENCES: { re: RegExp; title: number; company?: number; weight: number }[] = [
-  { re: rx(String.raw`\bemployment\s+as\s+(?:an?\s+)?${TITLE}\s+at\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
+  // "offer you employment as a Risk Analyst at Gringotts", "hire you as Staff Engineer with Acme",
+  // "join us as a Data Scientist at Initech".
+  { re: rx(String.raw`\b(?:employment|offer(?:ing)?\s+you(?:\s+(?:a|the)\s+(?:position|role|job))?|hire\s+you|join(?:ing)?\s+(?:us|the\s+team))\s+as\s+(?:an?\s+)?${TITLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
   // "for the Senior Data Analyst position at Visa", "to our Software Engineer, Payments role"
   { re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:(?:the|our|a|an|this)\s+)?${TITLE}\s+${ROLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
   { re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:(?:the|our|a|an|this)\s+)?${TITLE}\s+${ROLE}\b`), title: 1, weight: 2.5 },
