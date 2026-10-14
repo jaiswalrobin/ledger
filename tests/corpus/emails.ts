@@ -565,4 +565,37 @@ export const CORPUS: CorpusEmail[] = [
     text: "Dear Robin,\n\nThank you for applying for the Research Nurse position at University of Texas MD Anderson Cancer Center. We have received your application.",
     expect: { kind: "CONFIRMATION_RECEIVED", company: "University of Texas MD Anderson Cancer Center", title: "Research Nurse" },
   },
+  // ---- from the second review of PR #12: classification ------------------------------------
+  {
+    id: "r2-receipt-community-footer",
+    note: "Receipt followed by a talent-community footer stays a confirmation",
+    from: '"Acme Careers" <careers@acme.example>',
+    subject: "Your application",
+    text: "Hi Robin,\n\nWe received your application for the Backend Engineer role at Acme.\n\nJoin our talent community for more opportunities.",
+    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Backend Engineer" },
+  },
+  {
+    id: "r2-not-received",
+    note: "A negated receipt is not a confirmation",
+    from: '"Acme Careers" <careers@acme.example>',
+    subject: "About your application",
+    text: "Hi Robin,\n\nWe have not received your application for the Backend Engineer role at Acme. Please try again.",
+    expect: { kind: null, company: "Acme", title: "Backend Engineer" },
+  },
+  {
+    id: "r2-interview-cancelled",
+    note: "A cancelled interview is not a scheduled one",
+    from: '"Acme Recruiting" <recruiting@acme.example>',
+    subject: "Interview update",
+    text: "Hi Robin,\n\nYour final interview for the Backend Engineer role at Acme has been cancelled.\n\nAcme Recruiting",
+    expect: { kind: null, company: "Acme", title: "Backend Engineer" },
+  },
+  {
+    id: "r2-interview-future",
+    note: "An interview that will be scheduled later is an invitation, not a booking",
+    from: '"Acme Recruiting" <recruiting@acme.example>',
+    subject: "Next steps",
+    text: "Hi Robin,\n\nYour final interview for the Backend Engineer role at Acme will be scheduled once you send us your availability.\n\nAcme Recruiting",
+    expect: { kind: "INTERVIEW_INVITED", company: "Acme", title: "Backend Engineer" },
+  },
 ];

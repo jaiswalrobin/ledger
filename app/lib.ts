@@ -200,6 +200,10 @@ export const reasonText: Record<string, string> = {
   CONFLICTING_EVENTS: "This update conflicts with the accepted timeline.",
   CONFLICTING_ALTERNATIVES:
     "The plain-text and HTML versions disagree. Choose how this update should be interpreted.",
+  INTERVIEW_CANCELLED:
+    "This message says an interview was cancelled or postponed. Decide how it affects the timeline.",
+  NOT_SUBMITTED:
+    "This message mentions your application but says it was not submitted or not received.",
 };
 
 export async function api<T>(path: string, body?: unknown): Promise<T> {

@@ -82,7 +82,10 @@ const PHRASES: Record<SignalKind, RegExp> = {
     String.raw`\b(?:` +
       [
         String.raw`interview (?:has been |is |was )?(?:confirmed|scheduled|booked|rescheduled|set)`,
-        String.raw`your (?:upcoming |scheduled |next )?(?:onsite |on-site |phone |video |virtual |technical |final |panel )?interview (?:with|on|at|for|is|tomorrow|today)`,
+        // "Your interview on Tuesday", "your upcoming interview with Acme". Not "your final interview
+        // for X", which can continue "has been cancelled" or "will be scheduled once ...".
+        String.raw`your (?:upcoming |scheduled )(?:onsite |on-site |phone |video |virtual |technical |final |panel )?interview\b`,
+        String.raw`your (?:onsite |on-site |phone |video |virtual |technical |final |panel )?interview (?:with|on|at|tomorrow|today)\b`,
         // "Your onsite interview for the Mechanical Engineer position is confirmed for Monday"
         String.raw`interview\b[^.!?\n]{0,100}\b(?:is|has been|was|are|have been) (?:now )?(?:confirmed|scheduled|booked|set)`,
         String.raw`calendar invitation`,
@@ -107,7 +110,7 @@ const PHRASES: Record<SignalKind, RegExp> = {
         String.raw`would (?:like|love) to (?:interview|speak with|talk with|talk to|chat|meet|set up)`,
         String.raw`phone screen`,
         String.raw`(?:move|moving|advance|advancing|progress) (?:you )?(?:forward )?to (?:the )?(?:next|interview|first|second|final) (?:round|stage|step)`,
-        String.raw`(?:share|send|provide|let us know) (?:your|some) (?:availability|available times)`,
+        String.raw`(?:share|send|provide|let us know)(?: us| me)? (?:your|some) (?:availability|available times)`,
         String.raw`(?:your|some) availability for (?:an? )?(?:interview|call|chat|conversation)`,
         String.raw`(?:pick|select|choose|book) a (?:time|slot)`,
       ].join("|") +
@@ -154,6 +157,18 @@ const PHRASES: Record<SignalKind, RegExp> = {
 const NOT_SUBMITTED =
   /\bapplication\b[^.!?\n]{0,60}\b(?:has not|hasn'?t|is not|isn'?t|was not|wasn'?t)\s+(?:yet\s+)?(?:been\s+)?(?:submitted|finished|completed)\b|\b(?:haven'?t|have not|not yet)\s+(?:yet\s+)?(?:submitted|finished|completed)\s+(?:it|your application|the application)\b|\bsaved as (?:a )?draft\b|\b(?:complete|finish) your application\b|\bstarted (?:an|your) application\b|\bincomplete application\b/i;
 
+/** Negated receipts: "we have not received your application", "did not receive your application". */
+const NOT_RECEIVED =
+  /\b(?:have not|haven'?t|has not|hasn'?t|did not|didn'?t|do not|don'?t|not yet|never|were unable to|could not|couldn'?t)\s+(?:yet\s+)?(?:been\s+)?(?:receive|received|get|got|find|found|locate|located)\s+(?:a |an |your |the )?(?:completed |job )?application\b/i;
+
+/** The interview was called off; there is no event type for that, so a person decides. */
+const INTERVIEW_CANCELLED =
+  /\binterview\b[^.!?\n]{0,120}\b(?:has been|have been|was|were|is|are|been)\s+(?:cancell?ed|called off|postponed|withdrawn)\b|\b(?:cancel(?:l?ed|ling)?|call(?:ed|ing)? off|postpon(?:e|ed|ing))\s+(?:your|the|our)\s+(?:[\w-]+\s+){0,2}interview\b|\binterview\s+cancell?ation\b/i;
+
+/** The interview has not been fixed yet: "will be scheduled once you send your availability". */
+const INTERVIEW_NOT_YET_SCHEDULED =
+  /\binterview\b[^.!?\n]{0,120}\b(?:will be|to be|would be|can be|is not yet|has not (?:yet )?been|not yet)\s+(?:scheduled|confirmed|booked|set up)\b/i;
+
 const STEP_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>([
   "ASSESSMENT_INVITED",
   "INTERVIEW_INVITED",
@@ -171,15 +186,22 @@ export function detectKind(haystack: string): {
     /\bthank(?:s| you)(?: (?:so|very) much)? for (?:taking (?:the )?time|your time|interviewing|your (?:recent )?interview|meeting|speaking|talking|chatting|completing|the opportunity|participating|attending|your patience)[^.!?\n]{0,200}[.!?]?/gi,
     " ",
   );
-  const hit = (Object.keys(PHRASES) as SignalKind[]).filter((k) =>
-    PHRASES[k].test(STEP_KINDS.has(k) ? withoutThanks : flat),
+  if (INTERVIEW_CANCELLED.test(withoutThanks))
+    return { kind: null, reasons: ["interview-cancelled"] };
+  const notYetScheduled = INTERVIEW_NOT_YET_SCHEDULED.test(withoutThanks);
+  const hit = (Object.keys(PHRASES) as SignalKind[]).filter(
+    (k) =>
+      !(k === "INTERVIEW_SCHEDULED" && notYetScheduled) &&
+      PHRASES[k].test(STEP_KINDS.has(k) ? withoutThanks : flat),
   );
   const reasons = hit.map((k) => "phrase:" + k);
+  if (notYetScheduled) reasons.push("interview-not-yet-scheduled");
   // Boilerplate thank-you text appears inside almost every message, so it only counts alone.
   const specific = hit.filter((k) => k !== "CONFIRMATION_RECEIVED");
   if (specific.length === 0) {
-    // A saved draft, an unfinished form or a talent-community sign-up is not a submission.
-    if (hit.length && NOT_SUBMITTED.test(flat))
+    // A saved draft, an unfinished form or a receipt that says nothing arrived is not a
+    // submission. The pipeline sends these to review: they still concern an application.
+    if (hit.length && (NOT_SUBMITTED.test(flat) || NOT_RECEIVED.test(flat)))
       return { kind: null, reasons: [...reasons, "not-submitted"] };
     return { kind: hit.length ? "CONFIRMATION_RECEIVED" : null, reasons };
   }

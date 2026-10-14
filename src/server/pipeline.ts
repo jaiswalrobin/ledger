@@ -69,7 +69,9 @@ export type ReviewReason =
   | "AMBIGUOUS_APPLICATION_ID"
   | "EVENT_PRECEDES_SUBMISSION"
   | "CONFLICTING_EVENTS"
-  | "CONFLICTING_ALTERNATIVES";
+  | "CONFLICTING_ALTERNATIVES"
+  | "INTERVIEW_CANCELLED"
+  | "NOT_SUBMITTED";
 
 export type IngestOutcome =
   | {
@@ -310,6 +312,11 @@ async function run(
     return review(base, "UNRECOGNIZED", [], []);
   if (signal.reasons.includes("ambiguous-job-links"))
     return review(base, "AMBIGUOUS_OPENING", [], []);
+  if (signal.reasons.includes("interview-cancelled"))
+    return review(base, "INTERVIEW_CANCELLED", [], []);
+  // Receipt wording next to "not submitted"/"not received": contradictory, so never dismissed.
+  if (signal.reasons.includes("not-submitted"))
+    return review(base, "NOT_SUBMITTED", [], []);
   if (!signal.kind) {
     // A synced message is dismissed only when nothing suggests it is hiring mail. Mixed signals,
     // or any unrecognised message from a hiring platform, go to a human instead of disappearing.
