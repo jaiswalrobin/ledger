@@ -4,7 +4,17 @@ import { classifyHeaders } from "../../ingestion/header-gate.ts";
 import type { Db } from "../db.ts";
 import { ingestOriginal, type IngestSource } from "../pipeline.ts";
 import { OAuthError } from "../security/oauth.ts";
-import { GmailError, candidateQueries, type GmailClient } from "./client.ts";
+import {
+  GmailError,
+  candidateQueries,
+  phraseCheckQuery,
+  type GmailClient,
+  type MessageHeadersView,
+} from "./client.ts";
+import {
+  isRecruitingSenderDomain,
+  senderDomain,
+} from "../../ingestion/ats.ts";
 import { TokenUnreadableError } from "./vault.ts";
 
 export type SyncScope = { userId: string } | { system: true };
@@ -76,6 +86,7 @@ interface MailboxRow {
     pageToken: string;
     historyId: string;
   } | null;
+  recheck_id: string | null;
 }
 
 /** Resumable discovery position. Contains only query/page positions, never message data. */
@@ -127,7 +138,7 @@ export async function syncMailbox(
   const leased = await db.query<MailboxRow>(
     `UPDATE connected_mailboxes SET sync_lease_until = $2, sync_lease_owner = $3, last_attempt_at = $4
       WHERE id = $1 AND ($5::uuid IS NULL OR user_id=$5) AND sync_state <> 'DISCONNECTED' AND (sync_lease_until IS NULL OR sync_lease_until < $4)
-      RETURNING id, user_id, address, sync_state, history_cursor, backfill_complete, last_success_at, scan_state, history_scan_state`,
+      RETURNING id, user_id, address, sync_state, history_cursor, backfill_complete, last_success_at, scan_state, history_scan_state, recheck_id`,
     [
       mailboxId,
       new Date(started.getTime() + LEASE_SECONDS * 1000).toISOString(),
@@ -253,10 +264,20 @@ export async function syncMailbox(
     ): Promise<number> => {
       if (!ids.length) return 0;
       const r = await tx.query(
-        `INSERT INTO processing_tasks (id, user_id, mailbox_id, provider_message_id)
-         SELECT gen_random_uuid(), $1, $2, x FROM unnest($3::text[]) AS x
-         ON CONFLICT (mailbox_id, provider_message_id) DO NOTHING`,
-        [mailbox.userId, mailboxId, [...new Set(ids)]],
+        `INSERT INTO processing_tasks (id, user_id, mailbox_id, provider_message_id, recheck_id, reprocess_requested)
+         SELECT gen_random_uuid(), $1, $2, x, $4::uuid, $4::uuid IS NOT NULL FROM unnest($3::text[]) AS x
+         ON CONFLICT (mailbox_id, provider_message_id) DO UPDATE SET
+           state='PENDING', attempts=0, next_attempt_at=$5, safe_error_code=NULL,
+           outcome=NULL, finished_at=NULL, recheck_id=EXCLUDED.recheck_id, reprocess_requested=true
+         WHERE EXCLUDED.recheck_id IS NOT NULL AND processing_tasks.recheck_id IS DISTINCT FROM EXCLUDED.recheck_id
+           AND processing_tasks.state='DONE' AND processing_tasks.outcome NOT IN ('PROCESSED','PROCESSED_PARTIAL','GONE','SKIPPED_OUTBOUND')
+           AND NOT EXISTS (
+             SELECT 1 FROM source_artifacts a WHERE a.user_id=$1 AND a.mailbox_id=$2
+               AND a.provider_message_id=processing_tasks.provider_message_id
+               AND (EXISTS (SELECT 1 FROM event_evidence e WHERE e.user_id=$1 AND e.artifact_id=a.id)
+                 OR EXISTS (SELECT 1 FROM extracted_signals s JOIN review_items r ON r.signal_id=s.id AND r.user_id=s.user_id
+                   WHERE s.user_id=$1 AND s.source_artifact_id=a.id)))`,
+        [mailbox.userId, mailboxId, [...new Set(ids)], row.recheck_id, now().toISOString()],
       );
       return r.rowCount;
     };
@@ -351,41 +372,29 @@ export async function syncMailbox(
     };
 
     try {
-      if (state === "INITIALIZING") {
-        discoveryDone = await discover("BACKFILL");
+      try {
+        if (state === "INITIALIZING") discoveryDone = await discover("BACKFILL");
+        else if (state === "RESYNC_REQUIRED") discoveryDone = await discover("RESYNC");
         if (discoveryDone) discoveryDone = await catchUp();
-      } else if (state === "RESYNC_REQUIRED") {
-        discoveryDone = await discover("RESYNC");
+      } catch (error) {
+        if (!(error instanceof GmailError) || error.code !== "history_expired") throw error;
+        // A cursor can expire during a paused backfill/recheck too. Restart the
+        // correct window, rather than resuming a permanently expired baseline.
+        const mode = state === "INITIALIZING" || row.recheck_id ? "BACKFILL" : "RESYNC";
+        state = mode === "BACKFILL" ? "INITIALIZING" : "RESYNC_REQUIRED";
+        runKind = mode;
+        scan = null;
+        historyScan = null;
+        await setMailbox(
+          "sync_state=$2, scan_state=NULL, history_scan_state=NULL, last_error_code='CURSOR_EXPIRED'",
+          [state],
+        );
+        await fenced(tx => tx.query("UPDATE sync_runs SET kind=$2 WHERE id=$1", [runId, mode]));
+        discoveryDone = await discover(mode);
         if (discoveryDone) discoveryDone = await catchUp();
-      } else {
-        try {
-          discoveryDone = await catchUp();
-        } catch (error) {
-          if (
-            !(error instanceof GmailError) ||
-            error.code !== "history_expired"
-          )
-            throw error;
-          // The cursor aged out: flag the gap, then rebuild a valid checkpoint with a bounded scan.
-          state = "RESYNC_REQUIRED";
-          runKind = "RESYNC";
-          scan = null;
-          historyScan = null;
-          await setMailbox(
-            "sync_state = 'RESYNC_REQUIRED', scan_state = NULL, history_scan_state=NULL, last_error_code = 'CURSOR_EXPIRED'",
-          );
-          await fenced((tx) =>
-            tx.query("UPDATE sync_runs SET kind = 'RESYNC' WHERE id = $1", [
-              runId,
-            ]),
-          );
-          discoveryDone = await discover("RESYNC");
-          if (discoveryDone) discoveryDone = await catchUp();
-        }
       }
     } catch (error) {
-      if (error instanceof GmailError && error.code === "unauthorized")
-        throw new AuthAbort();
+      if (error instanceof GmailError && error.code === "unauthorized") throw new AuthAbort();
       throw error;
     }
 
@@ -446,10 +455,27 @@ export async function syncMailbox(
       );
     };
 
+    /**
+     * Recruiters write subjects like "Quick chat?" or "Acme <> Robin". Before giving up on such a
+     * message, ask Gmail's own index whether its body contains a recruitment phrase. Only a
+     * yes/no (an id list) comes back; Ledger still reads no body it has not approved.
+     */
+    const bodyHasPhrase = async (
+      headers: MessageHeadersView,
+    ): Promise<boolean> => {
+      const q = headers.rfcMessageId
+        ? phraseCheckQuery(headers.rfcMessageId)
+        : null;
+      if (!q) return false;
+      const hits = await client.listMessageIds(q);
+      return hits.ids.includes(headers.id);
+    };
+
     const processTask = async (task: {
       id: string;
       provider_message_id: string;
       attempts: number;
+      reprocess_requested: boolean;
     }): Promise<void> => {
       const id = task.provider_message_id;
       try {
@@ -483,6 +509,20 @@ export async function syncMailbox(
           counters.skippedOther += 1;
           return void (await finish(task.id, "SKIPPED_OUTBOUND"));
         }
+        if (headers.labelIds.includes("TRASH")) {
+          counters.skippedOther += 1;
+          return void (await finish(task.id, "SKIPPED_TRASH"));
+        }
+        if (
+          headers.labelIds.includes("SPAM") &&
+          !(
+            headers.senderAuthenticated === true &&
+            isRecruitingSenderDomain(senderDomain(headers.from))
+          )
+        ) {
+          counters.skippedOther += 1;
+          return void (await finish(task.id, "SKIPPED_SPAM"));
+        }
         const gate = classifyHeaders({
           from: headers.from,
           subject: headers.subject,
@@ -491,7 +531,7 @@ export async function syncMailbox(
           counters.skippedSensitive += 1;
           return void (await finish(task.id, "SKIPPED_SENSITIVE"));
         }
-        if (gate.kind !== "CANDIDATE") {
+        if (gate.kind !== "CANDIDATE" && !(await bodyHasPhrase(headers))) {
           counters.skippedOther += 1;
           return void (await finish(
             task.id,
@@ -518,17 +558,20 @@ export async function syncMailbox(
           ));
         }
         let outcome = "NO_SIGNAL";
+        let omitted = 0;
         for (const original of originals) {
+          omitted += original.omittedOriginals?.length ?? 0;
           const result = await fenced((tx) =>
             ingestOriginal(tx, {
               userId: mailbox.userId,
               source: sourceFor(
                 id,
-                original.envelopeDate !== null,
+                original.isAttached === true || original.envelopeDate !== null,
                 headers.senderAuthenticated === true,
               ),
               original,
               observedAt: now(),
+              reprocessUnapplied: task.reprocess_requested,
             }),
           );
           if (result.status === "APPLIED") {
@@ -537,14 +580,20 @@ export async function syncMailbox(
           } else if (result.status === "REVIEW") {
             counters.reviews += 1;
             outcome = "PROCESSED";
-          } else if (result.status === "SKIPPED_SENSITIVE")
+          } else if (result.status === "SKIPPED_SENSITIVE") {
             counters.skippedSensitive += 1;
+            if (outcome === "NO_SIGNAL") outcome = "SKIPPED_SENSITIVE";
+          } else if (result.status === "NO_SIGNAL") counters.skippedOther += 1;
           else if (
             outcome === "NO_SIGNAL" &&
             (result.status === "DUPLICATE" ||
               result.status === "DUPLICATE_OBSERVATION")
           )
             outcome = "PROCESSED";
+        }
+        if (omitted) {
+          counters.skippedOther += omitted;
+          outcome = outcome === "PROCESSED" ? "PROCESSED_PARTIAL" : "QUARANTINED_PARTIAL";
         }
         await finish(task.id, outcome);
       } catch (error) {
@@ -563,12 +612,13 @@ export async function syncMailbox(
     };
 
     const dueSql =
-      "SELECT id, provider_message_id, attempts FROM processing_tasks WHERE mailbox_id = $1 AND state = 'PENDING' AND next_attempt_at <= $2 ORDER BY created_at, id LIMIT $3";
+      "SELECT id, provider_message_id, attempts, reprocess_requested FROM processing_tasks WHERE mailbox_id = $1 AND state = 'PENDING' AND next_attempt_at <= $2 ORDER BY created_at, id LIMIT $3";
     while (elapsed() < budgetMs) {
       const batch = await db.query<{
         id: string;
         provider_message_id: string;
         attempts: number;
+        reprocess_requested: boolean;
       }>(dueSql, [mailboxId, now().toISOString(), concurrency * 4]);
       if (!batch.rows.length) break;
       const queue = [...batch.rows];
@@ -621,7 +671,7 @@ export async function syncMailbox(
         state === "DEGRADED")
     ) {
       await setMailbox(
-        "sync_state = 'HEALTHY', backfill_complete = backfill_complete OR $2, scan_state=NULL, last_error_code = NULL",
+        "sync_state = 'HEALTHY', backfill_complete = backfill_complete OR $2, scan_state=NULL, last_error_code = NULL, recheck_id=NULL",
         [state === "INITIALIZING"],
       );
     } else if (

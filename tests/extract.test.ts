@@ -21,6 +21,19 @@ async function extract(spec: EmlSpec) {
 }
 
 describe("confirmations", () => {
+  it("IBM confirmation extracts the role without treating candidate or requisition IDs as application IDs", async () => {
+    const s = await extract({
+      from: "IBM Talent Acquisition <talent@ibm.com>",
+      to: "applicant@example.com",
+      subject: "You have successfully submitted your IBM job application - 123456 - Senior Frontend Engineer I - Confluent",
+      text: "Dear Applicant, thank you for applying to the role of Senior Frontend Engineer I - Confluent - 123456 with Candidate ID - 98765432 at IBM. Your application is being reviewed.",
+    });
+    assert.equal(s.kind, "CONFIRMATION_RECEIVED");
+    assert.equal(s.fields.company, "IBM");
+    assert.equal(s.fields.title, "Senior Frontend Engineer I - Confluent");
+    assert.equal(s.fields.externalApplicationId, null);
+    assert.deepEqual(s.fields.atsKey, { provider: "ibm", tenant: "ibm", requisitionId: "123456" });
+  });
   it("Greenhouse: company, title, scoped ATS key, canonical URL without tracking, application id, applicant", async () => {
     const s = await extract(greenhouseConfirmation());
     assert.equal(s.kind, "CONFIRMATION_RECEIVED");

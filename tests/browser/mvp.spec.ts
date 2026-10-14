@@ -118,6 +118,9 @@ test("HTTP ownership, CSRF, cron authentication, and logout revocation fail clos
     ).ok(),
   ).toBeTruthy();
   const dashboard = await (await first.request.get("/api/dashboard")).json();
+  expect((await first.request.post("/api/recheck", {
+    headers: { Origin: origin }, data: { mailboxId: "00000000-0000-4000-8000-000000000000" },
+  })).status()).toBe(403);
   expect(
     (
       await second.request.get(`/api/openings/${dashboard.openings[0].id}`)
@@ -334,4 +337,39 @@ test("review creation uses an existing opening without dummy fields, and submiss
     .getByRole("button", { name: "View Juniper Studio application" })
     .click();
   await expect(page.getByText(/Submission date corrected from/)).toBeVisible();
+});
+
+test("connections explain email counts and preserve partial recheck progress", async ({ page }) => {
+  const mailboxId = "00000000-0000-4000-8000-000000000001";
+  const mailbox = {
+    id: mailboxId, address: "jobs@example.org", syncState: "HEALTHY",
+    backfillComplete: true, backfillStart: "2026-08-21T00:00:00Z", backfillEnd: "2026-10-20T00:00:00Z",
+    lastSuccessAt: "2026-10-20T00:00:00Z", lastAttemptAt: "2026-10-20T00:00:00Z", lastErrorCode: null,
+    pendingTasks: 0, failedTasks: 0, lastRun: null, recheckInProgress: false,
+    processingSummary: { processed: 4, skippedSensitive: 1, unrecognized: 2, skippedOther: 3, quarantined: 1, partiallyProcessed: 0 },
+    excludedMessages: [{ messageId: "abcdef123456", reason: "PRIVACY_CHECK", originalMessageAt: "2026-09-30T02:59:00Z" }],
+  };
+  await page.route("**/api/session", route => route.fulfill({ json: {
+    session: { userId: "00000000-0000-4000-8000-000000000002", email: "jobs@example.org", isDemo: false },
+    demoEnabled: false, googleReady: true,
+  } }));
+  await page.route("**/api/dashboard", route => route.fulfill({ json: { openings: [], reviews: [], mailboxes: [mailbox] } }));
+  await page.route("**/api/recheck", async route => {
+    expect(route.request().postDataJSON()).toEqual({ mailboxId });
+    mailbox.recheckInProgress = true;
+    mailbox.pendingTasks = 2;
+    await route.fulfill({ json: { runs: [{ mailboxId, status: "PARTIAL" }] } });
+  });
+  await page.goto("/");
+  await page.getByRole("navigation").getByRole("button", { name: "Connections", exact: true }).click();
+  const totals = page.getByLabel("Email processing totals");
+  await expect(totals).toContainText("4 emails used for timelines or review");
+  await expect(totals).toContainText("1 excluded by privacy checks");
+  await expect(page.getByText(/A completed sync does not guarantee/)).toBeVisible();
+  await page.getByText("See recent excluded emails").click();
+  await expect(page.getByRole("link", { name: "Open in Gmail" })).toHaveAttribute("href", "https://mail.google.com/mail/?authuser=jobs%40example.org#all/abcdef123456");
+  await page.getByRole("button", { name: "Recheck last 60 days" }).click();
+  await expect(page.locator(".notice[role='alert']")).toContainText("Some work remains");
+  await expect(page.getByRole("button", { name: "Recheck last 60 days" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Sync now" })).toBeEnabled();
 });

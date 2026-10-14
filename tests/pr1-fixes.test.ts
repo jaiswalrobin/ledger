@@ -413,7 +413,7 @@ test("PR1: populated core databases upgrade without changing applied checksums o
         join(directory, file),
         await readFile(join(MIGRATIONS_DIR, file)),
       );
-    assert.equal((await applyMigrations(db, directory)).length, 6);
+    assert.equal((await applyMigrations(db, directory)).length, 7);
     assert.equal((await db.query("SELECT id FROM companies")).rows.length, 4);
     assert.equal(
       (await db.query("SELECT company_id FROM job_openings")).rows.length,

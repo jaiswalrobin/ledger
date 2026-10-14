@@ -1,4 +1,9 @@
 import { EML_LIMITS } from "../../ingestion/eml.ts";
+import { RECRUITMENT_SUBJECT_TERMS } from "../../ingestion/header-gate.ts";
+import {
+  RECRUITING_SENDER_DOMAINS,
+  senderDomain,
+} from "../../ingestion/ats.ts";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 export type GmailErrorCode =
@@ -25,6 +30,8 @@ export interface MessageHeadersView {
   subject: string;
   labelIds: string[];
   senderAuthenticated?: boolean;
+  /** RFC 5322 Message-ID, used only to ask Gmail search about this one message. */
+  rfcMessageId?: string | null;
 }
 
 /**
@@ -47,24 +54,69 @@ export interface GmailClient {
   ): Promise<{ ids: string[]; historyId: string; nextPageToken?: string }>;
 }
 
-/** Conservative candidate queries with deliberately overlapping coverage. Message ids are deduped downstream. */
+/**
+ * Phrases Gmail's own index may confirm inside a message body. Searching never transfers content
+ * to Ledger: only matching message ids come back.
+ */
+export const RECRUITMENT_PHRASES = [
+  "thank you for applying",
+  "thanks for applying",
+  "thank you for your application",
+  "thank you for your interest",
+  "received your application",
+  "your application",
+  "application was sent",
+  "application has been submitted",
+  "your candidacy",
+  "regret to inform",
+  "move forward with other candidates",
+  "not be moving forward",
+  "not moving forward",
+  "invite you to interview",
+  "schedule an interview",
+  "interview invitation",
+  "phone screen",
+  "online assessment",
+  "coding challenge",
+  "take-home",
+  "offer letter",
+  "pleased to offer",
+  "offer of employment",
+  "hiring team",
+  "recruiting team",
+  "talent acquisition",
+] as const;
+
+const phraseQuery = (): string =>
+  `(${RECRUITMENT_PHRASES.map((p) => `"${p}"`).join(" OR ")})`;
+
+/**
+ * Gmail search query asking whether ONE message (by RFC Message-ID) contains a recruitment
+ * phrase. Returns null when the id cannot be embedded safely in a query.
+ */
+export function phraseCheckQuery(rfcMessageId: string): string | null {
+  const id = rfcMessageId.trim().replace(/^<|>$/g, "");
+  if (!id || id.length > 250 || !/^[A-Za-z0-9!#$%&'*+\/=?^_`{|}~.@-]+$/.test(id))
+    return null;
+  return `rfc822msgid:${id} in:anywhere ${phraseQuery()}`;
+}
+
+/**
+ * Candidate queries with deliberately overlapping coverage. Message ids are deduped downstream
+ * and every hit still passes the header gate, so breadth here costs only metadata reads.
+ * Gmail search matches whole words, so plural and inflected forms are listed explicitly.
+ */
 export function candidateQueries(afterEpochSeconds: number): string[] {
   const base = `after:${afterEpochSeconds} -in:spam -in:trash -in:sent -in:drafts`;
-  const atsSenders = [
-    "greenhouse.io",
-    "greenhouse-mail.io",
-    "lever.co",
-    "myworkday.com",
-    "myworkdayjobs.com",
-    "ashbyhq.com",
-    "smartrecruiters.com",
-    "icims.com",
-    "jobvite.com",
-    "workable.com",
-  ];
+  const senders = `(${RECRUITING_SENDER_DOMAINS.map((d) => `from:${d}`).join(" OR ")})`;
   return [
-    `${base} (${atsSenders.map((d) => `from:${d}`).join(" OR ")})`,
-    `${base} subject:(application OR applying OR applied OR interview OR assessment OR "coding challenge" OR candidate OR recruiter OR "job offer")`,
+    `${base} ${senders}`,
+    `${base} subject:(${RECRUITMENT_SUBJECT_TERMS.map(term => term.includes(" ") ? `"${term}"` : term).join(" OR ")})`,
+    `${base} (from:jobs-noreply@linkedin.com OR from:indeedapply@indeed.com OR from:noreply@indeed.com OR from:jobs-listings@linkedin.com)`,
+    `${base} ${phraseQuery()}`,
+    // Hiring platforms' mail is often misfiled as spam. Spam hits are accepted later only when
+    // DMARC-authenticated as a known hiring-platform domain.
+    `after:${afterEpochSeconds} in:spam ${senders}`,
   ];
 }
 
@@ -163,7 +215,7 @@ export function createGmailClient(
         q,
         maxResults: "500",
         pageToken,
-        includeSpamTrash: "false",
+        includeSpamTrash: /\bin:(?:spam|anywhere)\b/.test(q) ? "true" : "false",
       })) as { messages?: { id: string }[]; nextPageToken?: string };
       return {
         ids: (r.messages ?? []).map((m) => m.id),
@@ -173,7 +225,12 @@ export function createGmailClient(
     async getHeaders(id) {
       const r = await callMessage(id, {
         format: "metadata",
-        metadataHeaders: ["From", "Subject", "Authentication-Results"],
+        metadataHeaders: [
+          "From",
+          "Subject",
+          "Authentication-Results",
+          "Message-ID",
+        ],
       });
       if (!r) return null;
       const headers =
@@ -184,9 +241,8 @@ export function createGmailClient(
       const header = (name: string) =>
         headers.find((h) => h.name.toLowerCase() === name)?.value ?? "";
       const from = header("from");
-      const domain = /@([A-Za-z0-9.-]+)(?:>|\s|$)/
-        .exec(from)?.[1]
-        ?.toLowerCase();
+      // The address, not an "@" inside a display name such as "jobs@acme via Greenhouse".
+      const domain = senderDomain(from);
       const authentication = header("authentication-results");
       const authenticatedDomain =
         authentication.length <= 4096 &&
@@ -199,6 +255,7 @@ export function createGmailClient(
         id,
         from,
         subject: header("subject"),
+        rfcMessageId: header("message-id") || null,
         labelIds: (r["labelIds"] as string[] | undefined) ?? [],
         senderAuthenticated: !!domain && domain === authenticatedDomain,
       };

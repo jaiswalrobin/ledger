@@ -6,34 +6,165 @@ import type {
   SignalKind,
 } from "./source.ts";
 import { safeField } from "./privacy.ts";
+import { isRecruitingSenderDomain } from "./ats.ts";
 
-export const EXTRACTOR_VERSION = "rules-3";
+export const EXTRACTOR_VERSION = "rules-5";
 
 /**
- * Deterministic phrase rules. Anything ambiguous yields `kind: null` so the pipeline routes it
- * to review instead of guessing. Terminal outcomes (rejection/offer) need their own strong phrase.
+ * Canonical form for matching: typographic quotes/dashes become ASCII, invisible characters are
+ * removed and Unicode spaces become plain spaces. "We’d like to offer you" (curly apostrophe)
+ * and "Interview invitation" must match the same rules as their ASCII spellings.
+ */
+export function normalizeForMatching(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/[­​-‏⁠﻿]/g, "")
+    .replace(/[‘’‚‛′`´]/g, "'")
+    .replace(/[“”„‟″]/g, '"')
+    .replace(/[‐-―−]/g, "-")
+    .replace(/[^\S\n]/g, " ")
+    .replace(/\r\n?/g, "\n");
+}
+
+/** One line: plain-text mail is hard-wrapped at ~72 columns, which splits phrases mid-sentence. */
+const flatten = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/**
+ * Deterministic phrase rules, matched against normalized, whitespace-flattened text. Anything
+ * ambiguous yields `kind: null` so the pipeline routes it to review instead of guessing.
+ * Terminal outcomes (rejection/offer) need their own strong phrase.
  */
 const PHRASES: Record<SignalKind, RegExp> = {
-  OFFER_RECEIVED:
-    /\b(?:pleased to (?:extend|offer)|offer of employment|(?:formal |job )offer letter|we(?:'d| would) like to offer you|extend(?:ing)? (?:you )?an offer)\b/i,
-  REJECTION_RECEIVED:
-    /\b(?:we (?:have )?decided to (?:move|proceed) forward with (?:other|another)|will not be (?:moving|proceeding) forward|not (?:be )?(?:moving|proceeding) forward with your|(?:decided|chosen) not to (?:move|proceed) (?:forward )?with your|regret to inform you|(?:you|your application) (?:was|were|has|have) not (?:been )?selected|position has been filled|no longer (?:considering|being considered)|unfortunately,?[^.]{0,80}\b(?:other candidates|no longer|not (?:be )?(?:able|moving|proceeding|selected)|unable)\b)/i,
-  INTERVIEW_SCHEDULED:
-    /\b(?:interview (?:is )?(?:confirmed|scheduled)|your interview (?:with|on|at)|calendar invitation|confirm(?:ing)? your interview)\b/i,
-  INTERVIEW_INVITED:
-    /\b(?:invite you to (?:an? )?(?:interview|phone screen|video)|schedule (?:an? |your )?(?:interview|phone screen|call)|interview invitation|would like to (?:interview|speak with|chat)|phone screen)\b/i,
-  ASSESSMENT_INVITED:
-    /\b(?:online assessment|coding (?:challenge|assessment|test)|take[- ]home|technical assessment|hackerrank|codility|codesignal|assessment (?:link|invitation)|complete (?:the|an?|your) assessment)\b/i,
-  CONFIRMATION_RECEIVED:
-    /\b(?:thank(?:s| you) for (?:applying|your application|your interest)|received your application|application (?:has been )?(?:received|submitted)|successfully (?:submitted|applied)|your application (?:to|for|with))\b/i,
+  OFFER_RECEIVED: new RegExp(
+    String.raw`\b(?:` +
+      [
+        String.raw`(?:pleased|happy|delighted|excited|thrilled) to (?:formally )?(?:extend|offer)(?: you)?`,
+        String.raw`offer of employment`,
+        String.raw`employment offer`,
+        String.raw`(?:formal |job |written |verbal |official )offer letter`,
+        String.raw`your offer letter`,
+        String.raw`we(?:'d| would) (?:like|love) to (?:formally )?offer you`,
+        String.raw`extend(?:ing)? (?:you )?an? (?:formal |verbal |written )?offer`,
+        String.raw`(?:verbal|formal|written) offer`,
+        String.raw`congratulations[^.!?]{0,80}\boffer\b`,
+        String.raw`(?:accept|review and sign) (?:the |your )?offer`,
+      ].join("|") +
+      String.raw`)\b`,
+    "i",
+  ),
+  REJECTION_RECEIVED: new RegExp(
+    String.raw`\b(?:` +
+      [
+        String.raw`we(?:'ve| have)? decided to (?:move|proceed|go|continue) (?:forward )?with (?:other|another|a different|candidates|applicants)`,
+        String.raw`(?:decided|chosen|elected) to (?:pursue|progress|move forward with|proceed with|go with) (?:other|another|a different)`,
+        String.raw`(?:will not|won't|wont|are not|aren't|cannot|can't) (?:be )?(?:moving|proceeding|progressing) (?:forward|further|ahead)`,
+        String.raw`(?:will not|won't|wont|are not|aren't|do not|don't|cannot|can't) (?:be )?(?:moving|proceeding|progressing|taking) (?:forward |ahead |further )?(?:with )?your (?:application|candidacy|profile)`,
+        String.raw`not (?:be )?(?:moving|proceeding|progressing) (?:forward )?with your`,
+        String.raw`(?:decided|chosen) not to (?:move|proceed|progress|continue) (?:forward |further )?with your`,
+        String.raw`not to (?:move|proceed|progress) (?:forward |further )?with your (?:application|candidacy)`,
+        String.raw`regret to (?:inform|let you know|advise|tell)`,
+        String.raw`(?:you|your application|your candidacy|your profile) (?:was|were|has|have|is) not (?:been )?(?:selected|successful|shortlisted)`,
+        String.raw`your (?:application|candidacy) (?:was|has been|is|had been) unsuccessful`,
+        String.raw`you (?:were|have been|had been) unsuccessful`,
+        String.raw`(?:position|role|vacancy|job|opening) (?:has|had) (?:now )?been (?:filled|closed|cancelled|canceled)`,
+        String.raw`(?:we|the team) (?:have|has) (?:filled|closed) the (?:position|role|opening)`,
+        String.raw`no longer (?:considering|being considered|under consideration|in consideration|moving forward)`,
+        String.raw`(?:selected|chosen|identified|offered the (?:position|role) to) (?:another|a different|other) (?:candidate|applicant)s?`,
+        String.raw`(?:other|another) candidates? (?:whose|who) (?:experience|background|skills|qualifications)`,
+        String.raw`(?:unable|not able) to (?:offer you (?:the |a |an )?(?:position|role|job)|move forward with your|proceed with your|progress your)`,
+        String.raw`not (?:the right|a) (?:fit|match) (?:for|at) this (?:time|role|position)`,
+        String.raw`unfortunately,?[^.]{0,80}\b(?:other candidates|other applicants|no longer|not (?:be )?(?:able|moving|proceeding|progressing|selected|successful|offering)|unable|not been selected|unsuccessful)\b`,
+      ].join("|") +
+      String.raw`)`,
+    "i",
+  ),
+  INTERVIEW_SCHEDULED: new RegExp(
+    String.raw`\b(?:` +
+      [
+        String.raw`interview (?:has been |is |was )?(?:confirmed|scheduled|booked|rescheduled|set)`,
+        String.raw`your (?:upcoming |scheduled |next )?interview (?:with|on|at|for|is|tomorrow|today)`,
+        String.raw`calendar invitation`,
+        String.raw`confirm(?:ing|ed)? (?:your|the) interview`,
+        String.raw`interview (?:details|confirmation|reminder)`,
+        String.raw`reminder:? (?:your |upcoming )?interview`,
+        String.raw`looking forward to (?:your |our |the )?interview`,
+        // Google/Outlook calendar invites: "Invitation: Interview with Acme @ Tue Oct 13, 10am".
+        String.raw`(?:updated )?invitation: [^@.!?]{0,80}\binterview\b[^@.!?]{0,80} @ `,
+      ].join("|") +
+      String.raw`)\b`,
+    "i",
+  ),
+  INTERVIEW_INVITED: new RegExp(
+    String.raw`\b(?:` +
+      [
+        String.raw`invite you (?:to|for) (?:an? |the |your )?(?:first[- ]round |initial |technical |final |video |virtual |phone |onsite |on-site )?(?:interview|phone screen|video|call|conversation|chat|meeting|next (?:round|stage|step))`,
+        String.raw`invitation to (?:an? )?(?:interview|phone screen)`,
+        String.raw`(?:schedule|book|arrange|set up|organize|organise) (?:an? |your |the |some )?(?:first[- ]round |initial |technical |final |video |virtual |phone |quick |brief |short )?(?:interview|phone screen|call|chat|time to (?:talk|chat|speak|meet)|conversation)`,
+        String.raw`interview invitation`,
+        String.raw`would (?:like|love) to (?:interview|speak with|talk with|talk to|chat|meet|set up)`,
+        String.raw`phone screen`,
+        String.raw`(?:move|moving|advance|advancing|progress) (?:you )?(?:forward )?to (?:the )?(?:next|interview|first|second|final) (?:round|stage|step)`,
+        String.raw`(?:share|send|provide|let us know) (?:your|some) (?:availability|available times)`,
+        String.raw`(?:your|some) availability for (?:an? )?(?:interview|call|chat|conversation)`,
+        String.raw`(?:pick|select|choose|book) a (?:time|slot)`,
+      ].join("|") +
+      String.raw`)\b`,
+    "i",
+  ),
+  ASSESSMENT_INVITED: new RegExp(
+    String.raw`\b(?:` +
+      [
+        String.raw`online (?:assessment|test|exercise)`,
+        String.raw`coding (?:challenge|assessment|test|exercise|assignment)`,
+        String.raw`take[- ]home (?:assignment|exercise|challenge|test|project|task)?`,
+        String.raw`technical (?:assessment|challenge|exercise|test|assignment)`,
+        String.raw`skills? (?:assessment|test)`,
+        String.raw`hackerrank|codility|codesignal|testgorilla|coderbyte|hirevue`,
+        String.raw`assessment (?:link|invitation|invite)`,
+        String.raw`(?:complete|take|start|finish) (?:the|an?|your|our) (?:online |technical |short |brief )?(?:assessment|test|challenge|exercise)`,
+        String.raw`invited to (?:complete|take) (?:an? |the )?(?:assessment|test|challenge)`,
+      ].join("|") +
+      String.raw`)\b`,
+    "i",
+  ),
+  CONFIRMATION_RECEIVED: new RegExp(
+    String.raw`\b(?:` +
+      [
+        String.raw`thank(?:s| you) (?:so much |very much )?for (?:applying|your application|your interest|submitting|your submission|considering)`,
+        String.raw`(?:received|receiving|got) your (?:job )?application`,
+        String.raw`(?:your )?application (?:has been |was |is |had been )?(?:successfully )?(?:received|submitted|sent|complete|completed)`,
+        String.raw`successfully (?:submitted|applied|received)`,
+        String.raw`your application (?:to|for|with|at)`,
+        String.raw`you(?:'ve| have)? applied (?:to|for)`,
+        String.raw`application (?:confirmation|acknowledg(?:e)?ment)`,
+        String.raw`confirm(?:ing)? (?:the )?receipt of your`,
+        String.raw`(?:currently )?(?:reviewing|review) your (?:application|candidacy|profile|resume)`,
+        String.raw`your application is (?:now )?(?:under|being) review`,
+      ].join("|") +
+      String.raw`)\b`,
+    "i",
+  ),
 };
+
+const STEP_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>([
+  "ASSESSMENT_INVITED",
+  "INTERVIEW_INVITED",
+  "INTERVIEW_SCHEDULED",
+]);
 
 export function detectKind(haystack: string): {
   kind: SignalKind | null;
   reasons: string[];
 } {
+  const flat = flatten(normalizeForMatching(haystack));
+  // "Thank you for taking the time to interview with us" opens most post-interview rejections;
+  // a thank-you sentence describes the past, so it never proposes an interview/assessment step.
+  const withoutThanks = flat.replace(
+    /\bthank(?:s| you)(?: (?:so|very) much)? for (?:taking (?:the )?time|your time|interviewing|your (?:recent )?interview|meeting|speaking|talking|chatting|completing|the opportunity|participating|attending|your patience)[^.!?\n]{0,200}[.!?]?/gi,
+    " ",
+  );
   const hit = (Object.keys(PHRASES) as SignalKind[]).filter((k) =>
-    PHRASES[k].test(haystack),
+    PHRASES[k].test(STEP_KINDS.has(k) ? withoutThanks : flat),
   );
   const reasons = hit.map((k) => "phrase:" + k);
   // Boilerplate thank-you text appears inside almost every message, so it only counts alone.
@@ -48,13 +179,19 @@ export function detectKind(haystack: string): {
   ) {
     return { kind: "INTERVIEW_SCHEDULED", reasons };
   }
+  // "Following your interview ... we have decided to move forward with other candidates": a
+  // rejection that mentions earlier steps. Propose it, but marked so a human must confirm it.
+  if (
+    specific.includes("REJECTION_RECEIVED") &&
+    !specific.includes("OFFER_RECEIVED") &&
+    specific.every((k) => k === "REJECTION_RECEIVED" || STEP_KINDS.has(k))
+  ) {
+    return { kind: "REJECTION_RECEIVED", reasons: [...reasons, "mixed-kind"] };
+  }
   return { kind: null, reasons: [...reasons, "ambiguous-kind"] };
 }
 
 // ---- ATS / URL handling -------------------------------------------------------------------
-
-const ATS_SENDER =
-  /(?:^|\.)(?:greenhouse(?:-mail)?\.io|lever\.co|myworkday(?:jobs)?\.com|ashbyhq\.com|smartrecruiters\.com|icims\.com|jobvite\.com|workable\.com)$/i;
 
 interface AtsMatch {
   key: AtsKey;
@@ -100,7 +237,7 @@ function atsFromUrl(raw: string): AtsMatch | null {
     );
   }
   if (
-    host === "jobs.lever.co" &&
+    (host === "jobs.lever.co" || host === "jobs.eu.lever.co") &&
     seg.length >= 2 &&
     /^[0-9a-f-]{8,64}$/i.test(seg[1]!)
   ) {
@@ -108,7 +245,7 @@ function atsFromUrl(raw: string): AtsMatch | null {
       "lever",
       seg[0]!,
       seg[1]!.toLowerCase(),
-      `https://jobs.lever.co/${seg[0]}/${seg[1]!.toLowerCase()}`,
+      `https://${host}/${seg[0]}/${seg[1]!.toLowerCase()}`,
     );
   }
   if (
@@ -134,6 +271,15 @@ function atsFromUrl(raw: string): AtsMatch | null {
       );
   }
   if (host.endsWith(".myworkdayjobs.com")) {
+    const jobIndex = seg.indexOf("job");
+    // Only the public locale/board/job/location/title schema is canonical.
+    // Arbitrary account/tracking paths must never become stored "job URLs".
+    if (
+      (jobIndex !== 1 && jobIndex !== 2) ||
+      (jobIndex === 2 && !/^[a-z]{2}-[a-z]{2}$/i.test(seg[0]!)) ||
+      seg.length !== jobIndex + 3 ||
+      !/^[a-z0-9_-]{1,80}$/i.test(seg[jobIndex - 1]!)
+    ) return null;
     const requisition = /_([A-Za-z]*-?\d+)$/.exec(
       seg[seg.length - 1] ?? "",
     )?.[1];
@@ -163,8 +309,13 @@ function findUrls(text: string): string[] {
 
 // ---- company / title ---------------------------------------------------------------------
 
+/**
+ * A captured "title" that is really a status phrase ("Application Update", "Interview
+ * Invitation"). Real titles that merely contain such a word ("Application Security Engineer",
+ * "Offer Operations Manager") are kept.
+ */
 const TITLE_NOISE =
-  /\b(?:application|update|interview|invitation|assessment|offer|status|thank|confirmation|next step)\b/i;
+  /\b(?:update|invitation|status|thank|thanks|confirmation|next steps?|received|submitted|reminder|regarding|your)\b|^(?:job )?(?:application|interview|assessment|offer)s?$|^(?:application|interview|assessment|offer)s? (?:for|with|at|to|from|on|is|has|was)\b/i;
 const COMPANY_CUT =
   /\s+(?:within|by|before|on|and|for|to|please|as|is|has|we|you|your)\b.*$/i;
 
@@ -173,7 +324,8 @@ function cleanTitle(value: string | null | undefined): string | null {
   if (!value) return null;
   const title = value
     .replace(/^["'“]|["'”]$/g, "")
-    .replace(/\s+(?:position|role|job)$/i, "")
+    .replace(/^(?:(?:position|role|job|post) (?:of|as)|an?)\s+/i, "")
+    .replace(/\s+(?:position|role|job|opening|vacancy)$/i, "")
     .replace(/\s+/g, " ")
     .trim();
   if (
@@ -201,7 +353,8 @@ function cleanCompany(value: string | null | undefined): string | null {
   if (
     company.length < 2 ||
     company.length > 80 ||
-    !/^[A-Z0-9]/.test(company) ||
+    // Sentence starts are capitalised; brands like "eBay" or "iRobot" are camel-cased.
+    !/^(?:[A-Z0-9]|[a-z][A-Z])/.test(company) ||
     /https?:|@/.test(company)
   )
     return null;
@@ -251,7 +404,7 @@ function labelled(text: string, labels: string): string | null {
 
 function senderCompany(message: ParsedMessage): string | null {
   const domain = message.fromAddress?.split("@")[1] ?? "";
-  if (!ATS_SENDER.test(domain)) return null;
+  if (!isRecruitingSenderDomain(domain)) return null;
   const name = message.fromName
     .replace(/\b(?:via|from)\b.*$/i, "")
     .replace(
@@ -263,12 +416,30 @@ function senderCompany(message: ParsedMessage): string | null {
   if (
     !name ||
     name.includes("@") ||
-    /^(?:greenhouse|lever|workday|ashby|smartrecruiters|icims|jobvite|workable)$/i.test(
+    /^(?:greenhouse|lever|workday|ashby|smartrecruiters|icims|jobvite|workable|taleo|successfactors|bamboohr|jazzhr|recruitee|teamtailor|breezy|pinpoint|comeet|hireology|eightfold|avature|brassring|phenom|jobadder|hackerrank|codility|codesignal|karat|hirevue|testgorilla|coderbyte|modern ?hire|wellfound)$/i.test(
       name,
     )
   )
     return null;
   return cleanCompany(name);
+}
+
+/** A job requisition is employer-scoped; Candidate ID must never identify a submission. */
+function ibmJobDetails(message: ParsedMessage, body: string) {
+  if (!/@ibm\.com$/i.test(message.fromAddress ?? "")) return null;
+  const subject = /^you have successfully submitted your IBM job application\s*-\s*(\d{4,10})\s*-\s*(.{2,100})$/i.exec(message.subject);
+  const sentence = /applying to the role of\s+(.{2,100}?)\s*-\s*(\d{4,10})\s+with Candidate ID\s*-\s*\d+\s+at IBM\b/i.exec(body);
+  const reference = /(?:^|\n)\s*Ref\s*:\s*(\d{4,10})\s*-\s*([^\n|]{2,100})/i.exec(body);
+  const candidates = [
+    subject && { id: subject[1]!, title: cleanTitle(subject[2]) },
+    sentence && { id: sentence[2]!, title: cleanTitle(sentence[1]) },
+    reference && { id: reference[1]!, title: cleanTitle(reference[2]) },
+  ].filter((c): c is { id: string; title: string | null } => !!c);
+  if (!candidates.length) return null;
+  const first = candidates[0]!;
+  const conflict = candidates.some(c => c.id !== first.id ||
+    (c.title && first.title && c.title.toLowerCase() !== first.title.toLowerCase()));
+  return { id: first.id, title: first.title, conflict };
 }
 
 function extractCompanyAndTitle(
@@ -277,8 +448,10 @@ function extractCompanyAndTitle(
   workdaySlugTitle: string | null,
 ) {
   const subject = message.subject;
+  // Hard-wrapped plain text splits "applying for the Senior Backend\nEngineer position at Acme".
+  const flatBody = flatten(body);
   const both = (re: RegExp) => {
-    for (const source of [subject, body]) {
+    for (const source of [subject, body, flatBody]) {
       const m = re.exec(source);
       if (m) return { title: cleanTitle(m[1]), company: cleanCompany(m[2]) };
     }
@@ -291,6 +464,12 @@ function extractCompanyAndTitle(
   );
   let company = cleanCompany(labelled(body, "company|employer|organization"));
 
+  const ibm = ibmJobDetails(message, body);
+  if (ibm && !ibm.conflict) {
+    company ??= "IBM";
+    title ??= ibm.title;
+  }
+
   for (const re of [P_APPLYING, P_INTEREST, P_STEP_FOR]) {
     const found = both(re);
     if (found) {
@@ -300,8 +479,10 @@ function extractCompanyAndTitle(
   }
   title ??=
     cleanTitle(first(P_INTERVIEW_TITLE, body)) ??
-    cleanTitle(first(P_APPLICATION_FOR, body));
-  for (const source of [subject, body]) {
+    cleanTitle(first(P_APPLICATION_FOR, body)) ??
+    cleanTitle(first(P_INTERVIEW_TITLE, flatBody)) ??
+    cleanTitle(first(P_APPLICATION_FOR, flatBody));
+  for (const source of [subject, body, flatBody]) {
     company ??= cleanCompany(P_COMPANY_ONLY.exec(source)?.[1]);
   }
   const fromSubject = P_SUBJECT_AT.exec(subject);
@@ -316,15 +497,27 @@ function extractCompanyAndTitle(
 
 // ---- main ---------------------------------------------------------------------------------
 
-function extractOne(message: ParsedMessage): ExtractedSignal {
-  const body = message.text;
+function extractOne(raw: ParsedMessage): ExtractedSignal {
+  const message: ParsedMessage = {
+    ...raw,
+    subject: normalizeForMatching(raw.subject).replace(/\s+/g, " ").trim(),
+    fromName: normalizeForMatching(raw.fromName).replace(/\s+/g, " ").trim(),
+  };
+  const body = normalizeForMatching(raw.text);
   const { kind, reasons } = detectKind(`${message.subject}\n${body}`);
 
   let ats: AtsMatch | null = null;
   let workdaySlugTitle: string | null = null;
   let genericUrl: string | null = null;
+  const jobLinks = new Set<string>();
+  const ibm = ibmJobDetails(message, body);
+  if (ibm && !ibm.conflict) {
+    ats = { key: { provider: "ibm", tenant: "ibm", requisitionId: ibm.id }, canonicalUrl: "" };
+    jobLinks.add(JSON.stringify(ats.key));
+  }
   for (const url of findUrls(body)) {
     const match = atsFromUrl(url);
+    if (match) jobLinks.add(JSON.stringify(match.key));
     if (match && !ats) {
       ats = match;
       if (match.key.provider === "workday") {
@@ -355,51 +548,76 @@ function extractOne(message: ParsedMessage): ExtractedSignal {
     title,
     location: safeField(labelled(body, "location")),
     atsKey: ats?.key ?? null,
-    canonicalUrl: ats?.canonicalUrl ?? genericUrl,
+    canonicalUrl: ats?.canonicalUrl || genericUrl,
     // A recipient/mailbox is not proof of the contact entered in an application.
     applicantEmail:
       declaredEmail && declaredEmail.length <= 254 ? declaredEmail : null,
     externalApplicationId:
       externalId && /\d/.test(externalId) ? externalId : null,
   };
+  if (jobLinks.size > 1 || ibm?.conflict) {
+    fields.atsKey = null;
+    fields.canonicalUrl = null;
+    reasons.push("ambiguous-job-links");
+  }
   return {
     kind,
-    confidence: kind ? "HIGH" : "LOW",
+    confidence: kind && !reasons.includes("mixed-kind") && jobLinks.size <= 1 && !ibm?.conflict ? "HIGH" : "LOW",
     fields,
     occurredAt: message.date,
     reasons,
   };
 }
 
+const STRICT_FIELDS: ReadonlySet<keyof ExtractedFields> = new Set([
+  "externalApplicationId",
+  "canonicalUrl",
+  "atsKey",
+]);
+
+function conflicts(a: ExtractedSignal, b: ExtractedSignal): boolean {
+  if (a.kind && b.kind && a.kind !== b.kind) return true;
+  if (a.reasons.includes("ambiguous-kind") || b.reasons.includes("ambiguous-kind"))
+    return true;
+  return (Object.keys(a.fields) as (keyof ExtractedFields)[]).some((field) => {
+    const x = a.fields[field],
+      y = b.fields[field];
+    if (x == null || y == null) return false;
+    return STRICT_FIELDS.has(field)
+      ? JSON.stringify(x) !== JSON.stringify(y)
+      : JSON.stringify(x).toLowerCase() !== JSON.stringify(y).toLowerCase();
+  });
+}
+
+/**
+ * Combines the primary text with the other MIME alternatives. Many ATS mails ship a stub
+ * text/plain part ("view this email in a browser") next to the real HTML, so a signal found only
+ * in an alternative is used, and missing fields are filled from it. Any disagreement between
+ * representations still forces review.
+ */
 export function extractSignal(message: ParsedMessage): ExtractedSignal {
-  const main = extractOne(message);
+  let merged = extractOne(message);
   for (const text of message.alternativeTexts ?? []) {
     const alternative = extractOne({ ...message, text });
-    const conflicting =
-      (main.kind && alternative.kind && main.kind !== alternative.kind) ||
-      alternative.reasons.includes("ambiguous-kind") ||
-      main.reasons.includes("ambiguous-kind") ||
-      Object.keys(main.fields).some((key) => {
-        const field = key as keyof ExtractedFields;
-        const a = main.fields[field],
-          b = alternative.fields[field];
-        return (
-          a != null &&
-          b != null &&
-          (field === "externalApplicationId" ||
-          field === "canonicalUrl" ||
-          field === "atsKey"
-            ? JSON.stringify(a) !== JSON.stringify(b)
-            : JSON.stringify(a).toLowerCase() !==
-              JSON.stringify(b).toLowerCase())
-        );
-      });
-    if (conflicting)
+    if (conflicts(merged, alternative))
       return {
-        ...main,
+        ...merged,
         confidence: "LOW",
-        reasons: [...main.reasons, "conflicting-alternatives"],
+        reasons: [...merged.reasons, "conflicting-alternatives"],
       };
+    const fields = { ...merged.fields };
+    for (const key of Object.keys(fields) as (keyof ExtractedFields)[])
+      if (fields[key] == null)
+        (fields as Record<string, unknown>)[key] = alternative.fields[key];
+    const kind = merged.kind ?? alternative.kind;
+    const reasons = [...new Set([...merged.reasons, ...alternative.reasons])];
+    merged = {
+      ...merged,
+      kind,
+      fields,
+      reasons,
+      confidence: kind && !reasons.includes("mixed-kind") && !reasons.includes("ambiguous-job-links") ? "HIGH" : "LOW",
+    };
   }
-  return main;
+  return merged;
 }

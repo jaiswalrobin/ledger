@@ -1114,8 +1114,24 @@ tbody tr:last-child td {
 }
 .connection-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 18px;
   margin-top: 20px;
+}
+.sync-summary,
+.sync-exclusions {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid #e3e8dc;
+  border-radius: 8px;
+}
+.sync-exclusions summary {
+  cursor: pointer;
+}
+.sync-exclusions li {
+  margin-top: 12px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .danger {
   color: #ad7c73;

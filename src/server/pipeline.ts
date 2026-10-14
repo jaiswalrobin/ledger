@@ -12,6 +12,10 @@ import { classifyHeaders } from "../ingestion/header-gate.ts";
 import { hasSensitiveContent } from "../ingestion/privacy.ts";
 import { usableEventDate } from "../ingestion/dates.ts";
 import {
+  isRecruitingSenderDomain,
+  isTrustedAtsDomain,
+} from "../ingestion/ats.ts";
+import {
   TERMINAL_KINDS,
   type ExtractedSignal,
   type ParsedOriginal,
@@ -23,7 +27,6 @@ import {
   findAttemptsByExternalId,
   insertAttempt,
   insertOpening,
-  isUniqueViolation,
   loadAttempts,
   loadOpenings,
   recordEvent,
@@ -50,6 +53,8 @@ export interface IngestInput {
   original: ParsedOriginal;
   /** Internal observation clock; never accepted from an HTTP request. */
   observedAt?: Date;
+  /** Internal recovery flag; never accepted from an upload or HTTP payload. */
+  reprocessUnapplied?: boolean;
 }
 
 export type ReviewReason =
@@ -81,6 +86,10 @@ export type IngestOutcome =
   | { status: "DUPLICATE_OBSERVATION" }
   | { status: "SKIPPED_SENSITIVE" }
   | { status: "NO_SIGNAL" };
+
+/** Marketing digests from job boards: never evidence of an application. */
+const JOB_ALERT =
+  /\b(?:job alerts?|jobs? (?:for you|you may (?:like|be interested in))|recommended jobs?|new jobs?|similar jobs?|is hiring|are hiring|top jobs?|jobs? digest|weekly digest)\b/i;
 
 const sha256 = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
@@ -133,18 +142,14 @@ export async function ingestOriginal(
   db: Db,
   input: IngestInput,
 ): Promise<IngestOutcome> {
-  try {
-    return await db.transaction((tx) => run(tx, input));
-  } catch (error) {
-    // Lost a race with an identical ingest; the other transaction owns the result.
-    if (isUniqueViolation(error)) return { status: "DUPLICATE" };
-    throw error;
-  }
+  // The owner lock serializes ingestion. Unexpected constraint failures are
+  // genuine processing errors, never evidence that an email was a duplicate.
+  return db.transaction((tx) => run(tx, input));
 }
 
 async function run(
   tx: Db,
-  { userId, source, original, observedAt = new Date() }: IngestInput,
+  { userId, source, original, observedAt = new Date(), reprocessUnapplied = false }: IngestInput,
 ): Promise<IngestOutcome> {
   // Serialise ingestion per user so concurrent runs cannot create the same opening twice.
   const owner = await tx.query(
@@ -162,35 +167,54 @@ async function run(
 
   const seen =
     source.kind === "GMAIL"
-      ? await tx.query(
-          "SELECT 1 FROM source_artifacts WHERE user_id=$3 AND mailbox_id = $1 AND provider_message_id = $2 AND source_kind = 'GMAIL'",
+      ? await tx.query<{ id: string; source_fingerprint: string; body_access_decision: string }>(
+          "SELECT id, source_fingerprint, body_access_decision FROM source_artifacts WHERE user_id=$3 AND mailbox_id = $1 AND provider_message_id = $2 AND source_kind = 'GMAIL'",
           [source.mailboxId, source.providerMessageId, userId],
         )
-      : await tx.query(
-          "SELECT 1 FROM source_artifacts WHERE user_id = $1 AND source_fingerprint = $2 AND source_kind = 'FORWARDED_EML'",
+      : await tx.query<{ id: string; source_fingerprint: string; body_access_decision: string }>(
+          "SELECT id, source_fingerprint, body_access_decision FROM source_artifacts WHERE user_id = $1 AND source_fingerprint = $2 AND source_kind = 'FORWARDED_EML'",
           [userId, original.fingerprint],
         );
-  if (seen.rows.length) return { status: "DUPLICATE" };
+  const existing = seen.rows[0];
+  if (existing) {
+    if (source.kind !== "GMAIL") return { status: "DUPLICATE" };
+    // Preserve accepted/rejected events and every review decision, including dismissals.
+    const protectedResult = await tx.query(
+      `SELECT 1 FROM event_evidence WHERE user_id=$1 AND artifact_id=$2
+       UNION ALL SELECT 1 FROM extracted_signals s WHERE s.user_id=$1 AND s.source_artifact_id=$2
+         AND (s.processing_state='APPLIED' OR EXISTS (SELECT 1 FROM review_items r WHERE r.user_id=$1 AND r.signal_id=s.id))`,
+      [userId, existing.id],
+    );
+    if (protectedResult.rows.length) return { status: "DUPLICATE" };
+    // A crash after ingest commits but before the task finishes must retain the
+    // original exclusion, rather than turning that exclusion into "processed".
+    if (!reprocessUnapplied) return {
+      status: existing.body_access_decision === "SKIPPED_SENSITIVE" ? "SKIPPED_SENSITIVE" : "NO_SIGNAL",
+    };
+    if (existing.source_fingerprint !== original.fingerprint) throw new Error("SOURCE_CHANGED");
+  }
 
   const m = original.message;
   const usableDate = usableEventDate(m.date, observedAt);
-  const artifactId = randomUUID();
+  const artifactId = existing?.id ?? randomUUID();
   const originalKey = originalKeyOf(original);
   const fromDomain = m.fromAddress?.split("@")[1] ?? "";
   const trustedSender =
     source.kind === "FORWARDED_EML"
       ? source.syntheticFixture === true
-      : source.senderAuthenticated === true &&
-        /(?:^|\.)(?:greenhouse(?:-mail)?\.io|lever\.co|myworkday(?:jobs)?\.com|ashbyhq\.com|smartrecruiters\.com|icims\.com|jobvite\.com|workable\.com)$/.test(
-          fromDomain,
-        );
+      : source.senderAuthenticated === true && isTrustedAtsDomain(fromDomain);
   const insertArtifact = (
     decision: string,
     subject: string | null,
     key: string | null,
     extractorVersion: string | null,
-  ) =>
-    tx.query(
+  ) => existing
+    ? tx.query(
+        `UPDATE source_artifacts SET body_access_decision=$3, subject_redacted=$4, original_key=$5,
+          extractor_version=$6, original_message_at=$7, sender_authenticated=$8 WHERE id=$1 AND user_id=$2`,
+        [artifactId, userId, decision, subject, key, extractorVersion, usableDate, trustedSender],
+      )
+    : tx.query(
       `INSERT INTO source_artifacts (id, user_id, source_kind, mailbox_id, provider_message_id, original_rfc_message_id,
          source_fingerprint, original_message_at, envelope_message_at, body_access_decision, extractor_version, original_key, subject_redacted,sender_authenticated)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
@@ -229,6 +253,7 @@ async function run(
   ) {
     // Nothing derived from a credential-like message is kept, including its subject.
     await insertArtifact("SKIPPED_SENSITIVE", null, null, null);
+    if (existing) await tx.query("DELETE FROM extracted_signals WHERE user_id=$1 AND source_artifact_id=$2", [userId, artifactId]);
     return { status: "SKIPPED_SENSITIVE" };
   }
 
@@ -237,8 +262,11 @@ async function run(
 
   if (originalKey) {
     const earlier = await tx.query<{ id: string }>(
-      "SELECT id FROM source_artifacts WHERE user_id = $1 AND original_key = $2 ORDER BY source_observed_at LIMIT 1",
-      [userId, originalKey],
+      `SELECT a.id FROM source_artifacts a WHERE a.user_id=$1 AND a.original_key=$2 AND a.id<>$3
+         AND (EXISTS (SELECT 1 FROM event_evidence e WHERE e.user_id=$1 AND e.artifact_id=a.id)
+           OR EXISTS (SELECT 1 FROM extracted_signals s JOIN review_items r ON r.signal_id=s.id AND r.user_id=s.user_id
+             WHERE s.user_id=$1 AND s.source_artifact_id=a.id)) ORDER BY a.source_observed_at LIMIT 1`,
+      [userId, originalKey, artifactId],
     );
     if (earlier.rows.length) {
       await insertArtifact(
@@ -278,8 +306,17 @@ async function run(
 
   if (signal.reasons.includes("conflicting-alternatives"))
     return review(base, "CONFLICTING_ALTERNATIVES", [], []);
+  if (signal.reasons.includes("ambiguous-kind"))
+    return review(base, "UNRECOGNIZED", [], []);
+  if (signal.reasons.includes("ambiguous-job-links"))
+    return review(base, "AMBIGUOUS_OPENING", [], []);
   if (!signal.kind) {
-    if (source.kind === "GMAIL") {
+    // A synced message is dismissed only when nothing suggests it is hiring mail. Mixed signals,
+    // or any unrecognised message from a hiring platform, go to a human instead of disappearing.
+    const worthReview =
+      signal.reasons.includes("ambiguous-kind") ||
+      (isRecruitingSenderDomain(fromDomain) && !JOB_ALERT.test(m.subject));
+    if (source.kind === "GMAIL" && !worthReview) {
       await tx.query(
         "UPDATE extracted_signals SET processing_state = 'DISMISSED' WHERE id = $1",
         [signalId],
@@ -313,9 +350,12 @@ async function insertSignal(
   state: string,
 ): Promise<string> {
   const id = randomUUID();
-  await tx.query(
+  const result = await tx.query<{ id: string }>(
     `INSERT INTO extracted_signals (id, user_id, source_artifact_id, extractor_version, event_kind, fields, confidence, processing_state)
-     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8)`,
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8)
+     ON CONFLICT (source_artifact_id,extractor_version) DO UPDATE SET event_kind=EXCLUDED.event_kind,
+       fields=EXCLUDED.fields,confidence=EXCLUDED.confidence,processing_state=EXCLUDED.processing_state
+     RETURNING id`,
     [
       id,
       userId,
@@ -327,7 +367,7 @@ async function insertSignal(
       state,
     ],
   );
-  return id;
+  return result.rows[0]!.id;
 }
 
 async function review(
@@ -548,7 +588,10 @@ async function apply(
   const strongAttempt =
     decision.reason === "Exact application ID" ||
     (decision.reason === "Unique matching submitted email" && strongOpening);
-  if (TERMINAL_KINDS.has(kind) && (!strongAttempt || !c.trustedSender))
+  if (
+    TERMINAL_KINDS.has(kind) &&
+    (!strongAttempt || !c.trustedSender || signal.confidence !== "HIGH")
+  )
     return fail("TERMINAL_NEEDS_REVIEW", [decision.id], [openingId]);
 
   const problem = await automaticEventProblem(tx, event(decision.id));
@@ -587,8 +630,9 @@ async function reconcileWaitingUpdates(
     original_key: string | null;
     source_fingerprint: string;
     sender_authenticated: boolean;
+    confidence: "HIGH" | "LOW";
   }>(
-    `SELECT r.id AS review_id, s.id AS signal_id, s.event_kind, s.fields, a.id AS artifact_id, a.source_kind,
+    `SELECT r.id AS review_id, s.id AS signal_id, s.event_kind, s.fields, s.confidence, a.id AS artifact_id, a.source_kind,
             a.original_message_at, a.original_key, a.source_fingerprint,a.sender_authenticated
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
@@ -609,7 +653,7 @@ async function reconcileWaitingUpdates(
     if (!occurredAt) continue;
     const signal: ExtractedSignal = {
       kind: row.event_kind,
-      confidence: "HIGH",
+      confidence: row.confidence,
       fields: row.fields,
       occurredAt,
       reasons: [],

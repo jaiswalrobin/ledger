@@ -9,10 +9,11 @@ export const EML_LIMITS = {
   maxBytes: 4 * 1024 * 1024,
   maxOriginals: 25,
   maxTextChars: 100_000,
-  maxHtmlChars: 256_000,
+  /** Raw HTML before conversion. Inline-CSS-heavy ATS templates routinely exceed 256 KB. */
+  maxHtmlChars: 1_000_000,
   maxSubjectChars: 1000,
   maxNameChars: 200,
-  maxRecipients: 50,
+  maxRecipients: 200,
 } as const;
 
 export type EmlErrorCode =
@@ -47,7 +48,7 @@ function isoOrNull(value: string | undefined): string | null {
   // A local clock without a timezone is not evidence of an absolute event instant.
   if (
     value.length > 128 ||
-    !/\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?\s*(?:Z|[+-]\d{2}:?\d{2}|UT|GMT|(?:E[SD]|C[SD]|M[SD]|P[SD])T)(?:\s*\([^)]{0,80}\))?\s*$/i.test(
+    !/\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?\s*(?:Z|[+-]\d{2}:?\d{2}|UTC?|GMT|(?:E[SD]|C[SD]|M[SD]|P[SD])T)(?:\s*\([^)]{0,80}\))?\s*$/i.test(
       value,
     )
   )
@@ -74,6 +75,7 @@ function toMessage(email: Email): ParsedMessage {
         .map((a) => a.trim().toLowerCase()),
     ),
   ];
+  // Keep complete identity within a fixed bound. Truncation can suppress real evidence.
   if (to.length > EML_LIMITS.maxRecipients) throw new EmlError("TOO_MANY");
   let html = "";
   try {
@@ -106,6 +108,7 @@ function originalDate(email: Email): string | null {
   const dates = email.headers.filter(
     (header) => header.key.toLowerCase() === "date",
   );
+  // Routing timestamps are not application timestamps; lower hops can be sender-supplied.
   return dates.length === 1 ? isoOrNull(dates[0]!.value) : null;
 }
 
@@ -134,9 +137,17 @@ export async function parseEml(bytes: Uint8Array): Promise<ParsedOriginal[]> {
   if (bytes.byteLength > EML_LIMITS.maxBytes) throw new EmlError("TOO_LARGE");
 
   const outer = await parseOne(bytes);
-  const attached = outer.attachments.filter(
-    (a) => a.mimeType.toLowerCase() === "message/rfc822",
-  );
+  // Gmail attaches originals as message/rfc822; Outlook and some mobile clients send the same
+  // .eml as application/octet-stream (or message/global). Accept both, by type or file name.
+  const attached = outer.attachments.filter((a) => {
+    const type = a.mimeType.toLowerCase();
+    return (
+      type === "message/rfc822" ||
+      type === "message/global" ||
+      (/\.eml$/i.test(a.filename ?? "") &&
+        (type === "application/octet-stream" || type.startsWith("message/")))
+    );
+  });
 
   if (attached.length === 0) {
     const message = toMessage(outer);
@@ -153,12 +164,25 @@ export async function parseEml(bytes: Uint8Array): Promise<ParsedOriginal[]> {
   if (attached.length > EML_LIMITS.maxOriginals) throw new EmlError("TOO_MANY");
   const envelopeDate = originalDate(outer);
   const results: ParsedOriginal[] = [];
+  const omitted: EmlErrorCode[] = [];
+  // One damaged attachment must not discard its valid siblings.
   for (const attachment of attached) {
-    const raw = new Uint8Array(attachment.content as ArrayBuffer);
-    const message = toMessage(await parseOne(raw));
-    if (!looksLikeMessage(message)) throw new EmlError("NOT_A_MESSAGE");
-    results.push({ message, fingerprint: sha256(raw), envelopeDate });
+    try {
+      const content = attachment.content;
+      const raw =
+        typeof content === "string"
+          ? new TextEncoder().encode(content)
+          : new Uint8Array(content as ArrayBuffer);
+      const message = toMessage(await parseOne(raw));
+      if (!looksLikeMessage(message)) throw new EmlError("NOT_A_MESSAGE");
+      results.push({ message, fingerprint: sha256(raw), envelopeDate, isAttached: true });
+    } catch (error) {
+      if (!(error instanceof EmlError)) throw error;
+      omitted.push(error.code);
+    }
   }
+  if (!results.length) throw new EmlError(omitted[0] ?? "NOT_A_MESSAGE");
+  if (omitted.length) results[0]!.omittedOriginals = omitted;
   return results;
 }
 

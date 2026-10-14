@@ -19,7 +19,7 @@ them through the protected `main` pipeline after its exact commit passes CI.
    Confirm the `domain` and `browser` checks are required by the `main` ruleset and
    that the GitHub `production` environment permits `main` only.
 3. **Release PR #1 after its new checks pass.** The pipeline stages the build,
-   applies pending migrations (there are now seven), promotes and smoke-tests it.
+   applies pending migrations (there are now eight), promotes and smoke-tests it.
    It requires a verified previous deployment before changing anything. Failures
    after promotion is attempted trigger rollback, domain verification and a fresh
    smoke test; failed recovery is reported as unverified. A green PR run skips

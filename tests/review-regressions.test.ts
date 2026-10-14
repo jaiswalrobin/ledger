@@ -69,7 +69,7 @@ test("SEC-01: hostile unterminated HTML completes within bounds", async () => {
 });
 test("SEC-02: oversized HTML, subjects, and text are refused before conversion or extraction", async () => {
   for (const spec of [
-    { html: "<".repeat(300000), text: "" },
+    { html: "<".repeat(1_100_000), text: "" },
     { subject: "a".repeat(10000) },
     { text: "a".repeat(110000) },
   ]) {

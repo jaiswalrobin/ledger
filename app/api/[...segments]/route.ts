@@ -40,6 +40,7 @@ import {
   syncAllMailboxes,
   syncMailbox,
 } from "../../../src/server/gmail/sync.ts";
+import { requestMailboxRecheck } from "../../../src/server/gmail/recheck.ts";
 import {
   listOpenings,
   getOpening,
@@ -331,7 +332,8 @@ export async function POST(
         try {
           for (const original of await parseEml(
             new Uint8Array(await file.arrayBuffer()),
-          ))
+          )) {
+            for (const code of original.omittedOriginals ?? []) results.push({ status: "ERROR", code });
             results.push(
               await ingestOriginal(db, {
                 userId: session.userId,
@@ -339,6 +341,7 @@ export async function POST(
                 original,
               }),
             );
+          }
         } catch (error) {
           if (error instanceof EmlError)
             results.push({ status: "ERROR", code: error.code });
@@ -433,7 +436,7 @@ export async function POST(
       out.cookies.set(COOKIE, "", { ...cookieOptions(), maxAge: 0 });
       return out;
     }
-    if (["connect", "sync", "disconnect", "retry-failed"].includes(path)) {
+    if (["connect", "sync", "disconnect", "retry-failed", "recheck"].includes(path)) {
       if (session.isDemo) throw new WebError("DEMO_ONLY", 403);
       const cfg = googleConfig();
       if (path === "connect") {
@@ -450,6 +453,14 @@ export async function POST(
             validUuid(body.mailboxId),
           ),
         );
+      if (path === "recheck") {
+        const id = validUuid(body.mailboxId);
+        await rateLimit(db, `recheck:${session.userId}`, 3);
+        const result = await requestMailboxRecheck(db, session.userId, id);
+        if (result === "NOT_FOUND") throw new WebError("NOT_FOUND", 404);
+        if (result === "BUSY") throw new WebError("SYNC_BUSY", 409);
+        if (result === "IN_PROGRESS") throw new WebError("RECHECK_IN_PROGRESS", 409);
+      }
       if (path === "retry-failed") {
         const id = validUuid(body.mailboxId);
         await db.query(

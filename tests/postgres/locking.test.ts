@@ -6,6 +6,7 @@ import { applyMigrations } from "../../src/server/migrate.ts";
 import { ingestOriginal } from "../../src/server/pipeline.ts";
 import { setAttemptStatus } from "../../src/server/actions.ts";
 import { syncMailbox } from "../../src/server/gmail/sync.ts";
+import { requestMailboxRecheck } from "../../src/server/gmail/recheck.ts";
 import { parseEml } from "../../src/ingestion/eml.ts";
 import { sampleEmail } from "../../src/server/demo.ts";
 import { seedUser, seedMailbox } from "../helpers/db.ts";
@@ -29,6 +30,15 @@ before(async () => {
     db,
     new URL("../../migrations", import.meta.url).pathname,
   );
+});
+test("real PostgreSQL: concurrent recheck requests queue one generation and preserve an active sync", async () => {
+  const userId = await owner(), mailboxId = await seedMailbox(db, userId);
+  const now = new Date();
+  const results = await Promise.all(Array.from({ length: 4 }, () => requestMailboxRecheck(db, userId, mailboxId, now)));
+  assert.equal(results.filter(r => r === "QUEUED").length, 1);
+  assert.equal(results.filter(r => r === "IN_PROGRESS").length, 3);
+  await db.query("UPDATE connected_mailboxes SET sync_lease_until=$2 WHERE id=$1", [mailboxId,new Date(now.getTime()+60000).toISOString()]);
+  assert.equal(await requestMailboxRecheck(db, userId, mailboxId, now), "BUSY");
 });
 after(async () => {
   for (const id of owners)
@@ -200,7 +210,7 @@ test("real PostgreSQL: a populated legacy schema upgrades without losing company
         join(directory, file),
         await readFile(join(source, file)),
       );
-    assert.equal((await applyMigrations(isolated, directory)).length, 6);
+    assert.equal((await applyMigrations(isolated, directory)).length, 7);
     assert.equal(
       (await isolated.query("SELECT id FROM companies")).rows.length,
       2,
