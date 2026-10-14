@@ -99,6 +99,45 @@ tracing or credential-bearing command arguments. Schedules are best effort;
 been activated. Vercel Pro can replace the separate 15-minute workflow with an
 appropriate Vercel schedule if desired.
 
+### What a scheduled run reports
+
+`/api/cron/sync` answers with a counts-only report (no addresses, ids or message data):
+how many mailboxes ran and how many ended `OK`, `PARTIAL`, `BUSY`, `DEGRADED`, `FAILED` or
+`SKIPPED`, whether Gmail is configured, and whether expired-demo cleanup failed. Cleanup and each
+mailbox are isolated: a cleanup error or one mailbox crashing never stops the others.
+
+The workflow prints that report, adds it to the run summary, and decides the run's colour from it:
+
+| Situation | Workflow result |
+| --- | --- |
+| Secrets missing on GitHub | Green with a *Scheduler not configured* warning |
+| URL not `https://…/api/cron/sync`, or secret under 24 characters | Red, naming the bad secret |
+| HTTP 401 | Red: *Secret mismatch* between `LEDGER_CRON_SECRET` and Vercel `CRON_SECRET` |
+| HTTP 503 | Red: `CRON_SECRET` missing on the deployment, or the database is down |
+| Endpoint unreachable, timeout, 429 or 5xx | Retried twice, 20 s apart; red if still failing |
+| Google credentials not set on the deployment | Green with a *Gmail not configured* warning |
+| A mailbox `DEGRADED` (revoked grant, failed messages) | Green with a *needs attention* warning; the owner fixes it under Connections |
+| A mailbox `FAILED` | Red; check the Vercel function logs |
+
+Before this report existed the endpoint returned 200 even when every mailbox failed, so a green run
+did not prove anything was synced.
+
+### Getting dependable 15-minute polling
+
+GitHub runs scheduled workflows on a best-effort basis: runs are delayed, often by hours, and
+dropped under load, and GitHub disables schedules in repositories with no activity for 60 days. The
+workflow uses odd minutes (`7,22,37,52`) to avoid the busiest moments, but that only helps a little.
+Ledger marks monitoring as incomplete when a mailbox has not synced for 45 minutes, so long gaps
+show up in the UI as "Monitoring incomplete" rather than being hidden.
+
+For dependable polling, call the endpoint from a scheduler with a real timing guarantee and keep the
+GitHub workflow as a backup. Any of these works, since a run is idempotent and mailbox leases
+prevent overlapping work:
+
+- Vercel Pro: change the `vercel.json` cron to `*/15 * * * *` (Vercel adds the bearer header).
+- An external HTTPS cron service: `POST https://YOUR-STABLE-ORIGIN/api/cron/sync` every 15 minutes
+  with the header `Authorization: Bearer <CRON_SECRET>` and a timeout of at least 300 s.
+
 Demo workspaces expire after seven days and are pruned by the authenticated cron
 and subsequent demo creation. Google-account history is retained until explicit
 workspace deletion. Disconnect/revoke every active mailbox before deleting the

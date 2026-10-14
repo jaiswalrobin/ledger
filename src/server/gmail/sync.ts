@@ -750,13 +750,19 @@ export async function syncAllMailboxes(
   const results: SyncResult[] = [];
   for (const [index, mailbox] of rows.entries()) {
     const remaining = Math.max(0, total - (now().getTime() - started));
-    results.push(
-      await syncMailbox(
-        { ...deps, budgetMs: remaining / (rows.length - index) },
-        mailbox.id,
-        scope,
-      ),
-    );
+    try {
+      results.push(
+        await syncMailbox(
+          { ...deps, budgetMs: remaining / (rows.length - index) },
+          mailbox.id,
+          scope,
+        ),
+      );
+    } catch {
+      // syncMailbox handles Gmail and token errors itself; this catches the rest (for example a
+      // database error while taking the lease) so one mailbox never stops the others.
+      results.push({ mailboxId: mailbox.id, status: "FAILED" });
+    }
   }
   return results;
 }

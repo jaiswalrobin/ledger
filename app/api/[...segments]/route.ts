@@ -41,6 +41,7 @@ import {
   syncMailbox,
 } from "../../../src/server/gmail/sync.ts";
 import { requestMailboxRecheck } from "../../../src/server/gmail/recheck.ts";
+import { runScheduledSync } from "../../../src/server/scheduler.ts";
 import {
   listOpenings,
   getOpening,
@@ -206,25 +207,24 @@ async function cron(req: NextRequest): Promise<NextResponse> {
     throw new WebError("SERVICE_UNAVAILABLE", 503);
   if (!secureEqual(req.headers.get("authorization") ?? "", `Bearer ${secret}`))
     throw new WebError("NOT_AUTHORIZED", 401);
-  const db = runtimeDb(),
-    pruned = await pruneDemos(db);
-  if (!googleReady()) return response({ pruned, runs: [] });
-  const cfg = googleConfig();
-  return response({
-    pruned,
-    runs: await syncAllMailboxes(
-      {
-        db,
-        clientFor: gmailClientFactory(db, {
-          tokenKey: cfg.tokenKey,
-          clientId: cfg.googleClientId,
-          clientSecret: cfg.googleClientSecret,
-        }),
-        budgetMs: 240000,
-      },
-      { system: true },
-    ),
-  });
+  const db = runtimeDb();
+  const cfg = googleReady() ? googleConfig() : null;
+  // Counts only: the scheduler prints this report in CI logs.
+  return response(
+    await runScheduledSync({
+      db,
+      sync: cfg
+        ? {
+            clientFor: gmailClientFactory(db, {
+              tokenKey: cfg.tokenKey,
+              clientId: cfg.googleClientId,
+              clientSecret: cfg.googleClientSecret,
+            }),
+            budgetMs: 240000,
+          }
+        : null,
+    }),
+  );
 }
 
 export async function GET(
