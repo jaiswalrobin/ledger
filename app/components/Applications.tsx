@@ -3,6 +3,7 @@ import {
   ArrowDownUp,
   ArrowUpRight,
   ChevronRight,
+  CalendarDays,
   FileText,
   Inbox,
   Search,
@@ -17,6 +18,7 @@ import {
   bucketOf,
   coverageOf,
   date,
+  fullDate,
   greeting,
   plural,
   relative,
@@ -57,6 +59,10 @@ export function ApplicationsScreen({
   const active = attempts.filter((a) => a.outcome === "PENDING");
   const interviews = active.filter((a) => a.stage === "INTERVIEW");
   const offers = attempts.filter((a) => a.outcome === "OFFERED");
+  const upcoming = openings.flatMap(o => o.attempts
+    .filter(a => a.outcome === "PENDING" && a.nextInterviewAt)
+    .map(a => ({ opening: o, attempt: a, time: a.nextInterviewAt! })))
+    .sort((a, b) => a.time.localeCompare(b.time)).slice(0, 5);
 
   const matches = (o: OpeningView, f: Filter) =>
     f === "all" ||
@@ -154,6 +160,22 @@ export function ApplicationsScreen({
             Review updates <ArrowUpRight size={16} aria-hidden />
           </span>
         </button>
+      )}
+
+      {upcoming.length > 0 && (
+        <section className="upcoming-interviews" aria-label="Upcoming interviews">
+          <h2><CalendarDays size={18} aria-hidden /> Upcoming interviews</h2>
+          <p className="small muted">Times from accepted invitations, shown in your local time zone.</p>
+          <ul>
+            {upcoming.map(({ opening, attempt, time }) => (
+              <li key={attempt.id}><button onClick={() => open(opening.id)}>
+                <span><strong>{opening.company}</strong><small>{opening.title}</small></span>
+                <time dateTime={time}>{fullDate(time)}</time>
+                <ChevronRight size={16} aria-hidden />
+              </button></li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <section className="applications-panel">

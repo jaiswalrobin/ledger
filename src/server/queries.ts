@@ -19,6 +19,7 @@ export interface AttemptView {
   outcome: Outcome;
   submittedAt: string | null;
   lastActivityAt: string | null;
+  nextInterviewAt: string | null;
   conflicts: string[];
   coverage: Coverage;
   coverageLabel: string;
@@ -52,6 +53,8 @@ async function attemptViews(
   rows: AttemptRow[],
   now: Date,
 ): Promise<Map<string, AttemptView[]>> {
+  if (!rows.length) return new Map();
+  const attemptIds = rows.map(r => r.id);
   const facts = await db.query<{
     attempt_id: string;
     sync_state: SyncState;
@@ -65,9 +68,21 @@ async function attemptViews(
        JOIN event_evidence ev ON ev.event_id = e.id AND ev.user_id = e.user_id
        JOIN source_artifacts a ON a.id = ev.artifact_id AND a.user_id = ev.user_id AND a.source_kind = 'GMAIL'
        JOIN connected_mailboxes m ON m.id = a.mailbox_id AND m.user_id = a.user_id
-      WHERE e.user_id = $1 AND e.review_state = 'ACCEPTED'`,
-    [userId],
+      WHERE e.user_id = $1 AND e.attempt_id=ANY($2::uuid[]) AND e.review_state = 'ACCEPTED'`,
+    [userId, attemptIds],
   );
+  // Select each calendar's latest accepted revision before considering its time. Filtering
+  // future times first would incorrectly revive an older invitation after a reschedule.
+  const schedules = await db.query<{ attempt_id: string; scheduled_for: unknown }>(
+    `SELECT attempt_id,min(scheduled_for) AS scheduled_for FROM (
+       SELECT DISTINCT ON (attempt_id,calendar_uid_key) attempt_id,scheduled_for
+       FROM application_events WHERE user_id=$1 AND attempt_id=ANY($2::uuid[])
+         AND review_state='ACCEPTED' AND calendar_uid_key IS NOT NULL
+       ORDER BY attempt_id,calendar_uid_key,calendar_sequence DESC,occurred_at DESC,observed_at DESC,id DESC
+     ) current_calendar WHERE scheduled_for >= $3 GROUP BY attempt_id`,
+    [userId, attemptIds, now.toISOString()],
+  );
+  const upcoming = new Map(schedules.rows.map(r => [r.attempt_id, iso(r.scheduled_for)]));
   const byAttempt = new Map<
     string,
     { syncState: SyncState; backfillComplete: boolean }[]
@@ -97,6 +112,7 @@ async function attemptViews(
       outcome: r.outcome,
       submittedAt: r.submitted_at ? iso(r.submitted_at) : null,
       lastActivityAt,
+      nextInterviewAt: r.outcome === "PENDING" ? upcoming.get(r.id) ?? null : null,
       conflicts: r.projection_conflicts,
       coverage,
       coverageLabel: COVERAGE_LABEL[coverage],

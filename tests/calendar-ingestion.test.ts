@@ -6,6 +6,7 @@ import { originalKeyOf, ingestOriginal } from "../src/server/pipeline.ts";
 import { buildEml } from "./helpers/eml.ts";
 import { createTestDb, seedMailbox, seedUser } from "./helpers/db.ts";
 import { getOpening } from "../src/server/queries.ts";
+import { setEventState, setAttemptStatus } from "../src/server/actions.ts";
 import { resolveReviewCreate } from "../src/server/actions.ts";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -118,6 +119,17 @@ it("calendar identity cannot override a submitted contact or a changed organizer
     assert.equal(events.filter(e=>e.currentSchedule).length,1);
     assert.equal(events.find(e=>e.currentSchedule)!.calendarRevision,2);
     assert.equal(events.find(e=>e.currentSchedule)!.scheduledFor,"2026-10-21T10:00:00.000Z");
+    assert.equal(detail!.attempts.find(a=>a.id===first.attemptId)!.nextInterviewAt,"2026-10-21T10:00:00.000Z");
+    const past = await ingest(await parsed(calendar(3,"20261020T090000Z"),"REQUEST","An updated interview time."));
+    assert.equal(past.status,"APPLIED");
+    const afterPast=await getOpening(t.db,userId,first.openingId,new Date("2026-10-20T12:00:00Z"));
+    assert.equal(afterPast!.attempts.find(a=>a.id===first.attemptId)!.nextInterviewAt,null,"a past latest revision must not revive an older future time");
+    const pastEvent=afterPast!.attempts.find(a=>a.id===first.attemptId)!.events.find(e=>e.calendarRevision===3)!;
+    await setEventState(t.db,userId,pastEvent.id,"REJECTED");
+    const restored=await getOpening(t.db,userId,first.openingId,new Date("2026-10-20T12:00:00Z"));
+    assert.equal(restored!.attempts.find(a=>a.id===first.attemptId)!.nextInterviewAt,"2026-10-21T10:00:00.000Z");
+    await setAttemptStatus(t.db,userId,first.attemptId,{stage:"INTERVIEW",outcome:"WITHDRAWN"});
+    assert.equal((await getOpening(t.db,userId,first.openingId))!.attempts.find(a=>a.id===first.attemptId)!.nextInterviewAt,null);
     assert.ok((await t.db.query("SELECT signal_id FROM event_evidence WHERE artifact_id=$1",[artifact.id])).rows.every(r=>r.signal_id));
   } finally {await t.close();}
 });
