@@ -758,16 +758,12 @@ export async function syncAllMailboxes(
           scope,
         ),
       );
-    } catch (error) {
+    } catch {
       // syncMailbox handles Gmail and token errors itself; this catches the rest (for example a
       // database error while taking the lease) so one mailbox never stops the others.
       results.push({ mailboxId: mailbox.id, status: "FAILED" });
-      // Leave a trace an operator can find: the error type only (never a message, which may
-      // quote data), and a safe code on the mailbox that Connections shows. Both best effort.
-      console.error("ledger.sync.mailbox_crashed", {
-        mailboxId: mailbox.id,
-        error: error instanceof Error ? error.name : typeof error,
-      });
+      // Server code never logs (see the credential-boundary test). Leave a safe code on the
+      // mailbox instead, which Connections shows; best effort, as the database may be the cause.
       await deps.db
         .query(
           "UPDATE connected_mailboxes SET last_error_code = 'SYNC_CRASHED', last_attempt_at = $2 WHERE id = $1",
