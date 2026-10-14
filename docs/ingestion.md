@@ -92,6 +92,13 @@ Workflow: user searches/selects relevant messages in a primary account and choos
 - Deduplicate copies of the same original evidence without merging distinct application attempts. Do not use RFC Message-ID alone as a globally unique identifier.
 - When a new recruiter reply is selectively forwarded, resolve it to an existing historical attempt by application evidence; otherwise request review.
 - The privacy gate must also screen attached originals for OTPs/reset/magic links; explicit forwarding is not blanket permission to store all their contents.
+- The body screen (`src/ingestion/privacy.ts`) has three levels. **CREDENTIAL** (codes, password
+  resets, account verification, magic links, bearer tokens, raw secret parameters): nothing derived
+  from the message is kept. **ACCESS_LINK** (an opaque token on a portal, assessment, scheduling or
+  login link): kept only when the transient extraction finds hiring content, because nearly every
+  ATS email carries such links; otherwise skipped like a credential. **NONE** (click tracking,
+  unsubscribe, signed static assets). Links themselves are never stored at any level: fields pass
+  `safeField`, and canonical URLs come only from reviewed ATS schemas without query strings.
 
 Ordinary inline forwards may be partially supported later but are weaker because headers and timestamps can be rewritten, missing or ambiguous.
 

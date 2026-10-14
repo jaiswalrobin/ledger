@@ -1,6 +1,6 @@
-import { EXTRACTOR_VERSION, extractSignal } from "./extract.ts";
+import { EXTRACTOR_VERSION, extractSignal, isHiringSignal } from "./extract.ts";
 import { classifyHeaders } from "./header-gate.ts";
-import { hasSensitiveMessage } from "./privacy.ts";
+import { messageSensitivity } from "./privacy.ts";
 import type { ExtractedFields, ExtractedSignal, ParsedMessage } from "./source.ts";
 
 type Extractor = { version: string; extract(message: ParsedMessage): ExtractedSignal };
@@ -55,9 +55,15 @@ const needsReview = (signal: ExtractedSignal): boolean =>
 /** Pure preview: no database, remote reads, event updates, or source-content output. */
 export function previewExtraction(message: ParsedMessage, baseline?: Extractor) {
   const from = `${message.fromName} <${message.fromAddress ?? ""}>`;
-  if (classifyHeaders({ from, subject: message.subject }).kind === "SKIP_SENSITIVE" || hasSensitiveMessage(message))
-    return { status: "SKIPPED_SENSITIVE" as const };
+  const level = messageSensitivity(message);
   const after = extractSignal(message);
+  // The same rule as the pipeline: credential deliveries, and access links outside hiring mail.
+  if (
+    classifyHeaders({ from, subject: message.subject }).kind === "SKIP_SENSITIVE" ||
+    level === "CREDENTIAL" ||
+    (level === "ACCESS_LINK" && !isHiringSignal(after))
+  )
+    return { status: "SKIPPED_SENSITIVE" as const };
   const before = baseline?.extract(message) ?? null;
   return {
     status: "PREVIEW" as const,

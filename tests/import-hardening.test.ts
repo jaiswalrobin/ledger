@@ -100,9 +100,21 @@ test("two different job links require review rather than choosing the first", as
   assert.equal((await listReviews(t.db, userId))[0]!.reason, "AMBIGUOUS_OPENING");
 });
 
+test("a hiring email with a portal access link is processed, and the link is stored nowhere", async () => {
+  const { userId, mailboxId, fake, deps } = await setup();
+  fake.add("portal", { ...ibm, html: '<p>Application received.</p><a href="https://example.org/portal?token=never-persist-me">Career portal</a>' });
+  await syncMailbox(deps, mailboxId, { userId });
+  assert.equal((await t.db.query("SELECT outcome FROM processing_tasks WHERE mailbox_id=$1", [mailboxId])).rows[0]!.outcome, "PROCESSED");
+  assert.equal((await listOpenings(t.db, userId, NOW)).length, 1);
+  for (const table of ["source_artifacts", "extracted_signals", "job_openings", "application_attempts", "application_events", "review_items"]) {
+    const { rows } = await t.db.query(`SELECT row_to_json(x)::text AS row FROM ${table} x WHERE user_id=$1`, [userId]);
+    for (const { row } of rows) assert.ok(!String(row).includes("never-persist-me"), table);
+  }
+});
+
 test("body privacy exclusions have their own durable outcome and no retained secret facts", async () => {
   const { userId, mailboxId, fake, deps } = await setup();
-  fake.add("secret", { ...ibm, html: '<p>Application received.</p><a href="https://example.org/?token=never-persist-me">Career portal</a>' });
+  fake.add("secret", { ...ibm, html: '<p>Application received.</p><a href="https://example.org/verify-email?token=never-persist-me">Verify your email</a>' });
   await syncMailbox(deps, mailboxId, { userId });
   assert.equal((await t.db.query("SELECT outcome FROM processing_tasks WHERE mailbox_id=$1", [mailboxId])).rows[0]!.outcome, "SKIPPED_SENSITIVE");
   const a = (await t.db.query("SELECT subject_redacted,original_key FROM source_artifacts WHERE user_id=$1", [userId])).rows[0]!;

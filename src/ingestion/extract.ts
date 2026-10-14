@@ -484,6 +484,18 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
   };
 }
 
+/** Reasons that concern an application even though no event kind was assigned. */
+const HIRING_REASONS: ReadonlySet<string> = new Set([
+  "interview-cancelled",
+  "not-submitted",
+  "ambiguous-kind",
+  "uncertain-calendar",
+]);
+
+/** Whether a message is about an application at all, as opposed to account or other mail. */
+export const isHiringSignal = (signal: ExtractedSignal): boolean =>
+  signal.kind !== null || signal.reasons.some((reason) => HIRING_REASONS.has(reason));
+
 const STRICT_FIELDS: ReadonlySet<keyof ExtractedFields> = new Set([
   "externalApplicationId",
   "canonicalUrl",

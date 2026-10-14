@@ -7,9 +7,9 @@ import {
 import type { JobOpening } from "../domain/types.ts";
 import { atsKeyId, companyKey, normalizedText } from "../domain/normalization.ts";
 import { redactSubject } from "../ingestion/eml.ts";
-import { EXTRACTOR_VERSION, extractSignal } from "../ingestion/extract.ts";
+import { EXTRACTOR_VERSION, extractSignal, isHiringSignal } from "../ingestion/extract.ts";
 import { classifyHeaders } from "../ingestion/header-gate.ts";
-import { hasSensitiveMessage } from "../ingestion/privacy.ts";
+import { messageSensitivity } from "../ingestion/privacy.ts";
 import { usableEventDate } from "../ingestion/dates.ts";
 import {
   isRecruitingSenderDomain,
@@ -251,9 +251,15 @@ async function run(
     from: `${m.fromName} <${m.fromAddress ?? ""}>`,
     subject: m.subject,
   });
+  // Extraction is transient; nothing is stored before this decision. A credential delivery is
+  // never kept. A message whose only secret is an access link (an assessment or portal link) is
+  // kept only when it is hiring mail; the link itself is never stored.
+  const level = messageSensitivity(m);
+  const signal = extractSignal({ ...m, date: usableDate });
   if (
     gate.kind === "SKIP_SENSITIVE" ||
-    hasSensitiveMessage(m)
+    level === "CREDENTIAL" ||
+    (level === "ACCESS_LINK" && !isHiringSignal(signal))
   ) {
     // Nothing derived from a credential-like message is kept, including its subject.
     await insertArtifact("SKIPPED_SENSITIVE", null, null, null);
@@ -261,7 +267,6 @@ async function run(
     return { status: "SKIPPED_SENSITIVE" };
   }
 
-  const signal = extractSignal({ ...m, date: usableDate });
   const subjectRedacted = redactSubject(m.subject);
 
   if (originalKey) {

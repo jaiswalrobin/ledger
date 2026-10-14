@@ -161,3 +161,29 @@ describe("employer spelling variants", () => {
     assert.deepEqual(await events(user), ["CONFIRMATION_RECEIVED", "INTERVIEW_INVITED"]);
   });
 });
+
+describe("links in hiring mail", () => {
+  it("an assessment invite with a tokenized login link is processed", async () => {
+    const { user, mailbox } = await fresh();
+    await gmail(user, mailbox, {
+      subject: "Application received",
+      text: "We received your application for the Data Engineer role at Acme.\nView status: https://acme.example/candidate/status?token=Zx81Qp",
+    });
+    const out = await gmail(user, mailbox, {
+      subject: "Next step: coding assessment",
+      text: "Please complete the coding assessment for the Data Engineer role at Acme: https://www.hackerrank.com/tests/abc123/login?token=Zx81Qp",
+      date: "Tue, 13 Oct 2026 09:30:00 +0000",
+    });
+    assert.notEqual(out.status, "SKIPPED_SENSITIVE");
+    assert.deepEqual(await openings(user), [{ company: "Acme", title: "Data Engineer" }]);
+  });
+
+  it("an access link in mail with no hiring signal is still skipped", async () => {
+    const { user, mailbox } = await fresh();
+    const out = await gmail(user, mailbox, {
+      subject: "Your candidate profile",
+      text: "Open your dashboard: https://acme.example/portal?token=Zx81Qp",
+    });
+    assert.equal(out.status, "SKIPPED_SENSITIVE");
+  });
+});
