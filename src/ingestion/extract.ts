@@ -189,21 +189,32 @@ export function detectKind(haystack: string): {
   reasons: string[];
 } {
   // Phrases are prose: a hostname in a link ("www.hackerrank.com/...") is not a mention.
-  const flat = flatten(normalizeForMatching(haystack).replace(/https?:\/\/\S+/gi, " "));
+  const normalized = normalizeForMatching(haystack).replace(/https?:\/\/\S+/gi, " ");
+  // Keep assertion boundaries; ordinary hard wrapping may still join within a clause.
+  const clauses = normalized.split(/(?:[.!?]+(?:\s+|$)|\n{2,}|\n(?=\s*(?:if|unless|should|in case|when)\b))/i)
+    .map(flatten).filter(clause => clause && !/^(?:if|unless|should|in case|when)\b/i.test(clause));
   // "Thank you for taking the time to interview with us" opens most post-interview rejections;
   // a thank-you sentence describes the past, so it never proposes an interview/assessment step.
-  const withoutThanks = flat.replace(
+  const withoutThanks = clauses.map(clause => clause.replace(
     /\bthank(?:s| you)(?: (?:so|very) much)? for (?:taking (?:the )?time|your time|interviewing|your (?:recent )?interview|meeting|speaking|talking|chatting|completing|the opportunity|participating|attending|your patience)[^.!?\n]{0,200}[.!?]?/gi,
     " ",
-  );
-  if (INTERVIEW_CANCELLED.test(withoutThanks))
+  ));
+  if (withoutThanks.some(clause => INTERVIEW_CANCELLED.test(clause)))
     return { kind: null, reasons: ["interview-cancelled"] };
-  const notYetScheduled = INTERVIEW_NOT_YET_SCHEDULED.test(withoutThanks);
+  const notYetScheduled = withoutThanks.some(clause => INTERVIEW_NOT_YET_SCHEDULED.test(clause));
+  const negatedReceipt = clauses.some(clause => NOT_SUBMITTED.test(clause) || NOT_RECEIVED.test(clause));
   const hit = (Object.keys(PHRASES) as SignalKind[]).filter(
-    (k) =>
-      !(k === "INTERVIEW_SCHEDULED" && notYetScheduled) &&
-      PHRASES[k].test(STEP_KINDS.has(k) ? withoutThanks : flat),
+    k => (STEP_KINDS.has(k) ? withoutThanks : clauses).some(clause =>
+      !(k === "INTERVIEW_SCHEDULED" && INTERVIEW_NOT_YET_SCHEDULED.test(clause)) &&
+      !(k === "CONFIRMATION_RECEIVED" && (NOT_SUBMITTED.test(clause) || NOT_RECEIVED.test(clause))) && PHRASES[k].test(clause)),
   );
+  // Only an explicit referent can connect adjacent sentences; no other rule borrows a noun
+  // from a subject or previous assertion to give an unrelated clause its event meaning.
+  for (let i = 0; i + 1 < withoutThanks.length; i++) {
+    const before = withoutThanks[i]!, after = withoutThanks[i + 1]!;
+    if (/\binterview\b/i.test(before) && /^(?:(?:this|that|the) (?:call|meeting|session|interview|appointment)|it|this|that)(?: is|'s| has been| was) (?:now )?(?:confirmed|scheduled|booked|set|rescheduled|moved) (?:for|to|on|at)\b/i.test(after) &&
+        !INTERVIEW_NOT_YET_SCHEDULED.test(before) && !hit.includes("INTERVIEW_SCHEDULED")) hit.push("INTERVIEW_SCHEDULED");
+  }
   const reasons = hit.map((k) => "phrase:" + k);
   if (notYetScheduled) reasons.push("interview-not-yet-scheduled");
   // Boilerplate thank-you text appears inside almost every message, so it only counts alone.
@@ -211,7 +222,7 @@ export function detectKind(haystack: string): {
   if (specific.length === 0) {
     // A saved draft, an unfinished form or a receipt that says nothing arrived is not a
     // submission. The pipeline sends these to review: they still concern an application.
-    if (hit.length && (NOT_SUBMITTED.test(flat) || NOT_RECEIVED.test(flat)))
+    if (negatedReceipt)
       return { kind: null, reasons: [...reasons, "not-submitted"] };
     return { kind: hit.length ? "CONFIRMATION_RECEIVED" : null, reasons };
   }
@@ -393,7 +404,7 @@ function extractOne(
   };
   const regions = messageRegions(normalizeForMatching(raw.text));
   const body = regions.current;
-  const detected = detectKind(`${message.subject}\n${body}`);
+  const detected = detectKind(`${message.subject}.\n${body}`);
   let { kind } = detected;
   const reasons = detected.reasons;
   if (regions.hasQuotedHistory && /^\s*re\s*:/i.test(message.subject) && !detectKind(body).kind) {

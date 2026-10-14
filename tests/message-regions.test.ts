@@ -73,3 +73,14 @@ it("HTML quote containers and two-cell metadata retain their structure", async (
   assert.equal(signal.fields.title, "Backend Engineer");
   assert.equal(signal.fields.externalApplicationId, "APP-12345");
 });
+
+it("conditional cancellation policies cannot veto an explicitly scheduled interview", async () => {
+  const signal = await extract("Your onsite interview for the Backend Engineer role at Acme is confirmed for Monday.\nIf your interview is cancelled, please let us know 24 hours in advance.", undefined, "Interview confirmation");
+  assert.equal(signal.kind, "INTERVIEW_SCHEDULED");
+  assert.ok(!signal.reasons.includes("interview-cancelled"));
+});
+
+it("an interview subject cannot lend its noun to an unrelated cancelled session", async () => {
+  const signal = await extract("Your previous session was cancelled. We would like to invite you to interview for the Backend Engineer role at Acme.", undefined, "Interview invitation");
+  assert.equal(signal.kind, "INTERVIEW_INVITED");
+});
