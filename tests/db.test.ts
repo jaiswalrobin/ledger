@@ -95,6 +95,7 @@ describe("schema", () => {
         "0005_sender_trust.sql",
         "0006_demo_retention.sql",
         "0007_submission_date_corrections.sql",
+        "0008_mailbox_recheck.sql",
       ],
     );
   });

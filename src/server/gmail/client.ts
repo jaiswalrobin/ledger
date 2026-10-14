@@ -1,4 +1,5 @@
 import { EML_LIMITS } from "../../ingestion/eml.ts";
+import { RECRUITMENT_SUBJECT_TERMS } from "../../ingestion/header-gate.ts";
 import {
   RECRUITING_SENDER_DOMAINS,
   senderDomain,
@@ -110,7 +111,7 @@ export function candidateQueries(afterEpochSeconds: number): string[] {
   const senders = `(${RECRUITING_SENDER_DOMAINS.map((d) => `from:${d}`).join(" OR ")})`;
   return [
     `${base} ${senders}`,
-    `${base} subject:(application OR applications OR apply OR applying OR applied OR applicant OR candidate OR candidacy OR interview OR interviews OR interviewing OR assessment OR assessments OR "coding challenge" OR "take-home" OR "phone screen" OR recruiter OR recruiting OR recruitment OR hiring OR "job offer" OR "offer letter" OR "offer of employment" OR position OR role OR opportunity OR "next steps" OR unfortunately OR "your interest")`,
+    `${base} subject:(${RECRUITMENT_SUBJECT_TERMS.map(term => term.includes(" ") ? `"${term}"` : term).join(" OR ")})`,
     `${base} (from:jobs-noreply@linkedin.com OR from:indeedapply@indeed.com OR from:noreply@indeed.com OR from:jobs-listings@linkedin.com)`,
     `${base} ${phraseQuery()}`,
     // Hiring platforms' mail is often misfiled as spam. Spam hits are accepted later only when

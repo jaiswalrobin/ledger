@@ -8,7 +8,7 @@ import type {
 import { safeField } from "./privacy.ts";
 import { isRecruitingSenderDomain } from "./ats.ts";
 
-export const EXTRACTOR_VERSION = "rules-4";
+export const EXTRACTOR_VERSION = "rules-5";
 
 /**
  * Canonical form for matching: typographic quotes/dashes become ASCII, invisible characters are
@@ -271,6 +271,15 @@ function atsFromUrl(raw: string): AtsMatch | null {
       );
   }
   if (host.endsWith(".myworkdayjobs.com")) {
+    const jobIndex = seg.indexOf("job");
+    // Only the public locale/board/job/location/title schema is canonical.
+    // Arbitrary account/tracking paths must never become stored "job URLs".
+    if (
+      (jobIndex !== 1 && jobIndex !== 2) ||
+      (jobIndex === 2 && !/^[a-z]{2}-[a-z]{2}$/i.test(seg[0]!)) ||
+      seg.length !== jobIndex + 3 ||
+      !/^[a-z0-9_-]{1,80}$/i.test(seg[jobIndex - 1]!)
+    ) return null;
     const requisition = /_([A-Za-z]*-?\d+)$/.exec(
       seg[seg.length - 1] ?? "",
     )?.[1];
@@ -415,6 +424,24 @@ function senderCompany(message: ParsedMessage): string | null {
   return cleanCompany(name);
 }
 
+/** A job requisition is employer-scoped; Candidate ID must never identify a submission. */
+function ibmJobDetails(message: ParsedMessage, body: string) {
+  if (!/@ibm\.com$/i.test(message.fromAddress ?? "")) return null;
+  const subject = /^you have successfully submitted your IBM job application\s*-\s*(\d{4,10})\s*-\s*(.{2,100})$/i.exec(message.subject);
+  const sentence = /applying to the role of\s+(.{2,100}?)\s*-\s*(\d{4,10})\s+with Candidate ID\s*-\s*\d+\s+at IBM\b/i.exec(body);
+  const reference = /(?:^|\n)\s*Ref\s*:\s*(\d{4,10})\s*-\s*([^\n|]{2,100})/i.exec(body);
+  const candidates = [
+    subject && { id: subject[1]!, title: cleanTitle(subject[2]) },
+    sentence && { id: sentence[2]!, title: cleanTitle(sentence[1]) },
+    reference && { id: reference[1]!, title: cleanTitle(reference[2]) },
+  ].filter((c): c is { id: string; title: string | null } => !!c);
+  if (!candidates.length) return null;
+  const first = candidates[0]!;
+  const conflict = candidates.some(c => c.id !== first.id ||
+    (c.title && first.title && c.title.toLowerCase() !== first.title.toLowerCase()));
+  return { id: first.id, title: first.title, conflict };
+}
+
 function extractCompanyAndTitle(
   message: ParsedMessage,
   body: string,
@@ -436,6 +463,12 @@ function extractCompanyAndTitle(
     labelled(body, "job title|position(?: title)?|role|title"),
   );
   let company = cleanCompany(labelled(body, "company|employer|organization"));
+
+  const ibm = ibmJobDetails(message, body);
+  if (ibm && !ibm.conflict) {
+    company ??= "IBM";
+    title ??= ibm.title;
+  }
 
   for (const re of [P_APPLYING, P_INTEREST, P_STEP_FOR]) {
     const found = both(re);
@@ -476,8 +509,15 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
   let ats: AtsMatch | null = null;
   let workdaySlugTitle: string | null = null;
   let genericUrl: string | null = null;
+  const jobLinks = new Set<string>();
+  const ibm = ibmJobDetails(message, body);
+  if (ibm && !ibm.conflict) {
+    ats = { key: { provider: "ibm", tenant: "ibm", requisitionId: ibm.id }, canonicalUrl: "" };
+    jobLinks.add(JSON.stringify(ats.key));
+  }
   for (const url of findUrls(body)) {
     const match = atsFromUrl(url);
+    if (match) jobLinks.add(JSON.stringify(match.key));
     if (match && !ats) {
       ats = match;
       if (match.key.provider === "workday") {
@@ -508,16 +548,21 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
     title,
     location: safeField(labelled(body, "location")),
     atsKey: ats?.key ?? null,
-    canonicalUrl: ats?.canonicalUrl ?? genericUrl,
+    canonicalUrl: ats?.canonicalUrl || genericUrl,
     // A recipient/mailbox is not proof of the contact entered in an application.
     applicantEmail:
       declaredEmail && declaredEmail.length <= 254 ? declaredEmail : null,
     externalApplicationId:
       externalId && /\d/.test(externalId) ? externalId : null,
   };
+  if (jobLinks.size > 1 || ibm?.conflict) {
+    fields.atsKey = null;
+    fields.canonicalUrl = null;
+    reasons.push("ambiguous-job-links");
+  }
   return {
     kind,
-    confidence: kind && !reasons.includes("mixed-kind") ? "HIGH" : "LOW",
+    confidence: kind && !reasons.includes("mixed-kind") && jobLinks.size <= 1 && !ibm?.conflict ? "HIGH" : "LOW",
     fields,
     occurredAt: message.date,
     reasons,
@@ -571,7 +616,7 @@ export function extractSignal(message: ParsedMessage): ExtractedSignal {
       kind,
       fields,
       reasons,
-      confidence: kind && !reasons.includes("mixed-kind") ? "HIGH" : "LOW",
+      confidence: kind && !reasons.includes("mixed-kind") && !reasons.includes("ambiguous-job-links") ? "HIGH" : "LOW",
     };
   }
   return merged;

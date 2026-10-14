@@ -453,6 +453,20 @@ export interface MailboxView {
   pendingTasks: number;
   failedTasks: number;
   lastRun: RunView | null;
+  recheckInProgress: boolean;
+  processingSummary: {
+    processed: number;
+    skippedSensitive: number;
+    unrecognized: number;
+    skippedOther: number;
+    quarantined: number;
+    partiallyProcessed: number;
+  };
+  excludedMessages: {
+    messageId: string;
+    reason: "PRIVACY_CHECK" | "NO_EVENT" | "PARSE_LIMIT" | "UNCERTAIN_HEADERS";
+    originalMessageAt: string | null;
+  }[];
 }
 
 export async function listMailboxes(
@@ -469,8 +483,9 @@ export async function listMailboxes(
     last_success_at: unknown;
     last_attempt_at: unknown;
     last_error_code: string | null;
+    recheck_id: string | null;
   }>(
-    `SELECT id, address, sync_state, backfill_complete, backfill_start, backfill_end, last_success_at, last_attempt_at, last_error_code
+    `SELECT id, address, sync_state, backfill_complete, backfill_start, backfill_end, last_success_at, last_attempt_at, last_error_code, recheck_id
        FROM connected_mailboxes WHERE user_id = $1 ORDER BY created_at, id`,
     [userId],
   );
@@ -503,6 +518,35 @@ export async function listMailboxes(
       [m.id],
     );
     const r = run.rows[0];
+    const outcomes = await db.query<{ category: string; n: string }>(
+      `SELECT CASE
+         WHEN t.outcome='PROCESSED' THEN 'processed'
+         WHEN t.outcome='PROCESSED_PARTIAL' THEN 'partiallyProcessed'
+         WHEN t.outcome='SKIPPED_SENSITIVE' OR EXISTS (SELECT 1 FROM source_artifacts a
+           WHERE a.user_id=$2 AND a.mailbox_id=$1 AND a.provider_message_id=t.provider_message_id AND a.body_access_decision='SKIPPED_SENSITIVE') THEN 'skippedSensitive'
+         WHEN t.outcome='NO_SIGNAL' THEN 'unrecognized'
+         WHEN left(t.outcome,12)='QUARANTINED_' THEN 'quarantined'
+         ELSE 'skippedOther' END AS category, count(*) AS n
+       FROM processing_tasks t WHERE t.mailbox_id=$1 AND t.user_id=$2 AND t.state='DONE' GROUP BY category`,
+      [m.id, userId],
+    );
+    const processingSummary = { processed: 0, skippedSensitive: 0, unrecognized: 0, skippedOther: 0, quarantined: 0, partiallyProcessed: 0 };
+    for (const o of outcomes.rows) processingSummary[o.category as keyof typeof processingSummary] = Number(o.n);
+    const excluded = await db.query<{
+      provider_message_id: string;
+      reason: MailboxView["excludedMessages"][number]["reason"];
+      original_message_at: unknown;
+    }>(
+      `SELECT t.provider_message_id, a.original_message_at, CASE
+         WHEN t.outcome='SKIPPED_SENSITIVE' OR a.body_access_decision='SKIPPED_SENSITIVE' THEN 'PRIVACY_CHECK'
+         WHEN left(t.outcome,12)='QUARANTINED_' OR t.outcome='PROCESSED_PARTIAL' THEN 'PARSE_LIMIT'
+         WHEN t.outcome='SKIPPED_UNCERTAIN' THEN 'UNCERTAIN_HEADERS' ELSE 'NO_EVENT' END AS reason
+       FROM processing_tasks t LEFT JOIN source_artifacts a ON a.user_id=t.user_id AND a.mailbox_id=t.mailbox_id AND a.provider_message_id=t.provider_message_id
+       WHERE t.mailbox_id=$1 AND t.user_id=$2 AND t.state='DONE'
+         AND (t.outcome IN ('NO_SIGNAL','SKIPPED_SENSITIVE','SKIPPED_UNCERTAIN','PROCESSED_PARTIAL') OR left(t.outcome,12)='QUARANTINED_')
+       ORDER BY t.finished_at DESC NULLS LAST, t.id LIMIT 20`,
+      [m.id, userId],
+    );
     result.push({
       id: m.id,
       address: m.address,
@@ -515,6 +559,13 @@ export async function listMailboxes(
       lastErrorCode: m.last_error_code,
       pendingTasks: Number(pending.rows[0]!.n),
       failedTasks: Number(failed.rows[0]!.n),
+      recheckInProgress: m.recheck_id !== null,
+      processingSummary,
+      excludedMessages: excluded.rows.map(e => ({
+        messageId: e.provider_message_id,
+        reason: e.reason,
+        originalMessageAt: e.original_message_at ? iso(e.original_message_at) : null,
+      })),
       lastRun: r
         ? {
             kind: r.kind,

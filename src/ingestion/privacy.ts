@@ -8,26 +8,49 @@ const CREDENTIAL_PHRASE =
 const DELIVERED_SECRET =
   /\b(?:your|the|this)\s+(?:passcode|pin|code)\s+(?:is|:)\s*[A-Z0-9-]{4,12}\b/i;
 
-/** A tokenised link whose own host/path says it signs in, resets, or verifies an account. */
-const CREDENTIAL_LINK =
-  /^https?:\/\/[^?#\s]*(?:reset|password|passwd|verify|verification|magic|login|log-in|signin|sign-in|sign_in|otp|2fa|mfa|auth)[^?#\s]*[?&#][^\s]*\b(?:token|code|secret|password|signature|sig|auth|session|key|ticket|otp)=/i;
+const JWT = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/;
+const SECRET_PARAMETER = /[?&#](?:token|code|secret|password|signature|sig|auth|session|key|ticket|otp|access_token|refresh_token)=/i;
+const ACCOUNT_PATH = /(?:reset|password|passwd|verify|verification|magic|login|log-in|signin|sign-in|sign_in|otp|2fa|mfa|auth)/i;
+const TRACKING_PATH = /(?:^|\/)(?:unsub(?:scribe)?|unsubscribe|preferences|email-preferences|track(?:ing)?|click|open)(?:[\/._-]|$)/i;
 
-const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\b/;
+function normalizeCredentials(value: string): string {
+  return value.normalize("NFKC").replace(/[\u00ad\u200b-\u200f\u2060\ufeff]/g, "");
+}
+function credentialUrl(raw: string): boolean {
+  let decoded = raw.replace(/&amp;/gi, "&");
+  // Bound decoding and catch percent-encoded paths, keys, and bearer tokens.
+  for (let i=0; i<2; i++) {
+    try { const next = decodeURIComponent(decoded); if (next === decoded) break; decoded = next; }
+    catch { break; }
+  }
+  decoded = normalizeCredentials(decoded);
+  if (JWT.test(decoded)) return true;
+  if (!SECRET_PARAMETER.test(decoded)) return false;
+  try {
+    const url = new URL(decoded);
+    if (ACCOUNT_PATH.test(`${url.hostname}${url.pathname}`)) return true;
+    if (/[?&#](?:secret|password|access_token|refresh_token)=/i.test(decoded)) return true;
+    // Unknown or portal-access tokens may be credentials. Only clear tracking
+    // and unsubscribe purposes are exempt, and those URLs are never retained.
+    return !TRACKING_PATH.test(url.pathname);
+  } catch { return true; }
+}
 
 /**
  * Secondary transient-body screen. Headers alone cannot detect hidden credentials.
  *
  * It targets messages that deliver or act on a credential (OTP, password reset, magic sign-in
  * link, bearer token). Ordinary tracking, unsubscribe and "view your application" links carry
- * opaque query tokens in almost every ATS email; treating each as a credential silently drops
- * valid confirmations, interview invitations and rejections. Those links are never persisted:
+ * opaque query tokens in almost every ATS email; clear tracking/unsubscribe links do not make
+ * the whole email a credential delivery. Unknown access links still fail closed. Links are never persisted:
  * fields pass through `safeField`, and canonical URLs come only from reviewed ATS schemas.
  */
 export function hasSensitiveContent(text: string): boolean {
   if (!text) return false;
-  const urls = text.match(URL_PATTERN) ?? [];
-  if (urls.some((url) => CREDENTIAL_LINK.test(url))) return true;
-  const prose = text.replace(URL_PATTERN, " ");
+  const normalized = normalizeCredentials(text);
+  const urls = normalized.match(URL_PATTERN) ?? [];
+  if (JWT.test(normalized) || urls.some(credentialUrl)) return true;
+  const prose = normalized.replace(URL_PATTERN, " ");
   return (
     CREDENTIAL_PHRASE.test(prose) ||
     DELIVERED_SECRET.test(prose) ||

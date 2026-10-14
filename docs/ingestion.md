@@ -50,6 +50,13 @@ Missing a real recruiting email is the costliest failure, so each stage errs tow
 
 Record aggregate counts for ID discovery, header inspection, body fetch, accepted events, exclusions, and ambiguous reviews, **without keeping message bodies, raw headers or secrets in logs**.
 
+Connections exposes processing totals and a bounded exclusion list with owner-only
+links to Gmail. Parser upgrades can recover skipped recent mail through
+**Recheck last 60 days**; see [import-recovery.md](import-recovery.md). Existing
+timelines and review decisions are protected. Missing dates are not inferred from
+Received hops, complete recipient identity is retained within a fixed cap, and
+damaged attachment siblings produce explicit partial-processing results.
+
 ## 4. Rolling 60-day backfill
 
 - On first connection, default **lookback_days=60** using the connection time as the anchor, with explicit user-controlled extension later.

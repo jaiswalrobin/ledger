@@ -28,6 +28,7 @@ import type {
   MailboxView,
 } from "../src/server/queries.ts";
 import type { BrowserSession } from "../src/server/security/web.ts";
+import type { SyncResult } from "../src/server/gmail/sync.ts";
 import type { Stage, Outcome } from "../src/domain/types.ts";
 
 type Dashboard = {
@@ -56,6 +57,19 @@ const localInstant = (value: string | null) => {
     .toISOString()
     .slice(0, 16);
 };
+function syncNotice(runs: SyncResult[], recheck = false): string {
+  if (runs.some(run => run.status === "FAILED" || run.status === "DEGRADED"))
+    return "Some emails could not be processed. Check the connection status and retry failed work.";
+  if (runs.some(run => run.status === "PARTIAL"))
+    return "Some work remains. Use Sync now to continue; progress has been saved.";
+  if (runs.some(run => run.status === "BUSY"))
+    return "A sync is already running. Refresh shortly to see its results.";
+  if (!runs.length || runs.some(run => run.status === "SKIPPED"))
+    return "This connection was not synced. Check that Gmail is still connected.";
+  return recheck
+    ? "Recheck finished. Existing timelines and review decisions were preserved. Check the processing totals for excluded emails."
+    : "Sync finished. Check the processing totals and review queue for emails that need attention.";
+}
 const errorText: Record<string, string> = {
   SERVICE_UNAVAILABLE: "Ledger could not connect. Please try again shortly.",
   SIGN_IN_REQUIRED: "Your session expired. Sign in again to continue.",
@@ -64,6 +78,8 @@ const errorText: Record<string, string> = {
   DEMO_ONLY:
     "Gmail connections are available when you sign in with your own account.",
   NOT_FOUND: "That item could not be found.",
+  SYNC_BUSY: "A sync is already running. Wait for it to finish before rechecking.",
+  RECHECK_IN_PROGRESS: "A recheck is already underway. Use Sync now to continue it.",
   INVALID_FORM: "Check the form fields and try again.",
   KIND_REQUIRED: "Choose an event type before saving this review.",
   INVALID_INPUT: "Choose a valid event type and date.",
@@ -76,7 +92,7 @@ const errorText: Record<string, string> = {
 };
 const reasonText: Record<string, string> = {
   NO_DATE: "The original message has no reliable date.",
-  MISSING_JOB_DETAILS: "We could not identify the employer and role.",
+  MISSING_JOB_DETAILS: "Some job details are missing. Add them before creating an application.",
   AMBIGUOUS_OPENING: "More than one job opening could match this message.",
   NO_KNOWN_SUBMISSION: "This update has no matching submission yet.",
   AMBIGUOUS_ATTEMPT:
@@ -998,19 +1014,64 @@ export default function Home() {
                     ? ` · ${label(mailbox.lastErrorCode)}`
                     : ""}
                 </p>
+                <p>
+                  Initial search: {date(mailbox.backfillStart)} to {date(mailbox.backfillEnd)}.
+                  {" "}Searches recruiting subjects and known hiring platforms. A completed sync does not guarantee every application was recognized.
+                </p>
+                <div className="sync-summary" aria-label="Email processing totals">
+                  <p>Across all syncs: {mailbox.processingSummary.processed} emails used for timelines or review · {mailbox.processingSummary.unrecognized} with no recognized application event.</p>
+                  <p>{mailbox.processingSummary.skippedSensitive} excluded by privacy checks · {mailbox.processingSummary.quarantined} could not be safely parsed · {mailbox.processingSummary.skippedOther} other excluded emails.</p>
+                  {mailbox.processingSummary.partiallyProcessed > 0 && <p>{mailbox.processingSummary.partiallyProcessed} emails had valid originals imported, but some attachments could not be parsed. See recent excluded emails.</p>}
+                  <p>These are email counts. Several emails can belong to one application.</p>
+                </div>
+                {mailbox.excludedMessages.length > 0 && (
+                  <details className="sync-exclusions">
+                    <summary>See recent excluded emails</summary>
+                    <p>Up to 20 recent exclusions. Open the original in your connected Gmail account to inspect it. Ledger does not retain these email bodies.</p>
+                    <ul>
+                      {mailbox.excludedMessages.map(message => (
+                        <li key={message.messageId}>
+                          {message.reason === "PRIVACY_CHECK" ? "Excluded by privacy checks"
+                            : message.reason === "PARSE_LIMIT" ? "Could not safely parse"
+                            : message.reason === "UNCERTAIN_HEADERS" ? "Unclear recruiting subject"
+                            : "No recognized application event"}
+                          {message.originalMessageAt ? ` · ${date(message.originalMessageAt)}` : ""}
+                          {" · "}<a className="text-link" target="_blank" rel="noopener noreferrer"
+                            href={`https://mail.google.com/mail/?authuser=${encodeURIComponent(mailbox.address)}#all/${encodeURIComponent(message.messageId)}`}>
+                            Open in Gmail
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
                 <div className="connection-actions">
                   <button
                     className="secondary"
                     disabled={busy || mailbox.syncState === "DISCONNECTED"}
                     onClick={() =>
                       void work(async () => {
-                        await api("sync", { mailboxId: mailbox.id });
+                        const result = await api<{ runs: SyncResult[] }>("sync", { mailboxId: mailbox.id });
                         await refresh();
+                        setNotice(syncNotice(result.runs));
                       })
                     }
                   >
                     <RefreshCw size={15} />
                     Sync now
+                  </button>
+                  <button
+                    className="secondary"
+                    disabled={busy || mailbox.syncState === "DISCONNECTED" || mailbox.recheckInProgress}
+                    onClick={() =>
+                      void work(async () => {
+                        const result = await api<{ runs: SyncResult[] }>("recheck", { mailboxId: mailbox.id });
+                        await refresh();
+                        setNotice(syncNotice(result.runs, true));
+                      })
+                    }
+                  >
+                    Recheck last 60 days
                   </button>
                   {mailbox.failedTasks > 0 && (
                     <button
@@ -1046,6 +1107,7 @@ export default function Home() {
                     Disconnect
                   </button>
                 </div>
+                <p>Recheck repeats the recent search and retries skipped emails using the current parser. Privacy checks still apply. Use Import emails for older history.</p>
               </section>
             ))}
             <section className="connect-new">

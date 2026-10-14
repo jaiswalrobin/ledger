@@ -13,7 +13,7 @@ export const EML_LIMITS = {
   maxHtmlChars: 1_000_000,
   maxSubjectChars: 1000,
   maxNameChars: 200,
-  maxRecipients: 50,
+  maxRecipients: 200,
 } as const;
 
 export type EmlErrorCode =
@@ -75,10 +75,8 @@ function toMessage(email: Email): ParsedMessage {
         .map((a) => a.trim().toLowerCase()),
     ),
   ];
-  // A recruiter mail-merge with a long visible To list is still valid evidence. Keep a bounded,
-  // deterministic subset; it is only used for dedupe identity, never as applicant proof.
-  if (to.length > EML_LIMITS.maxRecipients)
-    to.splice(0, to.length, ...to.sort().slice(0, EML_LIMITS.maxRecipients));
+  // Keep complete identity within a fixed bound. Truncation can suppress real evidence.
+  if (to.length > EML_LIMITS.maxRecipients) throw new EmlError("TOO_MANY");
   let html = "";
   try {
     html = email.html ? htmlText(email.html) : "";
@@ -110,17 +108,8 @@ function originalDate(email: Email): string | null {
   const dates = email.headers.filter(
     (header) => header.key.toLowerCase() === "date",
   );
-  if (dates.length > 1) return null;
-  const declared = dates.length === 1 ? isoOrNull(dates[0]!.value) : null;
-  if (declared || dates.length === 1) return declared;
-  // No Date header at all: the receiving server's own timestamp on the earliest Received hop
-  // (the bottom-most header) is the closest available evidence of when the message was sent.
-  const received = email.headers.filter(
-    (header) => header.key.toLowerCase() === "received",
-  );
-  const earliest = received[received.length - 1]?.value;
-  const stamp = earliest?.slice(earliest.lastIndexOf(";") + 1).trim();
-  return earliest?.includes(";") && stamp ? isoOrNull(stamp) : null;
+  // Routing timestamps are not application timestamps; lower hops can be sender-supplied.
+  return dates.length === 1 ? isoOrNull(dates[0]!.value) : null;
 }
 
 const sha256 = (bytes: Uint8Array): string =>
@@ -175,7 +164,7 @@ export async function parseEml(bytes: Uint8Array): Promise<ParsedOriginal[]> {
   if (attached.length > EML_LIMITS.maxOriginals) throw new EmlError("TOO_MANY");
   const envelopeDate = originalDate(outer);
   const results: ParsedOriginal[] = [];
-  let firstError: EmlError | null = null;
+  const omitted: EmlErrorCode[] = [];
   // One damaged attachment must not discard its valid siblings.
   for (const attachment of attached) {
     try {
@@ -186,13 +175,14 @@ export async function parseEml(bytes: Uint8Array): Promise<ParsedOriginal[]> {
           : new Uint8Array(content as ArrayBuffer);
       const message = toMessage(await parseOne(raw));
       if (!looksLikeMessage(message)) throw new EmlError("NOT_A_MESSAGE");
-      results.push({ message, fingerprint: sha256(raw), envelopeDate });
+      results.push({ message, fingerprint: sha256(raw), envelopeDate, isAttached: true });
     } catch (error) {
       if (!(error instanceof EmlError)) throw error;
-      firstError ??= error;
+      omitted.push(error.code);
     }
   }
-  if (!results.length) throw firstError ?? new EmlError("NOT_A_MESSAGE");
+  if (!results.length) throw new EmlError(omitted[0] ?? "NOT_A_MESSAGE");
+  if (omitted.length) results[0]!.omittedOriginals = omitted;
   return results;
 }
 

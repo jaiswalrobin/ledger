@@ -139,7 +139,7 @@ describe("recall: sensitive screening targets credentials, not ordinary links", 
   it("does not drop mail with tracking or unsubscribe tokens", () => {
     assert.equal(
       hasSensitiveContent(
-        "View your application https://app.greenhouse.io/applications/status?token=AbC123\nUnsubscribe https://u.example.com/unsub?key=zzz&sig=yyy",
+        "Tracking https://u.example.com/track?token=AbC123\nUnsubscribe https://u.example.com/unsub?key=zzz&sig=yyy",
       ),
       false,
     );
@@ -152,6 +152,10 @@ describe("recall: sensitive screening targets credentials, not ordinary links", 
       "Sign in: https://acme.example/login?token=abc",
       "https://acme.example/magic?auth=1 use this magic link",
       "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abcdefghij",
+      "https://app.greenhouse.io/applications/status?token=opaque-access",
+      "https://example.org/s%69gnin?%74oken=opaque-access",
+      "https://example.org/unsubscribe?token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abcdefghij",
+      "Your veri\u200bfication code is 123456",
     ])
       assert.equal(hasSensitiveContent(text), true, text);
   });
@@ -213,15 +217,16 @@ describe("recall: MIME parsing", () => {
     const good = buildEml(greenhouseConfirmation());
     const out = await parseEml(bytes(forwardAsAttachment([good, "not a message at all"])));
     assert.equal(out.length, 1);
+    assert.deepEqual(out[0]!.omittedOriginals, ["NOT_A_MESSAGE"]);
   });
 
-  it("falls back to the earliest Received timestamp when Date is missing", async () => {
+  it("keeps a missing Date unknown even when Received timestamps exist", async () => {
     const raw = buildEml({ ...greenhouseConfirmation(), date: null }).replace(
       "From:",
       "Received: by mx.example.com; Mon, 05 Oct 2026 09:31:00 +0000\r\nReceived: from relay.example.com; Mon, 05 Oct 2026 09:30:05 +0000\r\nFrom:",
     );
     const [out] = await parseEml(bytes(raw));
-    assert.equal(out!.message.date, "2026-10-05T09:30:05.000Z");
+    assert.equal(out!.message.date, null);
   });
 
   it("accepts a UTC zone name", async () => {
@@ -232,7 +237,7 @@ describe("recall: MIME parsing", () => {
   it("does not refuse a mail-merge with many visible recipients", async () => {
     const to = Array.from({ length: 80 }, (_, i) => `person${i}@example.com`);
     const [out] = await parseEml(bytes(buildEml({ ...greenhouseConfirmation(), to })));
-    assert.equal(out!.message.to.length, 50);
+    assert.equal(out!.message.to.length, 80);
   });
 
   it("keeps the body when <head> is never closed and decodes typographic entities", () => {

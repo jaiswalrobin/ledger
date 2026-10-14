@@ -27,6 +27,10 @@ export interface ParsedOriginal {
   fingerprint: string;
   /** Date of the forwarding envelope, kept apart from the original's own date. */
   envelopeDate: string | null;
+  /** Attachment provenance is independent of whether the forwarding envelope has a Date. */
+  isAttached?: boolean;
+  /** Safe parse error codes for omitted sibling attachments, on the first result only. */
+  omittedOriginals?: readonly string[];
 }
 
 export type SignalKind = Extract<

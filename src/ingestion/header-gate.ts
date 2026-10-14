@@ -4,47 +4,23 @@ import { isRecruitingSenderDomain, senderDomain } from "./ats.ts";
 const SENSITIVE_SUBJECT =
   /\b(otp|one[\s-]?time|verification code|security code|passcode|password reset|reset your password|two[\s-]?factor|2fa|sign[\s-]?in code|login code|magic link|confirm your (?:email|identity)|verify your (?:email|identity))\b/i;
 
-/**
- * Recruitment vocabulary in a subject. Word forms are explicit (plurals, -ing/-ed) because a bare
- * `\binterview\b` silently misses "Interviews" or "Interviewing with Acme".
- */
-const RECRUITMENT_SUBJECT = new RegExp(
-  String.raw`\b(?:` +
-    [
-      String.raw`applications?`,
-      String.raw`appl(?:y|ying|ied)`,
-      String.raw`applicants?`,
-      String.raw`candidac(?:y|ies)`,
-      String.raw`candidates?`,
-      String.raw`candidature`,
-      String.raw`interview(?:s|ing|ed|er|ers)?`,
-      String.raw`assessments?`,
-      String.raw`(?:coding|technical|skills?|online) (?:challenge|test|exercise|assignment)s?`,
-      String.raw`take[\s-]?home`,
-      String.raw`phone screen(?:ing)?`,
-      String.raw`(?:recruiter|hiring manager|technical|intro(?:ductory)?|screening) call`,
-      String.raw`on[\s-]?site`,
-      String.raw`recruit(?:ment|ing|er|ers)`,
-      String.raw`hiring(?: process| team| update)?`,
-      String.raw`talent acquisition`,
-      String.raw`(?:job|employment|offer) (?:offer|letter)`,
-      String.raw`offer of employment`,
-      String.raw`(?:your|an|our) offer`,
-      String.raw`positions?`,
-      String.raw`roles?`,
-      String.raw`vacanc(?:y|ies)`,
-      String.raw`requisition`,
-      String.raw`opportunit(?:y|ies)`,
-      String.raw`next steps?`,
-      String.raw`unfortunately`,
-      String.raw`thank(?:s| you) for your interest`,
-      String.raw`careers?`,
-      String.raw`job`,
-      String.raw`submission`,
-    ].join("|") +
-    String.raw`)\b`,
-  "i",
-);
+/** Literal search terms are shared with Gmail discovery; inflections must be explicit. */
+export const RECRUITMENT_SUBJECT_TERMS: readonly string[] = [
+  "application", "applications", "apply", "applying", "applied", "applicant", "applicants",
+  "candidacy", "candidacies", "candidate", "candidates", "candidature",
+  "interview", "interviews", "interviewing", "interviewed", "interviewer", "interviewers",
+  "assessment", "assessments", "take-home", "take home", "takehome", "phone screen", "phone screening",
+  "on-site", "on site", "onsite", "recruitment", "recruiting", "recruiter", "recruiters",
+  "hiring", "talent acquisition", "job offer", "employment offer", "offer letter", "employment letter",
+  "offer of employment", "your offer", "an offer", "our offer",
+  "position", "positions", "role", "roles", "vacancy", "vacancies", "requisition",
+  "opportunity", "opportunities", "next step", "next steps", "unfortunately",
+  "thanks for your interest", "thank you for your interest", "career", "careers", "job", "submission",
+  ...["coding", "technical", "skill", "skills", "online"].flatMap(prefix =>
+    ["challenge", "test", "exercise", "assignment"].flatMap(noun => [`${prefix} ${noun}`, `${prefix} ${noun}s`])),
+  ...["recruiter", "hiring manager", "technical", "intro", "introductory", "screening"].map(prefix => `${prefix} call`),
+];
+const RECRUITMENT_SUBJECT = new RegExp(`\\b(?:${RECRUITMENT_SUBJECT_TERMS.join("|")})\\b`, "i");
 
 /** Account administration from an ATS: never recruiting evidence on its own. */
 const ACCOUNT_SUBJECT =

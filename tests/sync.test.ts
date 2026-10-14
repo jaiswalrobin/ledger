@@ -136,7 +136,7 @@ describe("initial backfill", () => {
     assert.equal(run["headers_inspected"], 5);
     assert.equal(run["bodies_fetched"], 3);
     assert.equal(run["skipped_sensitive"], 1);
-    assert.equal(run["skipped_other"], 1);
+    assert.equal(run["skipped_other"], 2);
     assert.equal(run["signals_applied"], 2);
 
     const m = await mailbox(mailboxId);
