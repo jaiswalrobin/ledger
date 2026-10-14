@@ -1,4 +1,4 @@
-import { atsKeyId, canonicalUrlId, normalizeEmail, normalizedText } from "./normalization.ts";
+import { atsKeyId, canonicalUrlId, companyKey, normalizeEmail, normalizedText } from "./normalization.ts";
 import type {
   ApplicationAttempt,
   JobOpening,
@@ -39,7 +39,7 @@ export function resolveOpening(
   }
 
   const weak = openings.filter(o =>
-    normalizedText(o.company) === normalizedText(signal.company) &&
+    companyKey(o.company) === companyKey(signal.company) &&
     normalizedText(o.title) === normalizedText(signal.title) &&
     normalizedText(o.location || "") === normalizedText(signal.location || ""));
   if (weak.length) return {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { normalizedText } from "../domain/normalization.ts";
+import { companyKey, normalizedText } from "../domain/normalization.ts";
 import { projectAttempt } from "../domain/projection.ts";
 import type {
   ApplicationAttempt,
@@ -113,7 +113,7 @@ export function weakOpeningCandidates(
 ): JobOpening[] {
   return openings.filter(
     (o) =>
-      normalizedText(o.company) === normalizedText(signal.company) &&
+      companyKey(o.company) === companyKey(signal.company) &&
       normalizedText(o.title) === normalizedText(signal.title) &&
       (!signal.location ||
         normalizedText(o.location ?? "") === normalizedText(signal.location)),

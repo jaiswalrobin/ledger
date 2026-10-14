@@ -42,3 +42,16 @@ it("MIME merging cannot upgrade a field conflict to high confidence", () => {
   assert.ok(signal.reasons.includes("conflicting-fields"));
   assert.equal(signal.fields.fieldDecisions?.title.state, "AMBIGUOUS");
 });
+
+it("spelling variants of one employer merge instead of conflicting", () => {
+  const variants = fields("We received your application for the Data Engineer role at Acme.", "Thank you for applying to Acme Inc");
+  assert.equal(variants.decisions.company.state, "SUPPORTED");
+  assert.equal(variants.company, "Acme");
+  const caps = fields("Company: ACME\nWe received your application for the Data Engineer role at Acme.");
+  assert.equal(caps.company, "Acme");
+});
+
+it("a shared prefix is not the same employer", () => {
+  const result = fields("We received your application.\nCompany: Acme\nFor the Frontend Engineer role at Acme Robotics.");
+  assert.equal(result.decisions.company.state, "AMBIGUOUS");
+});

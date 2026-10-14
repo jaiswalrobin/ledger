@@ -11,6 +11,7 @@ import { parse as parseDomain } from "tldts";
 import type { FieldDecision } from "./source.ts";
 import { safeField } from "./privacy.ts";
 import { isRecruitingSenderDomain, senderDomain } from "./ats.ts";
+import { companyKey } from "../domain/normalization.ts";
 
 export interface FieldInput {
   subject: string;
@@ -27,8 +28,33 @@ export interface FieldInput {
   companyAliases?: readonly { company: string; domain: string }[];
 }
 
-type Candidate = { value: string; order: number; fromContent: boolean; evidence: Map<string, number>; spans: { representation: string; start: number; end: number }[]; spanOverflow?: boolean };
-type Candidates = Map<string, Candidate> & { overflow?: boolean };
+type Span = { representation: string; start: number; end: number };
+type Candidate = {
+  /** Written forms that share this candidate's key, each with its strongest support. */
+  forms: Map<string, number>;
+  order: number;
+  fromContent: boolean;
+  evidence: Map<string, number>;
+  spans: Span[];
+  spanOverflow?: boolean;
+};
+/** Candidates for one field, keyed so that variants of one value ("Acme", "Acme, Inc.") merge. */
+type Candidates = Map<string, Candidate> & { keyOf: (value: string) => string; overflow?: boolean };
+
+const titleKey = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+const newCandidates = (keyOf: (value: string) => string): Candidates =>
+  Object.assign(new Map<string, Candidate>(), { keyOf });
+const hasCandidate = (map: Candidates, value: string) => map.has(map.keyOf(value));
+
+/**
+ * The form shown for a merged candidate: a spelling that is not all capitals when there is one
+ * ("Acme" over "ACME", but a lone "IBM" stays), then the best-supported, then the first seen.
+ */
+function displayForm(c: Candidate): string {
+  const shouting = (v: string) => /\p{Lu}{2,}/u.test(v) && v === v.toUpperCase();
+  return [...c.forms.entries()]
+    .sort(([a, wa], [b, wb]) => Number(shouting(a)) - Number(shouting(b)) || wb - wa)[0]![0];
+}
 
 // ---- validation and cleaning ------------------------------------------------------------
 
@@ -227,13 +253,14 @@ function scan(re: RegExp, text: string, accept: (m: RegExpExecArray) => boolean)
 /** Each representation/rule of the same source contributes only its strongest support. */
 function addCandidate(map: Candidates, value: string | null, weight: number, source: string, fromContent: boolean, span?: { representation: string; start: number; end: number }) {
   if (!value || weight <= 0) return;
-  const key = value.normalize("NFKC").toLowerCase();
+  const key = map.keyOf(value);
   let candidate = map.get(key);
   if (!candidate) {
     if (map.size >= 64) { map.overflow = true; return; }
-    candidate = { value, order: map.size, fromContent, evidence: new Map(), spans: [] };
+    candidate = { forms: new Map(), order: map.size, fromContent, evidence: new Map(), spans: [] };
     map.set(key, candidate);
   }
+  candidate.forms.set(value, Math.max(weight, candidate.forms.get(value) ?? 0));
   candidate.evidence.set(source, Math.max(weight, candidate.evidence.get(source) ?? 0));
   candidate.fromContent ||= fromContent;
   if (span && candidate.spans.length < 128) candidate.spans.push(span);
@@ -242,7 +269,7 @@ function addCandidate(map: Candidates, value: string | null, weight: number, sou
 
 function decide(map: Candidates): FieldDecision {
   const candidates = [...map.values()].map(c => ({
-    value: c.value,
+    value: displayForm(c),
     score: [...c.evidence.values()].reduce((sum, weight) => sum + weight, 0),
     sources: [...c.evidence.keys()].sort(),
     credible: c.fromContent && [...c.evidence.entries()].some(([source, weight]) => source !== "domain" && weight >= 1.5),
@@ -274,8 +301,8 @@ export function extractCompanyAndTitle(input: FieldInput): {
   title: string | null;
   decisions: { company: FieldDecision; title: FieldDecision };
 } {
-  const titles: Candidates = new Map();
-  const companies: Candidates = new Map();
+  const titles = newCandidates(titleKey);
+  const companies = newCandidates(companyKey);
   let sourceFamily = "structured";
   let span: { representation: string; start: number; end: number } | undefined;
   const add = (map: Candidates, value: string | null, weight: number, fromContent = true) =>
@@ -284,8 +311,8 @@ export function extractCompanyAndTitle(input: FieldInput): {
   const flat = body.replace(/\s+/g, " ");
   const lines = body.split("\n").map((l) => l.trim());
   const hints = domainHints(input);
-  const matchesDomain = (value: string) => hints.some(h => compact(value) === compact(h)) ||
-    (input.companyAliases ?? []).some(alias => compact(alias.company) === compact(value) &&
+  const matchesDomain = (value: string) => hints.some(h => compact(companyKey(value)) === compact(h)) ||
+    (input.companyAliases ?? []).some(alias => companyKey(alias.company) === companyKey(value) &&
       hints.includes(parseDomain(alias.domain, { allowPrivateDomains: true }).domainWithoutSuffix ?? ""));
 
   for (const h of input.titleHints ?? []) add(titles, cleanTitle(h.value), h.weight);
@@ -355,7 +382,7 @@ export function extractCompanyAndTitle(input: FieldInput): {
       add(titles, cleanTitle(at[1]), 2.5);
       add(companies, cleanCompany(at[2]), 2.5);
     } else {
-      const pair = splitPair(rest, (v) => matchesDomain(v) || companies.has(v.toLowerCase()));
+      const pair = splitPair(rest, (v) => matchesDomain(v) || hasCandidate(companies, v));
       if (pair) {
         add(titles, cleanTitle(pair.title), 2.5);
         add(companies, cleanCompany(pair.company), 2.5);
@@ -414,7 +441,7 @@ export function extractCompanyAndTitle(input: FieldInput): {
     }
     const location = boardLines[i + 2] ?? "";
     const hasLocation = /^(?:remote|hybrid|on[- ]site|[\p{L} .'-]+,\s*[\p{L} .'-]+)/iu.test(location);
-    if (companies.has(here.toLowerCase()) && cleanTitle(next) && here.length <= 60 && hasLocation)
+    if (hasCandidate(companies, here) && cleanTitle(next) && here.length <= 60 && hasLocation)
       add(titles, cleanTitle(next), 1.5);
   }
 
@@ -443,31 +470,35 @@ export function extractCompanyAndTitle(input: FieldInput): {
 
   // The sender's own domain confirms a candidate the message itself names; it never invents one,
   // and it does not re-confirm the sender's display name (that would count one source twice).
-  for (const c of companies.values()) if (c.fromContent && matchesDomain(c.value)) c.evidence.set("domain", 2);
+  for (const c of companies.values())
+    if (c.fromContent && [...c.forms.keys()].some(matchesDomain)) c.evidence.set("domain", 2);
   sourceFamily = "subject";
   // Capitalised words in the subject that spell the sender's organisation ("Massive Dynamic").
   if (hints.length)
     for (const m of subject.matchAll(/\b([A-Z][\w&'-]*(?:\s+[A-Z][\w&'-]*){0,3})\b/g))
       for (let n = m[1]!.split(" ").length; n >= 1; n--) {
         const phrase = m[1]!.split(" ").slice(0, n).join(" ");
-        if (hints.includes(compact(phrase)) && ![...companies.values()].some(c => compact(c.value).startsWith(compact(phrase))))
+        if (hints.includes(compact(phrase)) &&
+            ![...companies.values()].some(c => [...c.forms.keys()].some(form => compact(form).startsWith(compact(phrase)))))
           add(companies, cleanCompany(phrase), 1.5);
       }
 
   // A title must not be the employer's own name.
-  for (const key of companies.keys()) {
-    titles.delete(key);
-    // A less specific rule may capture the employer suffix as part of the title.
-    for (const [titleKey, candidate] of titles)
-      if (!candidate.evidence.has("structured") && /\s(?:at|with)\s/i.test(candidate.value) &&
-          (titleKey.endsWith(` at ${key}`) || titleKey.endsWith(` with ${key}`))) titles.delete(titleKey);
-  }
+  for (const company of companies.values())
+    for (const form of company.forms.keys()) {
+      const name = titleKey(form);
+      titles.delete(name);
+      // A less specific rule may capture the employer suffix as part of the title.
+      for (const [key, candidate] of titles)
+        if (!candidate.evidence.has("structured") && (key.endsWith(` at ${name}`) || key.endsWith(` with ${name}`)))
+          titles.delete(key);
+    }
 
   // A general sentence rule can stop at an internal comma. Discard only a proven subspan
   // of the more specific title in the same representation; distinct mentions still conflict.
   for (const [key, candidate] of titles)
     if (!candidate.spanOverflow && candidate.spans.length && [...titles.values()].some(other => other !== candidate &&
-        other.value.toLowerCase().startsWith(`${key},`) && candidate.spans.every(short =>
+        [...other.forms.keys()].some(form => titleKey(form).startsWith(`${key},`)) && candidate.spans.every(short =>
           other.spans.some(long => long.representation === short.representation &&
             long.start <= short.start && long.end > short.end)))) titles.delete(key);
   const decisions = { company: decide(companies), title: decide(titles) };

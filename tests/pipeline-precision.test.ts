@@ -143,3 +143,21 @@ describe("classification reaches the right outcome", () => {
     assert.ok(!(await events(user)).includes("INTERVIEW_SCHEDULED"));
   });
 });
+
+describe("employer spelling variants", () => {
+  it("an update naming 'Acme' reaches the application confirmed as 'Acme Inc'", async () => {
+    const { user, mailbox } = await fresh();
+    const applied = await gmail(user, mailbox, {
+      subject: "Application received",
+      text: "We received your application for the Data Engineer role at Acme Inc.\nApplication ID: A-77881",
+    });
+    assert.equal(applied.status, "APPLIED");
+    const invited = await gmail(user, mailbox, {
+      subject: "Interview invitation",
+      text: "We would like to invite you to an interview for the Data Engineer role at Acme.\nApplication ID: A-77881",
+      date: "Tue, 13 Oct 2026 09:30:00 +0000",
+    });
+    assert.deepEqual(invited, { ...invited, status: "APPLIED" });
+    assert.deepEqual(await events(user), ["CONFIRMATION_RECEIVED", "INTERVIEW_INVITED"]);
+  });
+});

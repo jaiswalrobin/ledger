@@ -134,3 +134,14 @@ test("'Thank you for applying' confirmations are candidates, including from ATS 
 test("a verification code is still skipped when the subject also says applying", () => {
   assert.equal(classifyHeaders({ from: "no-reply@greenhouse.io", subject: "Your code for applying: 482913 (verification code)" }).kind, "SKIP_SENSITIVE");
 });
+
+test("companyKey merges legal-form and case variants but never a prefix", async () => {
+  const { companyKey } = await import("../src/domain/normalization.ts");
+  for (const variant of ["ACME", "Acme, Inc.", "The Acme Co.", "Acme Inc", "acme  llc", "Acme Holdings Ltd"])
+    assert.equal(companyKey(variant), "acme", variant);
+  assert.equal(companyKey("Johnson & Johnson"), companyKey("Johnson and Johnson"));
+  assert.equal(companyKey("McDonald's"), "mcdonalds");
+  assert.notEqual(companyKey("Acme"), companyKey("Acme Robotics"));
+  assert.equal(companyKey("Company"), "company");
+  assert.equal(companyKey("Inc."), "inc");
+});
