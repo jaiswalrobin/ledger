@@ -30,9 +30,26 @@ type Candidates = Map<string, Candidate>;
 const PROSE =
   /\b(?:we|we've|we're|you|you've|your|our|us|i'd|have|has|had|decided|received|receive|been|will|would|could|please|thank|thanks|regret|unfortunately|reviewing|review|applying|applied|submitted|invited|invite|interest|candidacy|employment|following|after|before|because|which|that|this|these|those)\b/i;
 
-/** A capture that is really a status phrase or a sentence fragment, not a title. */
+/**
+ * A capture that is really a status phrase or a sentence fragment, not a title. Whole phrases
+ * only: "Account Executive" and "Community Manager" are titles, "account update" and "talent
+ * community" are not.
+ */
 const TITLE_NOISE =
-  /\b(?:update|invitation|status|confirmation|next steps?|reminder|regarding|account|community|alert|newsletter)\b|^(?:job|interview|assessment|offer|test)s?$/i;
+  /\b(?:update|invitation|status|confirmation|next steps?|reminder|regarding|alert|newsletter|(?:your|an?|new) account|account (?:update|created|activity|verification|settings|details)|talent (?:community|network|pool))\b|^(?:job|interview|assessment|offer|test)s?$/i;
+/** A labelled value ("Job Title: ...") is only rejected when it is nothing but a status word. */
+const LABEL_NOISE = /^(?:update|status|confirmation|reminder|n\/?a|none|tbd|job|interview|assessment|offer|test)s?$/i;
+
+/**
+ * How a value starts. Prose captures must start like a name: an upper-case letter, a digit, a
+ * camel-cased brand ("iOS", "eBay") or a letter from a script without case. A labelled field
+ * ("Job Title: software engineer") is the sender's own data entry, so any letter will do.
+ */
+const NAME_START = /^(?:[\p{Lu}\p{Lt}\p{Lo}\p{N}]|\p{Ll}\p{Lu})/u;
+const LABEL_START = /^[\p{L}\p{N}]/u;
+
+/** Where a value was read. `label` is an explicit "Field: value" line; `prose` is anything else. */
+export type FieldSource = "label" | "prose";
 
 /** Hiring platforms, tools and job boards: senders and venues, never the employer. */
 const PLATFORMS =
@@ -48,7 +65,7 @@ const GENERIC_COMPANY =
 const REQUISITION =
   /\s*(?:[([]\s*(?:(?:req(?:uisition)?|job)\.?\s*(?:id|no\.?|#)?\s*[:#]?\s*)?[A-Z]{0,4}[-\s]?\d[\w-]*\s*[)\]]|\s[-–#]\s*[A-Z]{0,4}-?\d{3,}[\w-]*)\s*$/i;
 
-export function cleanTitle(raw: string | null | undefined): string | null {
+export function cleanTitle(raw: string | null | undefined, source: FieldSource = "prose"): string | null {
   let value = safeField(raw, 140);
   if (!value) return null;
   value = value
@@ -65,11 +82,10 @@ export function cleanTitle(raw: string | null | undefined): string | null {
     value.length < 2 ||
     value.length > 100 ||
     value.split(" ").length > 12 ||
-    // Sentence starts are capitalised; titles like "iOS Engineer" or "eCommerce Lead" are camel-cased.
-    !/^(?:[A-Z0-9]|[a-z][A-Z])/.test(value) ||
+    !(source === "label" ? LABEL_START : NAME_START).test(value) ||
     /https?:|@|\d{4,}$/.test(value) ||
     PROSE.test(value) ||
-    TITLE_NOISE.test(value)
+    (source === "label" ? LABEL_NOISE : TITLE_NOISE).test(value)
   )
     return null;
   return value;
@@ -83,13 +99,20 @@ const ROLE_SHAPED = /\b(?:position|role|job|opening|vacancy|opportunity)(?:\s+(?
  * a venue or a loose phrase ("join Zoom", "assessment from HackerRank"); a sentence that names the
  * employer ("the Engineer position at Google") may name a company that also runs a platform.
  */
-export function cleanCompany(raw: string | null | undefined, strict = true): string | null {
+export function cleanCompany(
+  raw: string | null | undefined,
+  strict = true,
+  source: FieldSource = "prose",
+): string | null {
   let value = safeField(raw, 120);
   if (!value) return null;
   value = value
     .replace(/^["'“‘]+|["'”’]+$/g, "")
     .replace(/^the\s+/i, "")
-    .replace(/\s+(?:within|by|before|on|and|for|to|please|as|is|has|we|you|your|via|from)\b.*$/i, "")
+    // A trailing clause ends the name; "and" only before a lower-case word, since "Barnes and
+    // Noble" and "Johnson & Johnson" are names.
+    .replace(/\s+(?:within|by|before|on|for|to|please|as|is|has|we|you|your|via|from)\b.*$/i, "")
+    .replace(/\s+and\s+\p{Ll}.*$/u, "")
     .replace(/[\s"'”’)!.,;:]+$/g, "")
     .replace(DEPARTMENT, "")
     .replace(/\s+/g, " ")
@@ -99,8 +122,7 @@ export function cleanCompany(raw: string | null | undefined, strict = true): str
     value.length > 60 ||
     // Long names are real ("University of Texas MD Anderson Cancer Center"); longer is a sentence.
     value.split(" ").length > 10 ||
-    // Sentence starts are capitalised; brands like "eBay" or "iRobot" are camel-cased.
-    !/^(?:[A-Z0-9]|[a-z][A-Z])/.test(value) ||
+    !(source === "label" ? LABEL_START : NAME_START).test(value) ||
     /https?:|@|\d{5,}/.test(value) ||
     PROSE.test(value) ||
     ROLE_SHAPED.test(value) ||
@@ -139,11 +161,11 @@ function domainHints(input: FieldInput): string[] {
 // ---- patterns ---------------------------------------------------------------------------
 
 const ROLE = String.raw`(?:position|role|job|opening|vacancy|opportunity)`;
-const TITLE = String.raw`([A-Z0-9][^\n.!?;:]{1,100}?)`;
-const COMPANY = String.raw`([A-Z0-9][^\n!?;:,.]{0,60}?)`;
+const TITLE = String.raw`([\p{L}\p{N}][^\n.!?;:]{1,100}?)`;
+const COMPANY = String.raw`([\p{L}\p{N}][^\n!?;:,.]{0,60}?)`;
 const END = String.raw`(?=\s*(?:[.,!?;:]|\n|$|\s+(?:and|is|has|we|team|as|on|for|to|please|where|who|in\s+[A-Z])\b))`;
 
-const rx = (source: string, flags = "i") => new RegExp(source, flags);
+const rx = (source: string, flags = "iu") => new RegExp(source, flags);
 
 /** Sentences naming a role, optionally followed by the employer. Highest-precision patterns first. */
 const ROLE_SENTENCES: { re: RegExp; title: number; company?: number; weight: number }[] = [
@@ -170,7 +192,7 @@ const COMPANY_SENTENCES: { re: RegExp; weight: number; strict?: boolean }[] = [
   { re: rx(String.raw`\bon\s+behalf\s+of\s+${COMPANY}${END}`), weight: 2 },
   // "assessment from HackerRank" names the tool as often as the employer.
   { re: rx(String.raw`\b(?:test|assessment|challenge|invitation|offer)\s+from\s+${COMPANY}${END}`), weight: 2, strict: true },
-  { re: rx(String.raw`(?:^|\n|\.\s+)${COMPANY}\s+(?:has|have)\s+invited\s+you\b`, "i"), weight: 2.5 },
+  { re: rx(String.raw`(?:^|\n|\.\s+)${COMPANY}\s+(?:has|have)\s+invited\s+you\b`), weight: 2.5 },
   { re: rx(String.raw`\binterview(?:ing)?\s+with\s+${COMPANY}${END}`), weight: 1.5 },
   // "I'm a recruiter at Aperture", "the hiring team at Hooli"
   { re: rx(String.raw`\b(?:recruiter|recruiting|talent\s+partner|hiring\s+manager|hiring\s+team|team|coordinator)\s+(?:at|with)\s+${COMPANY}${END}`), weight: 1.5 },
@@ -244,9 +266,19 @@ export function extractCompanyAndTitle(input: FieldInput): {
   for (const line of lines) {
     const label = /^(job\s*title|position(?:\s*title)?|role|title|job|company|employer|organi[sz]ation)\s*[:\-–]\s*(.{2,100})$/i.exec(line);
     if (!label) continue;
-    if (/company|employer|organi/i.test(label[1]!)) add(companies, cleanCompany(label[2]), 4);
-    else add(titles, cleanTitle(label[2]), 4);
+    if (/company|employer|organi/i.test(label[1]!)) add(companies, cleanCompany(label[2], false, "label"), 4);
+    else add(titles, cleanTitle(label[2], "label"), 4);
   }
+
+  // A company capture stops at " and" (END). In "Barnes and Noble" the name continues.
+  const fullCompany = (m: RegExpExecArray, group: number) => {
+    const value = m[group];
+    if (!value) return value;
+    const end = m.index + m[0].length;
+    if (!m[0].endsWith(value)) return value;
+    const rest = /^\s+(?:and|&)\s+(\p{Lu}[\p{L}\p{N}'&.-]*(?:\s+\p{Lu}[\p{L}\p{N}'&.-]*){0,3})(?=\s*(?:[.,!?;:\n]|$))/u.exec(m.input.slice(end));
+    return rest ? m.input.slice(m.index + m[0].length - value.length, end + rest[0].length) : value;
+  };
 
   // Role sentences, over the hard-wrapped lines and the flattened text.
   for (const source of [subject, body, flat])
@@ -255,13 +287,13 @@ export function extractCompanyAndTitle(input: FieldInput): {
         const title = cleanTitle(m[p.title]);
         if (!title) return false;
         add(titles, title, p.weight / (source === flat ? 2 : 1));
-        if (p.company) add(companies, cleanCompany(m[p.company], false), p.weight / (source === flat ? 2 : 1));
+        if (p.company) add(companies, cleanCompany(fullCompany(m, p.company), false), p.weight / (source === flat ? 2 : 1));
         return true;
       });
   for (const source of [subject, body])
     for (const p of COMPANY_SENTENCES)
       scan(p.re, source, (m) => {
-        const company = cleanCompany(m[1], p.strict ?? false);
+        const company = cleanCompany(fullCompany(m, 1), p.strict ?? false);
         add(companies, company, p.weight);
         return !!company;
       });
@@ -271,7 +303,8 @@ export function extractCompanyAndTitle(input: FieldInput): {
   let prefixedUsed = false;
   const before = titles.size + companies.size;
   if (prefixed) {
-    const rest = prefixed[3]!.replace(/\s*[([].*?[)\]]\s*$/, "").trim();
+    // Only a requisition number is metadata; "(Frontend)" or "(Remote)" is part of the title.
+    const rest = prefixed[3]!.replace(REQUISITION, "").trim();
     // "... to Stripe" names the employer; "... for Data Engineer" or "...: Data Engineer" the role.
     const toEmployer = /\bto$/i.test(prefixed[1]!) || /^to$/i.test(prefixed[2] ?? "");
     const at = /^(.+?)\s+(?:job\s+)?(?:at|@|with)\s+(.+)$/i.exec(rest);

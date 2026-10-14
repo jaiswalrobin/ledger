@@ -4,6 +4,8 @@
  * held-out failure leads to a fix, move that case into emails.ts and write a fresh one here.
  *
  * Round 2: the round-1 set was folded into emails.ts after it informed four fixes.
+ * Round 3: h2-interview-rescheduled moved to emails.ts after a review named its cause (the
+ * "account" title filter); h3-interview-moved replaces it.
  */
 import type { CorpusEmail } from "./emails.ts";
 
@@ -57,12 +59,12 @@ export const HOLDOUT: CorpusEmail[] = [
     expect: { kind: "INTERVIEW_INVITED", company: "Monarch", title: "Product Analyst" },
   },
   {
-    id: "h2-interview-rescheduled",
-    note: "Rescheduled interview",
-    from: '"Recruiting" <recruiting@prestige.example>',
-    subject: "Updated: your interview with Prestige Worldwide",
-    text: "Hi Robin,\n\nYour interview for the Account Executive position has been rescheduled to Friday, October 30 at 1:00 PM PDT. Apologies for the change.\n\nPrestige Worldwide Recruiting",
-    expect: { kind: "INTERVIEW_SCHEDULED", company: "Prestige Worldwide", title: "Account Executive" },
+    id: "h3-interview-moved",
+    note: "Interview moved to a new time, title and company in one sentence (round 3)",
+    from: '"Talent Team" <talent@vandelay.example>',
+    subject: "Interview time change - Community Manager",
+    text: "Hi Robin,\n\nWe need to move your interview for the Community Manager position at Vandelay Industries. It is now scheduled for Thursday, November 5 at 3:00 PM EST.\n\nVandelay Talent Team",
+    expect: { kind: "INTERVIEW_SCHEDULED", company: "Vandelay Industries", title: "Community Manager" },
   },
   {
     id: "h2-offer-formal",
