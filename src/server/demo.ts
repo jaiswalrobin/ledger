@@ -123,7 +123,11 @@ export async function seedDemo(db: Db): Promise<string> {
   return userId;
 }
 /** Delete expired anonymous workspaces, never persistent Google accounts. */
-export async function pruneDemos(db: Db): Promise<number> {
+export async function pruneDemos(
+  db: Db,
+  /** Called after each committed deletion, so a later failure cannot hide earlier ones. */
+  onPruned: (count: number) => void = () => undefined,
+): Promise<number> {
   const expired = await db.query<{ user_id: string }>(
     "SELECT user_id FROM demo_workspaces WHERE expires_at<now() ORDER BY expires_at LIMIT 25",
   );
@@ -141,6 +145,7 @@ export async function pruneDemos(db: Db): Promise<number> {
       );
       pruned += deleted.rowCount;
     });
+    if (pruned) onPruned(pruned);
   }
   await db.query(
     "DELETE FROM browser_rate_limits WHERE reset_at<now()-interval '1 day'",

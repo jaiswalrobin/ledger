@@ -750,13 +750,27 @@ export async function syncAllMailboxes(
   const results: SyncResult[] = [];
   for (const [index, mailbox] of rows.entries()) {
     const remaining = Math.max(0, total - (now().getTime() - started));
-    results.push(
-      await syncMailbox(
-        { ...deps, budgetMs: remaining / (rows.length - index) },
-        mailbox.id,
-        scope,
-      ),
-    );
+    try {
+      results.push(
+        await syncMailbox(
+          { ...deps, budgetMs: remaining / (rows.length - index) },
+          mailbox.id,
+          scope,
+        ),
+      );
+    } catch {
+      // syncMailbox handles Gmail and token errors itself; this catches the rest (for example a
+      // database error while taking the lease) so one mailbox never stops the others.
+      results.push({ mailboxId: mailbox.id, status: "FAILED" });
+      // Server code never logs (see the credential-boundary test). Leave a safe code on the
+      // mailbox instead, which Connections shows; best effort, as the database may be the cause.
+      await deps.db
+        .query(
+          "UPDATE connected_mailboxes SET last_error_code = 'SYNC_CRASHED', last_attempt_at = $2 WHERE id = $1",
+          [mailbox.id, now().toISOString()],
+        )
+        .catch(() => undefined);
+    }
   }
   return results;
 }

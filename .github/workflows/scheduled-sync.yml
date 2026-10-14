@@ -1,7 +1,9 @@
 name: Scheduled mailbox sync
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # GitHub delays or drops scheduled runs under load, worst at the top of each hour and on the
+    # quarter hours. Odd minutes help; for dependable 15-minute polling see docs/deployment.md.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 permissions:
   contents: read
@@ -11,7 +13,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 8
     steps:
       - name: Run authenticated scheduler
         env:
@@ -21,14 +23,64 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$LEDGER_SYNC_URL" || -z "$CRON_SECRET" ]]; then
-            echo 'Scheduler is not configured; no mailbox was accessed.'
+            echo '::warning title=Scheduler not configured::Set the LEDGER_SYNC_URL and LEDGER_CRON_SECRET repository secrets. No mailbox was synced.'
             exit 0
           fi
-          if [[ "$LEDGER_SYNC_URL" != https://* || ${#CRON_SECRET} -lt 24 ]]; then
-            echo 'Scheduler configuration is invalid.'
+          if [[ "$LEDGER_SYNC_URL" != https://* ]]; then
+            echo '::error title=Invalid LEDGER_SYNC_URL::It must start with https:// (for example https://YOUR-DOMAIN/api/cron/sync).'
             exit 1
           fi
-          # No redirects, tracing, verbose output, response body, or credentials in command arguments.
-          printf 'Authorization: Bearer %s\n' "$CRON_SECRET" |
-            curl --fail --silent --show-error --max-time 285 --request POST --header @- \
-            --output /dev/null "$LEDGER_SYNC_URL"
+          if [[ "$LEDGER_SYNC_URL" != */api/cron/sync ]]; then
+            echo '::error title=Invalid LEDGER_SYNC_URL::It must end with /api/cron/sync.'
+            exit 1
+          fi
+          if (( ${#CRON_SECRET} < 24 )); then
+            echo '::error title=Invalid LEDGER_CRON_SECRET::It must be at least 24 characters and match CRON_SECRET on Vercel.'
+            exit 1
+          fi
+
+          body="$(mktemp)"
+          trap 'rm -f "$body"' EXIT
+          # The credential is passed on stdin, never in arguments. Brief outages (timeouts, 429,
+          # 5xx) are retried; a run is idempotent and mailbox leases prevent overlapping work.
+          status="$(printf 'Authorization: Bearer %s\n' "$CRON_SECRET" |
+            curl --silent --show-error --request POST --header @- \
+              --connect-timeout 15 --max-time 285 \
+              --retry 2 --retry-delay 20 --retry-max-time 90 --retry-connrefused \
+              --output "$body" --write-out '%{http_code}' \
+              "$LEDGER_SYNC_URL")" || {
+            echo '::error title=Scheduler request failed::The sync endpoint could not be reached after retries.'
+            exit 1
+          }
+
+          case "$status" in
+            200) ;;
+            401) echo '::error title=Secret mismatch::LEDGER_CRON_SECRET does not match CRON_SECRET on the deployment.'; exit 1 ;;
+            503) echo '::error title=Deployment not configured::CRON_SECRET is missing or too short on the deployment, or the database is unavailable.'; exit 1 ;;
+            404) echo '::error title=Wrong URL::LEDGER_SYNC_URL does not point at a Ledger deployment.'; exit 1 ;;
+            *) echo "::error title=Sync endpoint error::The sync endpoint answered HTTP $status."; exit 1 ;;
+          esac
+
+          # The report holds counts only (no addresses, ids or message data), so it is safe to print.
+          if ! jq -e '.outcome and .statuses' "$body" >/dev/null 2>&1; then
+            echo '::error title=Unexpected response::The sync endpoint did not return a scheduler report.'
+            exit 1
+          fi
+          jq -r '"mailboxes: \(.mailboxes) | ok \(.statuses.OK), partial \(.statuses.PARTIAL), busy \(.statuses.BUSY), needs attention \(.statuses.DEGRADED), failed \(.statuses.FAILED), skipped \(.statuses.SKIPPED) | demos pruned: \(.demosPruned)"' "$body"
+          {
+            echo '### Scheduled sync'
+            jq -r '"| Mailboxes | OK | Partial | Busy | Needs attention | Failed |\n|---|---|---|---|---|---|\n| \(.mailboxes) | \(.statuses.OK) | \(.statuses.PARTIAL) | \(.statuses.BUSY) | \(.statuses.DEGRADED) | \(.statuses.FAILED) |"' "$body"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$(jq -r '.gmailConfigured' "$body")" != "true" ]]; then
+            echo '::warning title=Gmail not configured::Google credentials are not set on the deployment, so no mailbox was synced.'
+          fi
+          if [[ "$(jq -r '.pruneFailed' "$body")" == "true" ]]; then
+            echo '::warning title=Demo cleanup failed::Expired demo workspaces were not removed this run. Mailbox sync still ran.'
+          fi
+          case "$(jq -r '.outcome' "$body")" in
+            healthy) ;;
+            attention) echo '::warning title=Mailbox needs attention::A connected mailbox needs its owner (for example a revoked Google grant or failed messages). See Connections in Ledger.' ;;
+            *) echo '::error title=Mailbox sync failed::At least one mailbox sync failed. Check the deployment logs.'; exit 1 ;;
+          esac
+          
