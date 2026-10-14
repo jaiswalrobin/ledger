@@ -68,6 +68,32 @@ it("conflicting supported MIME values become ambiguous while a stub can inherit 
   assert.deepEqual(stub.fields.fieldDecisions, single.fields.fieldDecisions);
 });
 
+it("subject pairs use sender evidence collected first and the same cleaning on lookup", () => {
+  for (const name of ["Acme", "Acme Careers"]) {
+    const result = extractCompanyAndTitle({subject: `Application received: ${name} - Backend Engineer`, body: "We received your application.", fromName: "Acme", fromAddress: "no-reply@greenhouse.io"});
+    assert.equal(result.company, "Acme");
+    assert.equal(result.title, "Backend Engineer");
+  }
+});
+
+it("an agency affiliation corroborates identity without vetoing explicit job evidence", () => {
+  const result = extractCompanyAndTitle({subject: "Application received: Backend Engineer at Stripe", body: "Company: Stripe\nJob Title: Backend Engineer\nI am a recruiter at TalentHub working on behalf of Stripe.", fromName: "Stripe", fromAddress: "no-reply@greenhouse.io"});
+  assert.equal(result.company, "Stripe");
+  assert.equal(result.title, "Backend Engineer");
+});
+
+it("a role bound to an unrecognized employer cannot inherit an unrelated sender's employer", () => {
+  const result = extractCompanyAndTitle({subject: "Application received", body: "We received your application for the Software Engineer role at 123456.", fromName: "Acme", fromAddress: "no-reply@greenhouse.io"});
+  assert.equal(result.title, null);
+  assert.equal(result.decisions.title.state, "AMBIGUOUS");
+});
+
+it("US Bank is a named employer rather than a prose pronoun", () => {
+  const result = extractCompanyAndTitle({subject: "Application received", body: "We received your application for the Software Engineer role at US Bank in Minneapolis.", fromName: "Acme", fromAddress: "no-reply@greenhouse.io"});
+  assert.equal(result.company, "US Bank");
+  assert.equal(result.title, "Software Engineer");
+});
+
 it("spelling variants of one employer merge instead of conflicting", () => {
   const variants = fields("We received your application for the Data Engineer role at Acme.", "Thank you for applying to Acme Inc");
   assert.equal(variants.decisions.company.state, "SUPPORTED");

@@ -174,7 +174,7 @@ export function cleanCompany(
     value.split(" ").length > 10 ||
     !(source === "label" ? LABEL_START : NAME_START).test(value) ||
     /https?:|@|\d{5,}/.test(value) ||
-    PROSE.test(value) ||
+    PROSE.test(value.replace(/^US(?=\s+\p{Lu})/u, "")) ||
     ROLE_SHAPED.test(value) ||
     // "your application in October": a date is never the employer.
     CALENDAR_WORD.test(value) ||
@@ -216,7 +216,7 @@ const COMPANY = String.raw`([\p{L}\p{N}][^\n!?;:,.]{0,60}?)`;
 // A company ends at punctuation or a connecting word. Patterns compile with the i flag, so case
 // cannot tell "in Berlin" from "in Tech": "in" ends a name like "for" and "to" do, and a name
 // that continues past a connector is recovered only when the sender's domain spells it.
-const END = String.raw`(?=\s*(?:[.,!?;:]|\n|$|\s+(?:and|is|has|we|team|as|on|for|to|please|where|who|in)\b))`;
+const END = String.raw`(?=\s*(?:[.,!?;:]|\n|$|\s+(?:and|is|has|will|would|was|were|can|shall|we|team|as|on|for|to|please|where|who|in)\b))`;
 
 const rx = (source: string, flags = "iu") => new RegExp(source, flags);
 
@@ -240,7 +240,7 @@ const ROLE_SENTENCES: { re: RegExp; title: number; company?: number; weight: num
 ];
 
 /** Phrases that name only the employer. */
-const COMPANY_SENTENCES: { re: RegExp; weight: number; strict?: boolean }[] = [
+const COMPANY_SENTENCES: { re: RegExp; weight: number; strict?: boolean; affiliation?: boolean }[] = [
   { re: rx(String.raw`\b(?:applying|applied|application|apply|interest|candidacy|career|future)\s+(?:to|at|with|in)\s+${COMPANY}${END}`), weight: 1.5 },
   { re: rx(String.raw`\bemployment\s+(?:with|at)\s+${COMPANY}${END}`), weight: 2 },
   { re: rx(String.raw`\b(?:sent|submitted)\s+to\s+${COMPANY}${END}`), weight: 2 },
@@ -251,7 +251,7 @@ const COMPANY_SENTENCES: { re: RegExp; weight: number; strict?: boolean }[] = [
   { re: rx(String.raw`(?:^|\n|\.\s+)${COMPANY}\s+(?:has|have)\s+invited\s+you\b`), weight: 2.5 },
   { re: rx(String.raw`\binterview(?:ing)?\s+with\s+${COMPANY}${END}`), weight: 1.5 },
   // "I'm a recruiter at Aperture", "the hiring team at Hooli"
-  { re: rx(String.raw`\b(?:recruiter|recruiting|talent\s+partner|hiring\s+manager|hiring\s+team|team|coordinator)\s+(?:at|with)\s+${COMPANY}${END}`), weight: 1.5 },
+  { re: rx(String.raw`\b(?:recruiter|recruiting|talent\s+partner|hiring\s+manager|hiring\s+team|team|coordinator)\s+(?:at|with)\s+${COMPANY}${END}`), weight: 1.5, affiliation: true },
   { re: rx(String.raw`\b(?:join|joining|welcome\s+to)\s+(?:the\s+)?${COMPANY}${END}`), weight: 1, strict: true },
 ];
 
@@ -352,6 +352,7 @@ export function extractCompanyAndTitle(input: FieldInput): {
 } {
   const titles = newCandidates(titleKey);
   const companies = newCandidates(companyKey);
+  const frames = new Map<string, { title: string; company: string | null }>();
   const { subject, body } = input;
   const flat = body.replace(/\s+/g, " ");
   const lines = body.split("\n").map((l) => l.trim());
@@ -416,16 +417,45 @@ export function extractCompanyAndTitle(input: FieldInput): {
         if (!title) return false;
         const start = m.index + m[0].indexOf(m[p.title]!);
         add(titles, title, p.weight, source, { span: { representation, start, end: start + m[p.title]!.length } });
-        if (p.company) add(companies, companyFrom(m, p.company, false), p.weight, source);
+        if (p.company && m[p.company]) {
+          const company = companyFrom(m, p.company, false);
+          add(companies, company, p.weight, source);
+          const frame = { title: titleKey(title), company: company ? companyKey(company) : null };
+          const id = JSON.stringify(frame);
+          if (frames.has(id) || frames.size < 128) frames.set(id, frame);
+          else titles.overflow = true;
+        }
         return true;
       });
   for (const { source, text } of sentenceSources.slice(0, 2))
     for (const p of COMPANY_SENTENCES)
       scan(p.re, text, (m) => {
         const company = companyFrom(m, 1, p.strict ?? false);
-        add(companies, company, p.weight, source);
+        add(companies, company, p.weight, p.affiliation ? "body:signature" : source, { fromContent: !p.affiliation });
         return !!company;
       });
+
+  // Signatures: "Stripe Recruiting", "The Datadog Recruiting Team", "Technical Recruiter, Acme".
+  for (const line of [...lines.slice(-8), ...(input.signature ?? "").split("\n").map(line => line.trim())]) {
+    const team = /^(?:the\s+)?(.{2,50}?)\s+(?:recruit(?:ing|ment)|talent(?:\s+acquisition)?|careers|hr|people)(?:\s+team)?$/i.exec(line);
+    if (team) add(companies, cleanCompany(team[1]), 1.5, "body:signature", { fromContent: false });
+    const role = /^(?:senior\s+|lead\s+)?(?:technical\s+)?(?:recruiter|talent\s+partner|talent\s+acquisition[\w ]*|hiring\s+manager|hr\s+[\w ]+),\s*(.{2,50})$/i.exec(line);
+    if (role) add(companies, cleanCompany(role[1]), 2, "body:signature", { fromContent: false });
+  }
+
+  // The sender: an ATS display name is the employer; elsewhere only when it is a department
+  // ("Barclays Recruitment") or the organisation the address belongs to.
+  const display = input.fromName.replace(/\s+(?:via|from|on behalf of)\s+.*$/i, "").trim();
+  const domain = senderDomain(input.fromAddress ?? "");
+  if (display) {
+    const cleaned = cleanCompany(display);
+    if (cleaned) {
+      if (isRecruitingSenderDomain(domain)) add(companies, cleaned, 1.5, "sender:display", { fromContent: false });
+      // "Barclays Recruitment", "Contoso Careers": a hiring department names its organisation. A
+      // plain organisation name ("Career Weekly") may be a newsletter, not an employer.
+      else if (DEPARTMENT.test(` ${display}`)) add(companies, cleaned, 1.5, "sender:display", { fromContent: false });
+    }
+  }
 
   // Subject templates.
   const prefixed = rx(String.raw`^(?:[^:]{0,40}:\s*)?(${SUBJECT_PREFIX})\s*([:\-–|]|\bfor\b|\bto\b)?\s*(?:the\s+)?(.+)$`).exec(subject);
@@ -441,7 +471,10 @@ export function extractCompanyAndTitle(input: FieldInput): {
       add(titles, cleanTitle(at[1]), 2.5, "subject");
       add(companies, cleanCompany(at[2]), 2.5, "subject");
     } else {
-      const pair = splitPair(rest, (v) => matchesDomain(v) || hasCandidate(companies, v));
+      const pair = splitPair(rest, (v) => {
+        const cleaned = cleanCompany(v, false);
+        return !!cleaned && (matchesDomain(cleaned) || hasCandidate(companies, cleaned));
+      });
       if (pair) {
         add(titles, cleanTitle(pair.title), 2.5, "subject");
         add(companies, cleanCompany(pair.company), 2.5, "subject");
@@ -503,28 +536,6 @@ export function extractCompanyAndTitle(input: FieldInput): {
       add(titles, cleanTitle(next), 1.5, "body:layout");
   }
 
-  // Signatures: "Stripe Recruiting", "The Datadog Recruiting Team", "Technical Recruiter, Acme".
-  for (const line of [...lines.slice(-8), ...(input.signature ?? "").split("\n").map(line => line.trim())]) {
-    const team = /^(?:the\s+)?(.{2,50}?)\s+(?:recruit(?:ing|ment)|talent(?:\s+acquisition)?|careers|hr|people)(?:\s+team)?$/i.exec(line);
-    if (team) add(companies, cleanCompany(team[1]), 1.5, "body:signature", { fromContent: false });
-    const role = /^(?:senior\s+|lead\s+)?(?:technical\s+)?(?:recruiter|talent\s+partner|talent\s+acquisition[\w ]*|hiring\s+manager|hr\s+[\w ]+),\s*(.{2,50})$/i.exec(line);
-    if (role) add(companies, cleanCompany(role[1]), 2, "body:signature", { fromContent: false });
-  }
-
-  // The sender: an ATS display name is the employer; elsewhere only when it is a department
-  // ("Barclays Recruitment") or the organisation the address belongs to.
-  const display = input.fromName.replace(/\s+(?:via|from|on behalf of)\s+.*$/i, "").trim();
-  const domain = senderDomain(input.fromAddress ?? "");
-  if (display) {
-    const cleaned = cleanCompany(display);
-    if (cleaned) {
-      if (isRecruitingSenderDomain(domain)) add(companies, cleaned, 1.5, "sender:display", { fromContent: false });
-      // "Barclays Recruitment", "Contoso Careers": a hiring department names its organisation. A
-      // plain organisation name ("Career Weekly") may be a newsletter, not an employer.
-      else if (DEPARTMENT.test(` ${display}`)) add(companies, cleaned, 1.5, "sender:display", { fromContent: false });
-    }
-  }
-
   // The sender's own domain confirms a candidate the message itself names; it never invents one,
   // and it does not re-confirm the sender's display name (that would count one source twice).
   for (const c of companies.values())
@@ -565,5 +576,14 @@ export function extractCompanyAndTitle(input: FieldInput): {
           other.spans.some(long => long.representation === short.representation &&
             long.start <= short.start && long.end > short.end)))) titles.delete(key);
   const decisions = { company: decide(companies), title: decide(titles) };
+  if (decisions.company.value && decisions.title.value) {
+    const bound = [...frames.values()].filter(frame => frame.title === titleKey(decisions.title.value!));
+    // An explicitly bound role cannot be reassigned to an unrelated winning sender/company.
+    // A rejected employer capture is also insufficient evidence for such a reassignment.
+    const structuredPair = titles.get(titleKey(decisions.title.value))?.evidence.has("structured:hint") &&
+      companies.get(companyKey(decisions.company.value))?.evidence.has("structured:hint");
+    if (!structuredPair && bound.length && !bound.some(frame => frame.company === companyKey(decisions.company.value!)))
+      decisions.title = { ...decisions.title, state: "AMBIGUOUS", value: null };
+  }
   return { company: decisions.company.value, title: decisions.title.value, decisions };
 }

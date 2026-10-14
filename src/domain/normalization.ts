@@ -12,7 +12,7 @@ export function normalizedText(value: string): string {
 
 /** Legal-form suffixes that do not distinguish one employer from another. */
 const LEGAL_SUFFIX =
-  /[\s,]+(?:inc|incorporated|llc|l\s?l\s?c|ltd|limited|corp|corporation|co|plc|llp|lp|gmbh|ag|sa|sas|srl|spa|bv|nv|oy|ab|kk|pty|pte|holdings?)$/;
+  /[\s,]+(?:inc|incorporated|llc|l\s?l\s?c|ltd|limited|corp|corporation|co|plc|llp|lp|gmbh|ag|sa|sas|srl|spa|bv|nv|oy|ab|kk|pty|pte)$/;
 
 /**
  * Comparison key for an employer name. "Acme", "ACME", "Acme, Inc." and "The Acme Co." are the

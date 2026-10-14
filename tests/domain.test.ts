@@ -152,11 +152,12 @@ test("a verification code is still skipped when the subject also says applying",
 
 test("companyKey merges legal-form and case variants but never a prefix", async () => {
   const { companyKey } = await import("../src/domain/normalization.ts");
-  for (const variant of ["ACME", "Acme, Inc.", "The Acme Co.", "Acme Inc", "acme  llc", "Acme Holdings Ltd"])
+  for (const variant of ["ACME", "Acme, Inc.", "The Acme Co.", "Acme Inc", "acme  llc"])
     assert.equal(companyKey(variant), "acme", variant);
   assert.equal(companyKey("Johnson & Johnson"), companyKey("Johnson and Johnson"));
   assert.equal(companyKey("McDonald's"), "mcdonalds");
   assert.notEqual(companyKey("Acme"), companyKey("Acme Robotics"));
+  assert.notEqual(companyKey("Acme"), companyKey("Acme Holdings Ltd"));
   assert.equal(companyKey("Company"), "company");
   assert.equal(companyKey("Inc."), "inc");
 });
