@@ -149,6 +149,8 @@ interface Context {
   trustedSender: boolean;
   /** The Gmail mailbox that received this message; null for forwarded files. */
   mailboxId: string | null;
+  senderDomain: string;
+  senderVerified: boolean;
 }
 
 export async function ingestOriginal(
@@ -224,13 +226,13 @@ async function run(
   ) => existing
     ? tx.query(
         `UPDATE source_artifacts SET body_access_decision=$3, subject_redacted=$4, original_key=$5,
-          extractor_version=$6, original_message_at=$7, sender_authenticated=$8 WHERE id=$1 AND user_id=$2`,
-        [artifactId, userId, decision, subject, key, extractorVersion, usableDate, trustedSender],
+          extractor_version=$6, original_message_at=$7, sender_authenticated=$8,sender_domain=$9,sender_verified=$10 WHERE id=$1 AND user_id=$2`,
+        [artifactId, userId, decision, subject, key, extractorVersion, usableDate, trustedSender, decision === "SKIPPED_SENSITIVE" ? null : fromDomain.toLowerCase(), source.kind === "GMAIL" && source.senderAuthenticated === true],
       )
     : tx.query(
       `INSERT INTO source_artifacts (id, user_id, source_kind, mailbox_id, provider_message_id, original_rfc_message_id,
-         source_fingerprint, original_message_at, envelope_message_at, body_access_decision, extractor_version, original_key, subject_redacted,sender_authenticated)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+         source_fingerprint, original_message_at, envelope_message_at, body_access_decision, extractor_version, original_key, subject_redacted,sender_authenticated,sender_domain,sender_verified)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [
         artifactId,
         userId,
@@ -246,6 +248,8 @@ async function run(
         key,
         subject,
         trustedSender,
+        decision === "SKIPPED_SENSITIVE" ? null : fromDomain.toLowerCase(),
+        source.kind === "GMAIL" && source.senderAuthenticated === true,
       ],
     );
   const decision =
@@ -316,6 +320,8 @@ async function run(
     signal,
     trustedSender,
     mailboxId: source.kind === "GMAIL" ? source.mailboxId : null,
+    senderDomain: fromDomain.toLowerCase(),
+    senderVerified: source.kind === "FORWARDED_EML" || source.senderAuthenticated === true,
   };
 
   if (signal.reasons.includes("conflicting-alternatives"))
@@ -445,6 +451,7 @@ async function apply(
   let strongOpening = false;
   let createdOpening = false;
   let directAttemptId: string | null = null;
+  const calendarPrior = f.calendar ? await latestCalendarRevision(tx,userId,c.signalId,f.calendar.uidKey) : null;
 
   // An accepted calendar UID can link later revisions without inventing applicant contacts.
   // Explicit application IDs take precedence; conflicting identities never fall back to a UID.
@@ -457,6 +464,9 @@ async function apply(
         known.map((k) => k.openingId),
       );
     if (known[0]) {
+      if (!c.senderVerified || !f.calendar.organizerDomain || !calendarPrior?.calendar.organizerDomain ||
+          f.calendar.organizerDomain !== calendarPrior.calendar.organizerDomain)
+        return fail("CALENDAR_REVISION", known.map(k=>k.attemptId),known.map(k=>k.openingId));
       const { attemptId, openingId: knownOpening } = known[0];
       const opening = (await loadOpenings(tx, userId)).find((o) => o.id === knownOpening)!;
       // A revision may omit the company or title, but must not name a different one.
@@ -563,6 +573,8 @@ async function apply(
     sourceType: c.sourceType,
     origin: "AUTO" as const,
     dedupeKey: `${attemptId}:${kind}:${c.evidenceKey}`,
+    signalId: c.signalId,
+    ...(kind === "INTERVIEW_SCHEDULED" && f.calendar ? {calendar: f.calendar, senderDomain: c.senderDomain} : {}),
   });
 
   if (isConfirmation) {
@@ -601,7 +613,7 @@ async function apply(
         )
       : null;
     if (prior?.rows[0]) {
-      await linkEvidence(tx, userId, prior.rows[0].id, c.artifactId);
+      await linkEvidence(tx, userId, prior.rows[0].id, c.artifactId, c.signalId);
       await reproject(tx, userId, attemptId);
     } else await recordEvent(tx, event(attemptId), c.artifactId);
     return {
@@ -620,11 +632,16 @@ async function apply(
     externalApplicationId: f.externalApplicationId,
     phoneLookupKey: null,
   };
+  if (directAttemptId && !f.externalApplicationId && f.calendar && f.applicantEmail) {
+    const identity = resolveUpdate(openingId, update, attempts);
+    if (identity.kind !== "MATCH" || identity.id !== directAttemptId)
+      return fail("CALENDAR_REVISION", attempts.map(a=>a.id), [openingId]);
+  }
   const decision = directAttemptId
     ? ({
         kind: "MATCH",
         id: directAttemptId,
-        reason: "Exact application ID",
+        reason: f.externalApplicationId ? "Exact application ID" : "Accepted calendar identity",
       } as const)
     : resolveUpdate(openingId, update, attempts);
   if (decision.kind !== "MATCH") {
@@ -652,14 +669,17 @@ async function apply(
 
   // Calendar revisions: a lower SEQUENCE, or one belonging to another attempt, never applies; the
   // same SEQUENCE is a repeat of the accepted revision only if every calendar fact agrees.
-  const prior = f.calendar && (await latestCalendarRevision(tx, userId, c.signalId, f.calendar.uidKey));
+  const prior = calendarPrior;
   if (f.calendar && prior) {
+    if (f.calendar.organizerDomain !== prior.calendar.organizerDomain ||
+        (prior.senderDomain && prior.senderDomain !== c.senderDomain))
+      return fail("CALENDAR_REVISION", [decision.id], [openingId]);
     if (prior.attemptId !== decision.id || f.calendar.sequence < prior.calendar.sequence)
       return fail("CALENDAR_REVISION", [decision.id, prior.attemptId], [openingId]);
     if (f.calendar.sequence === prior.calendar.sequence) {
       if (!sameCalendarRevision(f.calendar, prior.calendar))
         return fail("CALENDAR_REVISION", [decision.id], [openingId]);
-      await linkEvidence(tx, userId, prior.eventId, c.artifactId);
+      await linkEvidence(tx, userId, prior.eventId, c.artifactId, c.signalId);
       return {
         status: "APPLIED",
         attemptId: decision.id,
@@ -710,10 +730,13 @@ export async function reconcileWaitingUpdates(
     source_fingerprint: string;
     sender_authenticated: boolean;
     mailbox_id: string | null;
+    sender_domain: string | null;
+    sender_verified: boolean;
     confidence: "HIGH" | "LOW";
   }>(
     `SELECT r.id AS review_id, s.id AS signal_id, s.event_kind, s.fields, s.confidence, a.id AS artifact_id, a.source_kind,
-            a.original_message_at, a.original_key, a.source_fingerprint, a.sender_authenticated, a.mailbox_id
+            a.original_message_at, a.original_key, a.source_fingerprint, a.sender_authenticated, a.mailbox_id,
+            a.sender_domain,a.sender_verified
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
        JOIN source_artifacts a ON a.id = r.source_artifact_id AND a.user_id = r.user_id
@@ -750,6 +773,8 @@ export async function reconcileWaitingUpdates(
         occurredAt,
         trustedSender: row.sender_authenticated,
         mailboxId: row.mailbox_id,
+        senderDomain: row.sender_domain ?? "",
+        senderVerified: row.source_kind === "FORWARDED_EML" || row.sender_verified,
       },
       false,
     );

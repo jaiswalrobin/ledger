@@ -5,6 +5,9 @@ import { extractSignal } from "../src/ingestion/extract.ts";
 import { originalKeyOf, ingestOriginal } from "../src/server/pipeline.ts";
 import { buildEml } from "./helpers/eml.ts";
 import { createTestDb, seedMailbox, seedUser } from "./helpers/db.ts";
+import { getOpening } from "../src/server/queries.ts";
+import { resolveReviewCreate } from "../src/server/actions.ts";
+import { createHash, randomUUID } from "node:crypto";
 
 function calendar(sequence = 1, start = "20261021T100000Z", extra = "", method = "REQUEST") {
   return ["BEGIN:VCALENDAR", "VERSION:2.0", `METHOD:${method}`, "BEGIN:VEVENT", "UID:private-calendar-uid@example.com",
@@ -60,7 +63,7 @@ it("calendar revisions deduplicate, reject older/conflicting versions, and keep 
     const userId = await seedUser(t.db), mailboxId = await seedMailbox(t.db, userId);
     let sequence = 0;
     const ingest = async (original: Awaited<ReturnType<typeof parsed>>) => ingestOriginal(t.db, {
-      userId, source: { kind: "GMAIL", mailboxId, providerMessageId: `cal-${++sequence}` }, original,
+      userId, source: { kind: "GMAIL", mailboxId, providerMessageId: `cal-${++sequence}`, senderAuthenticated:true }, original,
       observedAt: new Date("2026-10-20T12:00:00Z"),
     });
     const [confirmation] = await parseEml(new TextEncoder().encode(buildEml({
@@ -84,4 +87,37 @@ it("calendar revisions deduplicate, reject older/conflicting versions, and keep 
     const secret = await ingest(await parsed(calendar(5, undefined, "DESCRIPTION:Your verification code is 123456")));
     assert.equal(secret.status, "SKIPPED_SENSITIVE");
   } finally { await t.close(); }
+});
+
+it("calendar identity cannot override a submitted contact or a changed organizer, and provenance is version-specific", async () => {
+  const t = await createTestDb();
+  try {
+    const userId=await seedUser(t.db),mailboxId=await seedMailbox(t.db,userId);
+    let n=0;
+    const ingest=(original:Awaited<ReturnType<typeof parsed>>)=>ingestOriginal(t.db,{userId,source:{kind:"GMAIL",mailboxId,providerMessageId:`identity-${++n}`,senderAuthenticated:true},original,observedAt:new Date("2026-10-20T12:00:00Z")});
+    const receipt=async(id:string,email:string)=>(await parseEml(new TextEncoder().encode(buildEml({from:"Acme Careers <careers@acme.example>",to:email,subject:"Application received",date:"Mon, 05 Oct 2026 09:30:00 +0000",text:`We received your application for the Backend Engineer role at Acme.\nApplication ID: ${id}\nApplicant email: ${email}`}))))[0]!;
+    const first=await ingest(await receipt("APP-12345","a@example.com"));
+    assert.equal(first.status,"APPLIED"); if(first.status!=="APPLIED")return;
+    const second=await ingest(await receipt("APP-67890","b@example.com"));
+    assert.equal(second.status,"REVIEW");if(second.status!=="REVIEW")return;
+    await resolveReviewCreate(t.db,userId,second.reviewId,{openingId:first.openingId});
+    assert.equal((await ingest(await parsed(calendar(1)))).status,"APPLIED");
+    const contradict=await ingest(await parsed(calendar(2),"REQUEST","Applicant email: b@example.com"));
+    assert.equal(contradict.status==="REVIEW"&&contradict.reason,"CALENDAR_REVISION");
+    const organizer=await ingest(await parsed(calendar(2).replace("recruiting@acme.example","other@unrelated.example"),"REQUEST","A new time."));
+    assert.equal(organizer.status==="REVIEW"&&organizer.reason,"CALENDAR_REVISION");
+    const shadowUid="dismissed-proposal@example.com";
+    const artifact=(await t.db.query<{id:string}>("SELECT id FROM source_artifacts WHERE user_id=$1 AND provider_message_id='identity-3'",[userId])).rows[0]!;
+    await t.db.query(`INSERT INTO extracted_signals(id,user_id,source_artifact_id,extractor_version,event_kind,fields,confidence,processing_state) VALUES($1,$2,$3,'old-proposal',NULL,$4::jsonb,'LOW','DISMISSED')`,[randomUUID(),userId,artifact.id,JSON.stringify({calendar:{uidKey:createHash("sha256").update(shadowUid).digest("hex"),sequence:1}})]);
+    const stale=await ingest(await parsed(calendar(2).replace("private-calendar-uid@example.com",shadowUid),"REQUEST","A new time."));
+    assert.equal(stale.status==="REVIEW"&&stale.reason,"AMBIGUOUS_ATTEMPT");
+    assert.equal((await ingest(await parsed(calendar(2),"REQUEST","A new time."))).status,"APPLIED");
+    const detail=await getOpening(t.db,userId,first.openingId);
+    const events=detail!.attempts.find(a=>a.id===first.attemptId)!.events.filter(e=>e.kind==="INTERVIEW_SCHEDULED");
+    assert.equal(events.length,2);
+    assert.equal(events.filter(e=>e.currentSchedule).length,1);
+    assert.equal(events.find(e=>e.currentSchedule)!.calendarRevision,2);
+    assert.equal(events.find(e=>e.currentSchedule)!.scheduledFor,"2026-10-21T10:00:00.000Z");
+    assert.ok((await t.db.query("SELECT signal_id FROM event_evidence WHERE artifact_id=$1",[artifact.id])).rows.every(r=>r.signal_id));
+  } finally {await t.close();}
 });

@@ -124,6 +124,7 @@ interface ReviewContext {
   fields: ExtractedFields;
   occurredAt: string | null;
   evidenceKey: string;
+  senderDomain: string | null;
 }
 
 async function loadOpenReview(
@@ -141,9 +142,10 @@ async function loadOpenReview(
     original_message_at: unknown;
     original_key: string | null;
     source_fingerprint: string;
+    sender_domain: string | null;
   }>(
     `SELECT r.state, s.id AS signal_id, s.event_kind, s.fields, a.id AS artifact_id, a.source_kind, a.original_message_at,
-            a.original_key, a.source_fingerprint
+            a.original_key, a.source_fingerprint,a.sender_domain
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
        JOIN source_artifacts a ON a.id = r.source_artifact_id AND a.user_id = r.user_id
@@ -163,6 +165,7 @@ async function loadOpenReview(
       ? new Date(row.original_message_at as string | Date).toISOString()
       : null,
     evidenceKey: row.original_key ?? row.source_fingerprint,
+    senderDomain: row.sender_domain,
   };
 }
 
@@ -274,6 +277,8 @@ export async function resolveReviewAssign(
         sourceType: ctx.sourceKind,
         origin: "MANUAL",
         dedupeKey: `${attemptId}:${kind}:${ctx.evidenceKey}`,
+        signalId: ctx.signalId,
+        ...(kind === "INTERVIEW_SCHEDULED" && ctx.fields.calendar ? {calendar:ctx.fields.calendar,senderDomain:ctx.senderDomain ?? ""}:{}),
       },
       ctx.artifactId,
     );
@@ -345,6 +350,8 @@ export async function resolveReviewCreate(
         sourceType: ctx.sourceKind,
         origin: "MANUAL",
         dedupeKey: `${attemptId}:${kind}:${ctx.evidenceKey}`,
+        signalId: ctx.signalId,
+        ...(kind === "INTERVIEW_SCHEDULED" && ctx.fields.calendar ? {calendar:ctx.fields.calendar,senderDomain:ctx.senderDomain ?? ""}:{}),
       },
       ctx.artifactId,
     );

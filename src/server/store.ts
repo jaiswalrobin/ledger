@@ -218,6 +218,9 @@ export interface NewEvent {
   origin: "AUTO" | "MANUAL";
   dedupeKey: string;
   correction?: { stage: Stage; outcome: Outcome };
+  signalId?: string;
+  calendar?: CalendarFacts;
+  senderDomain?: string;
 }
 
 /** Validate automatic changes before accepting evidence, including late-arriving conflicts. */
@@ -275,8 +278,9 @@ export async function insertEvent(
 ): Promise<{ id: string; created: boolean }> {
   const id = randomUUID();
   const { rows } = await db.query<{ id: string }>(
-    `INSERT INTO application_events (id, user_id, attempt_id, event_kind, occurred_at, review_state, source_type, origin, dedupe_key, correction_stage, correction_outcome)
-     VALUES ($1,$2,$3,$4,$5,'ACCEPTED',$6,$7,$8,$9,$10)
+    `INSERT INTO application_events (id, user_id, attempt_id, event_kind, occurred_at, review_state, source_type, origin, dedupe_key, correction_stage, correction_outcome,
+      calendar_uid_key,calendar_sequence,calendar_method,calendar_status,calendar_organizer_domain,calendar_sender_domain,scheduled_for)
+     VALUES ($1,$2,$3,$4,$5,'ACCEPTED',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
      ON CONFLICT (user_id, dedupe_key) DO NOTHING RETURNING id`,
     [
       id,
@@ -289,6 +293,9 @@ export async function insertEvent(
       e.dedupeKey,
       e.correction?.stage ?? null,
       e.correction?.outcome ?? null,
+      e.calendar?.uidKey ?? null, e.calendar?.sequence ?? null, e.calendar?.method ?? null,
+      e.calendar?.status ?? null, e.calendar?.organizerDomain ?? null, e.senderDomain ?? null,
+      e.calendar?.scheduledFor ?? null,
     ],
   );
   if (rows.length) return { id, created: true };
@@ -304,11 +311,12 @@ export async function linkEvidence(
   userId: string,
   eventId: string,
   artifactId: string,
+  signalId?: string,
 ): Promise<void> {
   await db.query(
-    `INSERT INTO event_evidence (user_id, event_id, artifact_id, evidence_kind) VALUES ($1,$2,$3,'SOURCE_EMAIL')
+    `INSERT INTO event_evidence (user_id, event_id, artifact_id, evidence_kind,signal_id) VALUES ($1,$2,$3,'SOURCE_EMAIL',$4)
      ON CONFLICT DO NOTHING`,
-    [userId, eventId, artifactId],
+    [userId, eventId, artifactId, signalId ?? null],
   );
 }
 
@@ -366,55 +374,26 @@ export async function recordEvent(
   artifactId: string | null,
 ): Promise<{ id: string; created: boolean }> {
   const result = await insertEvent(db, e);
-  if (artifactId) await linkEvidence(db, e.userId, result.id, artifactId);
+  if (artifactId) await linkEvidence(db, e.userId, result.id, artifactId, e.signalId);
   await reproject(db, e.userId, e.attemptId);
   return result;
 }
 
-// ---- calendar revisions ---------------------------------------------------------------------
-// Both lookups repeat the partial-index predicate (fields ? 'calendar') so the planner can use
-// idx_signals_calendar_uid.
-
-/** Attempts whose accepted events came from an invitation with this calendar UID. */
-export async function attemptsForCalendarUid(
-  db: Db,
-  userId: string,
-  excludeSignalId: string,
-  uidKey: string,
-): Promise<{ attemptId: string; openingId: string }[]> {
-  const { rows } = await db.query<{ attempt_id: string; opening_id: string }>(
-    `SELECT DISTINCT e.attempt_id, a.job_opening_id AS opening_id
-       FROM extracted_signals s
-       JOIN event_evidence ev ON ev.artifact_id = s.source_artifact_id AND ev.user_id = s.user_id
-       JOIN application_events e ON e.id = ev.event_id AND e.user_id = ev.user_id
-       JOIN application_attempts a ON a.id = e.attempt_id AND a.user_id = e.user_id
-      WHERE s.user_id = $1 AND s.id <> $2 AND e.review_state = 'ACCEPTED'
-        AND s.fields ? 'calendar' AND s.fields->'calendar'->>'uidKey' = $3`,
-    [userId, excludeSignalId, uidKey],
-  );
-  return rows.map((r) => ({ attemptId: r.attempt_id, openingId: r.opening_id }));
+// ---- calendar revisions: read accepted event facts, never arbitrary historical proposals. ----
+export async function attemptsForCalendarUid(db: Db,userId: string,_excludeSignalId: string,uidKey: string): Promise<{attemptId:string;openingId:string}[]> {
+  const {rows}=await db.query<{attempt_id:string;opening_id:string}>(
+    `SELECT DISTINCT e.attempt_id,a.job_opening_id AS opening_id FROM application_events e
+     JOIN application_attempts a ON a.id=e.attempt_id AND a.user_id=e.user_id
+     WHERE e.user_id=$1 AND e.calendar_uid_key=$2 AND e.review_state='ACCEPTED'`,[userId,uidKey]);
+  return rows.map(r=>({attemptId:r.attempt_id,openingId:r.opening_id}));
 }
-
-/** The accepted revision of this calendar UID with the highest SEQUENCE, if any. */
-export async function latestCalendarRevision(
-  db: Db,
-  userId: string,
-  excludeSignalId: string,
-  uidKey: string,
-): Promise<{ eventId: string; attemptId: string; calendar: CalendarFacts } | null> {
-  const { rows } = await db.query<{ event_id: string; attempt_id: string; calendar: CalendarFacts }>(
-    `SELECT e.id AS event_id, e.attempt_id, s.fields->'calendar' AS calendar
-       FROM extracted_signals s
-       JOIN event_evidence ev ON ev.artifact_id = s.source_artifact_id AND ev.user_id = s.user_id
-       JOIN application_events e ON e.id = ev.event_id AND e.user_id = ev.user_id
-      WHERE s.user_id = $1 AND s.id <> $2 AND e.review_state = 'ACCEPTED'
-        AND s.fields ? 'calendar' AND s.fields->'calendar'->>'uidKey' = $3
-      ORDER BY (s.fields->'calendar'->>'sequence')::bigint DESC
-      LIMIT 1`,
-    [userId, excludeSignalId, uidKey],
-  );
-  const row = rows[0];
-  return row ? { eventId: row.event_id, attemptId: row.attempt_id, calendar: row.calendar } : null;
+export async function latestCalendarRevision(db: Db,userId: string,_excludeSignalId: string,uidKey: string): Promise<{eventId:string;attemptId:string;calendar:CalendarFacts;senderDomain:string|null}|null> {
+  const {rows}=await db.query<{id:string;attempt_id:string;calendar_uid_key:string;calendar_sequence:number;calendar_method:string;calendar_status:string;calendar_organizer_domain:string|null;calendar_sender_domain:string|null;scheduled_for:unknown}>(
+    `SELECT id,attempt_id,calendar_uid_key,calendar_sequence,calendar_method,calendar_status,calendar_organizer_domain,calendar_sender_domain,scheduled_for
+     FROM application_events WHERE user_id=$1 AND calendar_uid_key=$2 AND review_state='ACCEPTED'
+     ORDER BY calendar_sequence DESC,occurred_at DESC,id LIMIT 1`,[userId,uidKey]);
+  const r=rows[0];
+  return r?{eventId:r.id,attemptId:r.attempt_id,senderDomain:r.calendar_sender_domain,calendar:{uidKey:r.calendar_uid_key,sequence:Number(r.calendar_sequence),method:r.calendar_method,status:r.calendar_status,organizerDomain:r.calendar_organizer_domain,scheduledFor:r.scheduled_for?iso(r.scheduled_for):null}}:null;
 }
 
 const CALENDAR_IDENTITY = ["uidKey", "sequence", "method", "status", "scheduledFor", "organizerDomain"] as const;

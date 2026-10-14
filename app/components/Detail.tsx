@@ -150,6 +150,11 @@ export function DetailScreen({
                             ? "Confirmed by you"
                             : (event.evidence[0]?.subject ?? "Supported by email evidence")}
                         </p>
+                        {event.scheduledFor && (
+                          <p className={event.currentSchedule ? "activity" : "small muted"}>
+                            {event.currentSchedule ? "Current interview time" : "Interview time in this update"}: {fullDate(event.scheduledFor)}
+                          </p>
+                        )}
                         <small>
                           <span className={`state ${event.reviewState.toLowerCase()}`}>
                             {event.reviewState === "ACCEPTED" ? "Accepted" : label(event.reviewState)}

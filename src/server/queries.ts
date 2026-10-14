@@ -173,6 +173,9 @@ export interface EventView {
   reviewState: "PROPOSED" | "ACCEPTED" | "REJECTED" | "SUPERSEDED";
   origin: "AUTO" | "MANUAL";
   evidence: EvidenceView[];
+  scheduledFor: string | null;
+  calendarRevision: number | null;
+  currentSchedule: boolean;
 }
 
 export interface OpeningDetail extends Omit<OpeningView, "attempts"> {
@@ -221,8 +224,11 @@ export async function getOpening(
     occurred_at: unknown;
     review_state: EventView["reviewState"];
     origin: "AUTO" | "MANUAL";
+    calendar_uid_key: string | null;
+    calendar_sequence: number | null;
+    scheduled_for: unknown;
   }>(
-    `SELECT id, attempt_id, event_kind, occurred_at, review_state, origin FROM application_events
+    `SELECT id, attempt_id, event_kind, occurred_at, review_state, origin,calendar_uid_key,calendar_sequence,scheduled_for FROM application_events
       WHERE user_id = $1 AND attempt_id = ANY($2::uuid[]) ORDER BY occurred_at, id`,
     [userId, ids],
   );
@@ -256,6 +262,11 @@ export async function getOpening(
     evidenceByEvent.set(e.event_id, list);
   }
   const eventViews = new Map<string, EventView[]>();
+  const currentCalendars = new Map<string, (typeof events.rows)[number]>();
+  for (const e of events.rows) if (e.review_state === "ACCEPTED" && e.calendar_uid_key) {
+    const key = `${e.attempt_id}:${e.calendar_uid_key}`, current = currentCalendars.get(key);
+    if (!current || Number(e.calendar_sequence) >= Number(current.calendar_sequence)) currentCalendars.set(key,e);
+  }
   for (const e of events.rows) {
     const list = eventViews.get(e.attempt_id) ?? [];
     list.push({
@@ -265,6 +276,9 @@ export async function getOpening(
       reviewState: e.review_state,
       origin: e.origin,
       evidence: evidenceByEvent.get(e.id) ?? [],
+      scheduledFor: e.scheduled_for ? iso(e.scheduled_for) : null,
+      calendarRevision: e.calendar_sequence === null ? null : Number(e.calendar_sequence),
+      currentSchedule: !!e.calendar_uid_key && currentCalendars.get(`${e.attempt_id}:${e.calendar_uid_key}`)?.id === e.id,
     });
     eventViews.set(e.attempt_id, list);
   }
