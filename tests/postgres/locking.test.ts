@@ -210,7 +210,7 @@ test("real PostgreSQL: a populated legacy schema upgrades without losing company
         join(directory, file),
         await readFile(join(source, file)),
       );
-    assert.equal((await applyMigrations(isolated, directory)).length, 7);
+    assert.equal((await applyMigrations(isolated, directory)).length, 8);
     assert.equal(
       (await isolated.query("SELECT id FROM companies")).rows.length,
       2,
