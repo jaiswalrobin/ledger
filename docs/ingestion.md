@@ -103,9 +103,16 @@ submitted; courtesy lines such as "thank you for your interest" also open talent
 newsletter mail, so they never count alone. Unsubmitted drafts ("complete your application") and
 talent-community sign-ups are not confirmations.
 
-**Company and title** come from candidates in `src/ingestion/fields.ts`. Each source proposes
-safe values. Multiple rules, repeated mentions, and wrapped/flattened representations from the same
-source contribute only their strongest support. Credible conflicting names or roles produce an
+**Company and title** come from candidates in `src/ingestion/fields.ts`. Each candidate records
+the sources that support it, named explicitly at every call (`subject`, `body:label`,
+`body:sentence`, `body:calendar`, `body:layout`, `body:signature`, `sender:display`, `domain`).
+Support is the sum over distinct sources of each source's strongest mention. The subject is one
+statement, so all rules reading it share one source. In the body, different mechanisms corroborate
+(a "Job Title:" line and a sentence naming the same role), while repeated mentions and the
+wrapped/flattened copies of one sentence count once, so repetition cannot outweigh an explicit field.
+Employer spellings that differ only in case, punctuation or legal form ("Acme", "ACME",
+"Acme, Inc.") share one candidate via `companyKey()`; a shared prefix ("Acme" / "Acme Robotics")
+never merges. Credible conflicting names or roles produce an
 `AMBIGUOUS` decision and a `CONFLICTING_FIELDS` review item before any opening or attempt is created.
 The persisted diagnostics contain bounded sanitized candidates and source categories, never source
 sentences. Scores are heuristic support weights, not calibrated probabilities. Candidate and span

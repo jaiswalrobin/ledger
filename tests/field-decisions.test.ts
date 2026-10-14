@@ -55,3 +55,14 @@ it("a shared prefix is not the same employer", () => {
   const result = fields("We received your application.\nCompany: Acme\nFor the Frontend Engineer role at Acme Robotics.");
   assert.equal(result.decisions.company.state, "AMBIGUOUS");
 });
+
+it("independent mechanisms corroborate; repeats and wrapped copies of one do not", () => {
+  const label = fields("We received your application.\nCompany: Acme\nJob Title: Backend Engineer");
+  const both = fields("We received your application.\nCompany: Acme\nJob Title: Backend Engineer\nThank you for applying for the Backend Engineer position at Acme.");
+  const repeated = fields("We received your application.\nCompany: Acme\nJob Title: Backend Engineer\n" +
+    "Thank you for applying for the Backend Engineer position at Acme.\n".repeat(20));
+  const score = (r: typeof label) => r.decisions.title.candidates[0]!.score;
+  assert.ok(score(both) > score(label));
+  assert.deepEqual(both.decisions.title.candidates[0]!.sources, ["body:label", "body:sentence"]);
+  assert.deepEqual(repeated.decisions, both.decisions);
+});

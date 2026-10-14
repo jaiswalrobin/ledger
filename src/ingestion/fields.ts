@@ -250,8 +250,34 @@ function scan(re: RegExp, text: string, accept: (m: RegExpExecArray) => boolean)
   }
 }
 
-/** Each representation/rule of the same source contributes only its strongest support. */
-function addCandidate(map: Candidates, value: string | null, weight: number, source: string, fromContent: boolean, span?: { representation: string; start: number; end: number }) {
+/**
+ * Where a candidate was read. Support is the sum over distinct sources of each source's strongest
+ * mention, so:
+ * - the subject is one statement: every rule that reads it shares one source;
+ * - in the body, different mechanisms (a labelled line, a sentence, a calendar line, a job-board
+ *   block, a signature) corroborate each other;
+ * - repeats of one mechanism, and the wrapped and flattened copies of one sentence, count once.
+ * Repetition therefore cannot outweigh an explicit field, and agreement still adds up.
+ */
+type Source =
+  | "structured:hint"
+  | "subject"
+  | "body:label"
+  | "body:sentence"
+  | "body:calendar"
+  | "body:layout"
+  | "body:signature"
+  | "sender:display"
+  | "domain";
+
+/** `fromContent` is false for the sender's display name and signatures, which only corroborate. */
+function add(
+  map: Candidates,
+  value: string | null,
+  weight: number,
+  source: Source,
+  { fromContent = true, span }: { fromContent?: boolean; span?: Span } = {},
+) {
   if (!value || weight <= 0) return;
   const key = map.keyOf(value);
   let candidate = map.get(key);
@@ -303,10 +329,6 @@ export function extractCompanyAndTitle(input: FieldInput): {
 } {
   const titles = newCandidates(titleKey);
   const companies = newCandidates(companyKey);
-  let sourceFamily = "structured";
-  let span: { representation: string; start: number; end: number } | undefined;
-  const add = (map: Candidates, value: string | null, weight: number, fromContent = true) =>
-    addCandidate(map, value, weight, sourceFamily, fromContent, span);
   const { subject, body } = input;
   const flat = body.replace(/\s+/g, " ");
   const lines = body.split("\n").map((l) => l.trim());
@@ -315,16 +337,15 @@ export function extractCompanyAndTitle(input: FieldInput): {
     (input.companyAliases ?? []).some(alias => companyKey(alias.company) === companyKey(value) &&
       hints.includes(parseDomain(alias.domain, { allowPrivateDomains: true }).domainWithoutSuffix ?? ""));
 
-  for (const h of input.titleHints ?? []) add(titles, cleanTitle(h.value), h.weight);
-  for (const h of input.companyHints ?? []) add(companies, cleanCompany(h.value), h.weight);
+  for (const h of input.titleHints ?? []) add(titles, cleanTitle(h.value), h.weight, "structured:hint");
+  for (const h of input.companyHints ?? []) add(companies, cleanCompany(h.value), h.weight, "structured:hint");
 
-  sourceFamily = "body";
   // Labelled fields: "Job Title: ...", "Company: ...".
   for (const line of lines) {
     const label = /^(job\s*title|position(?:\s*title)?|role|title|job|company|employer|organi[sz]ation)\s*[:\-–]\s*(.{2,100})$/i.exec(line);
     if (!label) continue;
-    if (/company|employer|organi/i.test(label[1]!)) add(companies, cleanCompany(label[2], false, "label"), 4);
-    else add(titles, cleanTitle(label[2], "label"), 4);
+    if (/company|employer|organi/i.test(label[1]!)) add(companies, cleanCompany(label[2], false, "label"), 4, "body:label");
+    else add(titles, cleanTitle(label[2], "label"), 4, "body:label");
   }
 
   // A company capture stops at " and" (END). In "Barnes and Noble" the name continues.
@@ -340,34 +361,32 @@ export function extractCompanyAndTitle(input: FieldInput): {
   // Employer-agnostic requisition labels identify a title, never an application attempt ID.
   for (const line of lines) {
     const reference = /^(?:ref(?:erence)?|requisition(?: id)?)\s*:\s*[A-Z]{0,4}[- ]?\d{3,12}\s*[-–]\s*(.{2,100})$/i.exec(line);
-    if (reference) add(titles, cleanTitle(reference[1], "label"), 3);
+    if (reference) add(titles, cleanTitle(reference[1], "label"), 3, "body:label");
   }
   // Role sentences, over the hard-wrapped lines and the flattened text.
-  for (const { id, representation, text } of [{ id: "subject", representation: "subject", text: subject }, { id: "body", representation: "body-lines", text: body }, { id: "body", representation: "body-flat", text: flat }]) {
-    sourceFamily = id;
+  const sentenceSources = [
+    { source: "subject", representation: "subject", text: subject },
+    { source: "body:sentence", representation: "body-lines", text: body },
+    { source: "body:sentence", representation: "body-flat", text: flat },
+  ] as const;
+  for (const { source, representation, text } of sentenceSources)
     for (const p of ROLE_SENTENCES)
       scan(p.re, text, (m) => {
         const title = cleanTitle(m[p.title]);
         if (!title) return false;
         const start = m.index + m[0].indexOf(m[p.title]!);
-        span = { representation, start, end: start + m[p.title]!.length };
-        add(titles, title, p.weight);
-        span = undefined;
-        if (p.company) add(companies, cleanCompany(fullCompany(m, p.company), false), p.weight);
+        add(titles, title, p.weight, source, { span: { representation, start, end: start + m[p.title]!.length } });
+        if (p.company) add(companies, cleanCompany(fullCompany(m, p.company), false), p.weight, source);
         return true;
       });
-  }
-  for (const { id, text } of [{ id: "subject", text: subject }, { id: "body", text: body }]) {
-    sourceFamily = id;
+  for (const { source, text } of sentenceSources.slice(0, 2))
     for (const p of COMPANY_SENTENCES)
       scan(p.re, text, (m) => {
         const company = cleanCompany(fullCompany(m, 1), p.strict ?? false);
-        add(companies, company, p.weight);
+        add(companies, company, p.weight, source);
         return !!company;
       });
 
-  }
-  sourceFamily = "subject";
   // Subject templates.
   const prefixed = rx(String.raw`^(?:[^:]{0,40}:\s*)?(${SUBJECT_PREFIX})\s*([:\-–|]|\bfor\b|\bto\b)?\s*(?:the\s+)?(.+)$`).exec(subject);
   let prefixedUsed = false;
@@ -379,18 +398,18 @@ export function extractCompanyAndTitle(input: FieldInput): {
     const toEmployer = /\bto$/i.test(prefixed[1]!) || /^to$/i.test(prefixed[2] ?? "");
     const at = /^(.+?)\s+(?:job\s+)?(?:at|@|with)\s+(.+)$/i.exec(rest);
     if (at) {
-      add(titles, cleanTitle(at[1]), 2.5);
-      add(companies, cleanCompany(at[2]), 2.5);
+      add(titles, cleanTitle(at[1]), 2.5, "subject");
+      add(companies, cleanCompany(at[2]), 2.5, "subject");
     } else {
       const pair = splitPair(rest, (v) => matchesDomain(v) || hasCandidate(companies, v));
       if (pair) {
-        add(titles, cleanTitle(pair.title), 2.5);
-        add(companies, cleanCompany(pair.company), 2.5);
+        add(titles, cleanTitle(pair.title), 2.5, "subject");
+        add(companies, cleanCompany(pair.company), 2.5, "subject");
       } else if (!/\s[-–|]\s/.test(rest)) {
         // A lone remainder is a title ("Application received: ML Engineer") or the employer
         // ("Your application to Stripe"); the employer reading needs corroboration.
-        if (toEmployer) add(companies, cleanCompany(rest), 2);
-        else add(titles, cleanTitle(rest), 2);
+        if (toEmployer) add(companies, cleanCompany(rest), 2, "subject");
+        else add(titles, cleanTitle(rest), 2, "subject");
       }
     }
   }
@@ -399,31 +418,30 @@ export function extractCompanyAndTitle(input: FieldInput): {
   // "Company - Video Interview Invitation".
   const leading = /^([^:\-–|]{2,60}?)\s*[:\-–|]\s*(?:application\s+received|thank\s+you\s+for\s+your\s+application|(?:video\s+)?interview\s+invitation|your\s+application|application\s+update)\b(?:\s*[-–|:]\s*(.+))?$/i.exec(subject);
   if (leading) {
-    add(companies, cleanCompany(leading[1]), 2.5);
-    if (leading[2]) add(titles, cleanTitle(leading[2]), 2.5);
+    add(companies, cleanCompany(leading[1]), 2.5, "subject");
+    if (leading[2]) add(titles, cleanTitle(leading[2]), 2.5, "subject");
   }
   const subjectAt = /^(?:[^:]{2,60}:\s*)?(.{2,100}?)\s+(?:at|@)\s+([A-Z0-9][^:]{1,60})$/.exec(subject);
   const invite = /^(?:updated\s+)?invitation:\s*(.+?)\s+@\s/i.exec(subject);
   // In a calendar invite the "@" introduces the time, not the employer.
   if (subjectAt && !prefixedUsed && !invite) {
-    add(titles, cleanTitle(subjectAt[1]), 2);
-    add(companies, cleanCompany(subjectAt[2]), 2);
+    add(titles, cleanTitle(subjectAt[1]), 2, "subject");
+    add(companies, cleanCompany(subjectAt[2]), 2, "subject");
   }
   for (const m of subject.matchAll(/\b(?:offer|application|candidacy|interview)\s+(?:from|to|at|with)\s+([A-Z0-9][^:|,]{1,60})$/gi))
-    add(companies, cleanCompany(m[1]), 2);
+    add(companies, cleanCompany(m[1]), 2, "subject");
   for (const m of subject.matchAll(/\b(?:update|news)\s+on\s+your\s+([A-Z0-9][\w&' .-]{1,40}?)\s+application\b/g))
-    add(companies, cleanCompany(m[1]), 2);
+    add(companies, cleanCompany(m[1]), 2, "subject");
 
   // Calendar invites: "Invitation: Robin / Hooli - Technical Interview @ ..." and an event line
   // "Technical Interview - Senior Backend Engineer".
   if (invite) {
     for (const name of invite[1]!.split(/\s*(?:\/|<>|&|\+|\bx\b|[-–|])\s*/))
-      if (matchesDomain(name)) add(companies, cleanCompany(name), 3);
+      if (matchesDomain(name)) add(companies, cleanCompany(name), 3, "subject");
   }
-  sourceFamily = "body";
   for (const line of lines) {
     const event = /^(?:[\w ]{0,30}\binterview|phone screen|onsite|technical screen)\s*[-–:|]\s*(.{2,100})$/i.exec(line);
-    if (event) add(titles, cleanTitle(event[1]), 2);
+    if (event) add(titles, cleanTitle(event[1]), 2, "body:calendar");
   }
 
   // Job-board blocks: a company line followed by a title line (LinkedIn), or a title line followed
@@ -436,35 +454,34 @@ export function extractCompanyAndTitle(input: FieldInput): {
     const here = boardLines[i]!, next = boardLines[i + 1]!;
     const placeLine = /^(.{2,60}?)\s+[-–]\s+(?:[A-Z][\w .'-]+,\s*[A-Z]{2}\b|remote|hybrid|[A-Z][\w .'-]+,\s*[A-Z][a-z]+)/.exec(next);
     if (placeLine && cleanTitle(here) && !PROSE.test(here)) {
-      add(titles, cleanTitle(here), 1.5);
-      add(companies, cleanCompany(placeLine[1]), 1.5);
+      add(titles, cleanTitle(here), 1.5, "body:layout");
+      add(companies, cleanCompany(placeLine[1]), 1.5, "body:layout");
     }
     const location = boardLines[i + 2] ?? "";
     const hasLocation = /^(?:remote|hybrid|on[- ]site|[\p{L} .'-]+,\s*[\p{L} .'-]+)/iu.test(location);
     if (hasCandidate(companies, here) && cleanTitle(next) && here.length <= 60 && hasLocation)
-      add(titles, cleanTitle(next), 1.5);
+      add(titles, cleanTitle(next), 1.5, "body:layout");
   }
 
   // Signatures: "Stripe Recruiting", "The Datadog Recruiting Team", "Technical Recruiter, Acme".
   for (const line of [...lines.slice(-8), ...(input.signature ?? "").split("\n").map(line => line.trim())]) {
     const team = /^(?:the\s+)?(.{2,50}?)\s+(?:recruit(?:ing|ment)|talent(?:\s+acquisition)?|careers|hr|people)(?:\s+team)?$/i.exec(line);
-    if (team) add(companies, cleanCompany(team[1]), 1.5, false);
+    if (team) add(companies, cleanCompany(team[1]), 1.5, "body:signature", { fromContent: false });
     const role = /^(?:senior\s+|lead\s+)?(?:technical\s+)?(?:recruiter|talent\s+partner|talent\s+acquisition[\w ]*|hiring\s+manager|hr\s+[\w ]+),\s*(.{2,50})$/i.exec(line);
-    if (role) add(companies, cleanCompany(role[1]), 2, false);
+    if (role) add(companies, cleanCompany(role[1]), 2, "body:signature", { fromContent: false });
   }
 
   // The sender: an ATS display name is the employer; elsewhere only when it is a department
   // ("Barclays Recruitment") or the organisation the address belongs to.
-  sourceFamily = "sender";
   const display = input.fromName.replace(/\s+(?:via|from|on behalf of)\s+.*$/i, "").trim();
   const domain = senderDomain(input.fromAddress ?? "");
   if (display) {
     const cleaned = cleanCompany(display);
     if (cleaned) {
-      if (isRecruitingSenderDomain(domain)) add(companies, cleaned, 1.5, false);
+      if (isRecruitingSenderDomain(domain)) add(companies, cleaned, 1.5, "sender:display", { fromContent: false });
       // "Barclays Recruitment", "Contoso Careers": a hiring department names its organisation. A
       // plain organisation name ("Career Weekly") may be a newsletter, not an employer.
-      else if (DEPARTMENT.test(` ${display}`)) add(companies, cleaned, 1.5, false);
+      else if (DEPARTMENT.test(` ${display}`)) add(companies, cleaned, 1.5, "sender:display", { fromContent: false });
     }
   }
 
@@ -472,7 +489,6 @@ export function extractCompanyAndTitle(input: FieldInput): {
   // and it does not re-confirm the sender's display name (that would count one source twice).
   for (const c of companies.values())
     if (c.fromContent && [...c.forms.keys()].some(matchesDomain)) c.evidence.set("domain", 2);
-  sourceFamily = "subject";
   // Capitalised words in the subject that spell the sender's organisation ("Massive Dynamic").
   if (hints.length)
     for (const m of subject.matchAll(/\b([A-Z][\w&'-]*(?:\s+[A-Z][\w&'-]*){0,3})\b/g))
@@ -480,7 +496,7 @@ export function extractCompanyAndTitle(input: FieldInput): {
         const phrase = m[1]!.split(" ").slice(0, n).join(" ");
         if (hints.includes(compact(phrase)) &&
             ![...companies.values()].some(c => [...c.forms.keys()].some(form => compact(form).startsWith(compact(phrase)))))
-          add(companies, cleanCompany(phrase), 1.5);
+          add(companies, cleanCompany(phrase), 1.5, "subject");
       }
 
   // A title must not be the employer's own name.
@@ -490,7 +506,7 @@ export function extractCompanyAndTitle(input: FieldInput): {
       titles.delete(name);
       // A less specific rule may capture the employer suffix as part of the title.
       for (const [key, candidate] of titles)
-        if (!candidate.evidence.has("structured") && (key.endsWith(` at ${name}`) || key.endsWith(` with ${name}`)))
+        if (!candidate.evidence.has("structured:hint") && (key.endsWith(` at ${name}`) || key.endsWith(` with ${name}`)))
           titles.delete(key);
     }
 
