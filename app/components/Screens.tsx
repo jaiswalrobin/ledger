@@ -128,8 +128,10 @@ export function ImportScreen({
     setResults([]);
     // Adding more files appends; picking the same file twice does not duplicate it.
     setFiles((prev) => {
-      const seen = new Set(prev.map((f) => `${f.name}:${f.size}`));
-      return [...prev, ...picked.filter((f) => !seen.has(`${f.name}:${f.size}`))];
+      // Exports often share a name and size; lastModified tells genuinely different files apart.
+      const key = (f: File) => `${f.name}:${f.size}:${f.lastModified}`;
+      const seen = new Set(prev.map(key));
+      return [...prev, ...picked.filter((f) => !seen.has(key(f)))];
     });
   };
   const counts = results.reduce<Record<ResultTone, number>>(
@@ -360,9 +362,10 @@ export function ConnectionsScreen({
       {mailboxes.map((mailbox) => {
         const health = HEALTH[mailbox.syncState];
         const s = mailbox.processingSummary;
-        const totalSeen = s.processed + s.unrecognized + s.skippedSensitive + s.quarantined + s.skippedOther;
+        const totalSeen = s.processed + s.partiallyProcessed + s.unrecognized + s.skippedSensitive + s.quarantined + s.skippedOther;
         const bar = [
           { key: "used", n: s.processed, name: "Used" },
+          { key: "partial", n: s.partiallyProcessed, name: "Partly used" },
           { key: "none", n: s.unrecognized, name: "No event" },
           { key: "private", n: s.skippedSensitive, name: "Privacy" },
           { key: "parse", n: s.quarantined, name: "Unparsed" },

@@ -95,16 +95,25 @@ const STAGE_RANK: Record<Stage, number> = {
 };
 export const stageRank = (stage: Stage) => STAGE_RANK[stage];
 
-export type Bucket = "applied" | "assessment" | "interview" | "offer" | "closed";
+export type Bucket =
+  | "unknown"
+  | "applied"
+  | "assessment"
+  | "interview"
+  | "offer"
+  | "closed";
 export function bucketOf(a: { stage: Stage; outcome: Outcome }): Bucket {
   if (a.outcome === "OFFERED") return "offer";
   if (a.outcome === "REJECTED" || a.outcome === "WITHDRAWN") return "closed";
   if (a.stage === "INTERVIEW") return "interview";
   if (a.stage === "ASSESSMENT") return "assessment";
+  // A rejected confirmation leaves the stage UNKNOWN; never claim "Applied" for it.
+  if (a.stage === "UNKNOWN") return "unknown";
   return "applied";
 }
 
 export const BUCKETS: { key: Bucket; name: string }[] = [
+  { key: "unknown", name: "Unknown stage" },
   { key: "applied", name: "Applied" },
   { key: "assessment", name: "Assessment" },
   { key: "interview", name: "Interview" },

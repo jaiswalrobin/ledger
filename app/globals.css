@@ -497,6 +497,7 @@ ol, ul { margin: 0; padding: 0; list-style: none; }
 .seg.interview { background: var(--interview); }
 .seg.offer { background: var(--offer); }
 .seg.closed { background: var(--closed); opacity: 0.55; }
+.seg.unknown { background: var(--line-strong); }
 .seg.dim { opacity: 0.18; }
 .seg.empty { flex-grow: 1; background: transparent; }
 .journey-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
@@ -507,6 +508,7 @@ ol, ul { margin: 0; padding: 0; list-style: none; }
 .legend.interview i { background: var(--interview); }
 .legend.offer i { background: var(--offer); }
 .legend.closed i { background: var(--closed); }
+.legend.unknown i { background: var(--line-strong); }
 .legend strong { font-variant-numeric: tabular-nums; color: var(--ink); }
 .legend.on { border-color: var(--ink); background: var(--ink); color: var(--bg); }
 .legend.on strong { color: var(--bg); }
@@ -764,6 +766,7 @@ ol, ul { margin: 0; padding: 0; list-style: none; }
 .connection-scope { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
 .mail-bar { display: flex; gap: 2px; height: 8px; border-radius: 999px; overflow: hidden; margin-bottom: 12px; }
 .mail-bar span { flex-basis: 0; min-width: 4px; background: var(--interview); }
+.mail-bar .partial { background: color-mix(in srgb, var(--interview) 55%, var(--amber)); }
 .mail-bar .none { background: var(--applied); }
 .mail-bar .private { background: var(--manual); }
 .mail-bar .parse { background: var(--closed); }

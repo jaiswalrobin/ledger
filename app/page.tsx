@@ -93,6 +93,8 @@ export default function Home() {
   const mainRef = useRef<HTMLElement>(null);
   const detailId = useRef<string | null>(null);
   detailId.current = detail?.id ?? null;
+  const onLedger = useRef(true);
+  onLedger.current = screen === "applications" && !detail;
 
   const info = (text: string) => setNotice({ text, tone: "info" });
 
@@ -181,13 +183,15 @@ export default function Home() {
 
   // The open drawer behaves like a dialog: no background scroll, Escape closes it.
   useEffect(() => {
-    document.body.classList.toggle("locked", drawer || palette);
-  }, [drawer, palette]);
+    document.body.classList.toggle("locked", !!session && (drawer || palette));
+  }, [drawer, palette, session]);
 
-  const push = (hash: string) => {
+  const push = (hash: string, state: unknown = null, replace = false) => {
     const target = hash === "#" ? "" : hash;
-    if (window.location.hash !== target)
-      window.history.pushState(null, "", target || window.location.pathname + window.location.search);
+    if (window.location.hash === target) return;
+    const url = target || window.location.pathname + window.location.search;
+    if (replace) window.history.replaceState(state, "", url);
+    else window.history.pushState(state, "", url);
   };
   const go = useCallback((next: Screen) => {
     setScreen(next);
@@ -200,17 +204,24 @@ export default function Home() {
   const openApplication = useCallback(
     (id: string) =>
       void work(async () => {
+        const fromLedger = onLedger.current;
         setDetail(await api<OpeningDetail>(`openings/${id}`));
         setScreen("applications");
-        push(`#application/${id}`);
+        // Marked so closing can step back to the list instead of stacking another entry.
+        push(`#application/${id}`, fromLedger ? { fromLedger: true } : null);
         window.scrollTo({ top: 0 });
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
   const closeDetail = () => {
+    // Opened from the list: go back, so history stays list → detail, not list → detail → list.
+    if ((window.history.state as { fromLedger?: boolean } | null)?.fromLedger) {
+      window.history.back();
+      return;
+    }
     setDetail(null);
-    push("#");
+    push("#", null, true);
   };
 
   // Global shortcuts. Typing in a field never triggers them, except Escape.
@@ -253,6 +264,8 @@ export default function Home() {
   const signOut = () =>
     void work(async () => {
       await api("logout", {});
+      setDrawer(false);
+      setPalette(false);
       setSession(null);
       setDetail(null);
       setData(EMPTY);
@@ -306,7 +319,15 @@ export default function Home() {
 
   return (
     <div className="shell">
-      <a className="skip-link" href="#main">
+      {/* Focus without touching the URL hash, which carries the current route. */}
+      <a
+        className="skip-link"
+        href="#main"
+        onClick={(e) => {
+          e.preventDefault();
+          mainRef.current?.focus();
+        }}
+      >
         Skip to content
       </a>
       <div
@@ -528,6 +549,7 @@ export default function Home() {
               remove={(confirm) =>
                 void work(async () => {
                   await api("delete-account", { confirm });
+                  setDrawer(false);
                   setSession(null);
                   setDetail(null);
                   setData(EMPTY);

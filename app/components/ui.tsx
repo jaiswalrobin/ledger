@@ -103,7 +103,7 @@ export function JourneyBar({
         {attempts.length === 0 && <span className="seg empty" />}
       </div>
       <div className="journey-legend">
-        {BUCKETS.map((b) => (
+        {BUCKETS.filter((b) => b.key !== "unknown" || counts.unknown > 0 || active === b.key).map((b) => (
           <button
             key={b.key}
             type="button"
