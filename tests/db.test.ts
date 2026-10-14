@@ -99,6 +99,7 @@ describe("schema", () => {
         "0009_calendar_uid_index.sql",
         "0010_accepted_calendar_provenance.sql",
         "0011_conversation_context.sql",
+        "0012_sync_read_indexes.sql",
       ],
     );
   });

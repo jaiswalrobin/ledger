@@ -239,7 +239,7 @@ test("contradictory IBM requisitions in subject and body require review", async 
   fake.add("ibm", { ...ibm, text: ibm.text!.replace("123456", "654321") });
   await syncMailbox(deps, mailboxId, { userId });
   assert.equal((await listOpenings(t.db, userId, NOW)).length, 0);
-  assert.equal((await listReviews(t.db, userId))[0]!.reason, "AMBIGUOUS_OPENING");
+  assert.equal((await listReviews(t.db, userId))[0]!.reason, "CONFLICTING_FIELDS");
 });
 
 test("recheck detects a changed provider payload instead of silently overwriting prior evidence", async () => {
