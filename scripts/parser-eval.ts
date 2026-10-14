@@ -7,9 +7,10 @@ const set = process.argv[2] === "holdout" ? HOLDOUT : CORPUS;
 const results = await scoreCorpus(set);
 const summary = summarize(results);
 console.log(`\n${process.argv[2] === "holdout" ? "Held-out set" : "Corpus"}: ${results.length} emails\n`);
-console.log("field     accuracy  correct  missed  wrong  spurious");
+console.log("field     accuracy  precision  recall  coverage  support  correct  missed  wrong  spurious");
+const percent = (value: number | null) => value === null ? "   n/a" : `${(value * 100).toFixed(1)}%`.padStart(6);
 for (const [field, s] of Object.entries(summary))
-  console.log(`${field.padEnd(9)} ${(s.accuracy * 100).toFixed(1).padStart(6)}%  ${String(s.correct).padStart(7)}  ${String(s.missed).padStart(6)}  ${String(s.wrong).padStart(5)}  ${String(s.spurious).padStart(8)}`);
+  console.log(`${field.padEnd(9)} ${percent(s.accuracy)}  ${percent(s.precision).padStart(9)}  ${percent(s.recall)}  ${percent(s.coverage).padStart(8)}  ${String(s.support).padStart(7)}  ${String(s.correct).padStart(7)}  ${String(s.missed).padStart(6)}  ${String(s.wrong).padStart(5)}  ${String(s.spurious).padStart(8)}`);
 const failures = results.filter((r) => Object.values(r.verdicts).some((v) => v !== "correct"));
 if (failures.length) console.log(`\nFailures (${failures.length}):`);
 for (const r of failures) {

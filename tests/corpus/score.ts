@@ -7,7 +7,7 @@ export type Field = "kind" | "company" | "title";
 export type Verdict = "correct" | "missed" | "wrong" | "spurious";
 
 const norm = (v: string | null | undefined) =>
-  v == null ? null : v.toLowerCase().replace(/\s+/g, " ").replace(/[.,;:!]+$/, "").trim();
+  v == null ? null : v.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim().replace(/[.,;:!]+$/, "");
 
 /**
  * correct: matches the label (including both empty). missed: label has a value, extractor none.
@@ -61,7 +61,16 @@ export function summarize(results: CaseResult[]) {
     fields.map((f) => {
       const counts = { correct: 0, missed: 0, wrong: 0, spurious: 0 };
       for (const r of results) counts[r.verdicts[f]] += 1;
-      return [f, { ...counts, accuracy: counts.correct / results.length }];
+      const support = results.filter(r => r.email.expect[f] != null).length;
+      const emitted = results.filter(r => r.actual[f] != null).length;
+      const recovered = results.filter(r => r.email.expect[f] != null && r.verdicts[f] === "correct").length;
+      return [f, { ...counts, support, emitted, recovered,
+        accuracy: results.length ? counts.correct / results.length : 0,
+        precision: emitted ? recovered / emitted : null,
+        recall: support ? recovered / support : null,
+        coverage: results.length ? emitted / results.length : 0,
+      }];
     }),
-  ) as Record<Field, { correct: number; missed: number; wrong: number; spurious: number; accuracy: number }>;
+  ) as Record<Field, { correct: number; missed: number; wrong: number; spurious: number; accuracy: number;
+    support: number; emitted: number; recovered: number; precision: number | null; recall: number | null; coverage: number }>;
 }

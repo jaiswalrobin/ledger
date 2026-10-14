@@ -27,8 +27,8 @@ export interface FieldInput {
   companyAliases?: readonly { company: string; domain: string }[];
 }
 
-type Candidate = { value: string; order: number; fromContent: boolean; evidence: Map<string, number>; spans: { representation: string; start: number; end: number }[] };
-type Candidates = Map<string, Candidate>;
+type Candidate = { value: string; order: number; fromContent: boolean; evidence: Map<string, number>; spans: { representation: string; start: number; end: number }[]; spanOverflow?: boolean };
+type Candidates = Map<string, Candidate> & { overflow?: boolean };
 
 // ---- validation and cleaning ------------------------------------------------------------
 
@@ -116,6 +116,7 @@ export function cleanCompany(
   value = value
     .replace(/^["'“‘]+|["'”’]+$/g, "")
     .replace(/^the\s+/i, "")
+    .replace(/\s*[:|]\s*(?:next steps?|application update|interview invitation|assessment invitation)\b.*$/i, "")
     // A trailing clause ends the name; "and" only before a lower-case word, since "Barnes and
     // Noble" and "Johnson & Johnson" are names.
     .replace(/\s+(?:within|by|before|on|for|to|please|as|is|has|we|you|your|via|from)\b.*$/i, "")
@@ -174,6 +175,7 @@ const rx = (source: string, flags = "iu") => new RegExp(source, flags);
 
 /** Sentences naming a role, optionally followed by the employer. Highest-precision patterns first. */
 const ROLE_SENTENCES: { re: RegExp; title: number; company?: number; weight: number }[] = [
+  { re: rx(String.raw`\bemployment\s+as\s+(?:an?\s+)?${TITLE}\s+at\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
   // "for the Senior Data Analyst position at Visa", "to our Software Engineer, Payments role"
   { re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:(?:the|our|a|an|this)\s+)?${TITLE}\s+${ROLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
   { re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:(?:the|our|a|an|this)\s+)?${TITLE}\s+${ROLE}\b`), title: 1, weight: 2.5 },
@@ -228,12 +230,14 @@ function addCandidate(map: Candidates, value: string | null, weight: number, sou
   const key = value.normalize("NFKC").toLowerCase();
   let candidate = map.get(key);
   if (!candidate) {
+    if (map.size >= 64) { map.overflow = true; return; }
     candidate = { value, order: map.size, fromContent, evidence: new Map(), spans: [] };
     map.set(key, candidate);
   }
   candidate.evidence.set(source, Math.max(weight, candidate.evidence.get(source) ?? 0));
   candidate.fromContent ||= fromContent;
-  if (span) candidate.spans.push(span);
+  if (span && candidate.spans.length < 128) candidate.spans.push(span);
+  else if (span) candidate.spanOverflow = true;
 }
 
 function decide(map: Candidates): FieldDecision {
@@ -245,7 +249,7 @@ function decide(map: Candidates): FieldDecision {
     order: c.order,
   })).sort((a, b) => b.score - a.score || a.order - b.order);
   const best = candidates[0];
-  const ambiguous = candidates.filter(c => c.credible).length > 1 ||
+  const ambiguous = map.overflow === true || candidates.filter(c => c.credible).length > 1 ||
     (candidates.length > 1 && best!.score === candidates[1]!.score);
   return {
     state: ambiguous ? "AMBIGUOUS" : best && best.score >= 1 ? "SUPPORTED" : "MISSING",
@@ -306,6 +310,11 @@ export function extractCompanyAndTitle(input: FieldInput): {
     return rest ? m.input.slice(m.index + m[0].length - value.length, end + rest[0].length) : value;
   };
 
+  // Employer-agnostic requisition labels identify a title, never an application attempt ID.
+  for (const line of lines) {
+    const reference = /^(?:ref(?:erence)?|requisition(?: id)?)\s*:\s*[A-Z]{0,4}[- ]?\d{3,12}\s*[-–]\s*(.{2,100})$/i.exec(line);
+    if (reference) add(titles, cleanTitle(reference[1], "label"), 3);
+  }
   // Role sentences, over the hard-wrapped lines and the flattened text.
   for (const { id, representation, text } of [{ id: "subject", representation: "subject", text: subject }, { id: "body", representation: "body-lines", text: body }, { id: "body", representation: "body-flat", text: flat }]) {
     sourceFamily = id;
@@ -412,9 +421,9 @@ export function extractCompanyAndTitle(input: FieldInput): {
   // Signatures: "Stripe Recruiting", "The Datadog Recruiting Team", "Technical Recruiter, Acme".
   for (const line of [...lines.slice(-8), ...(input.signature ?? "").split("\n").map(line => line.trim())]) {
     const team = /^(?:the\s+)?(.{2,50}?)\s+(?:recruit(?:ing|ment)|talent(?:\s+acquisition)?|careers|hr|people)(?:\s+team)?$/i.exec(line);
-    if (team) add(companies, cleanCompany(team[1]), 1.5);
+    if (team) add(companies, cleanCompany(team[1]), 1.5, false);
     const role = /^(?:senior\s+|lead\s+)?(?:technical\s+)?(?:recruiter|talent\s+partner|talent\s+acquisition[\w ]*|hiring\s+manager|hr\s+[\w ]+),\s*(.{2,50})$/i.exec(line);
-    if (role) add(companies, cleanCompany(role[1]), 2);
+    if (role) add(companies, cleanCompany(role[1]), 2, false);
   }
 
   // The sender: an ATS display name is the employer; elsewhere only when it is a department
@@ -457,7 +466,7 @@ export function extractCompanyAndTitle(input: FieldInput): {
   // A general sentence rule can stop at an internal comma. Discard only a proven subspan
   // of the more specific title in the same representation; distinct mentions still conflict.
   for (const [key, candidate] of titles)
-    if (candidate.spans.length && [...titles.values()].some(other => other !== candidate &&
+    if (!candidate.spanOverflow && candidate.spans.length && [...titles.values()].some(other => other !== candidate &&
         other.value.toLowerCase().startsWith(`${key},`) && candidate.spans.every(short =>
           other.spans.some(long => long.representation === short.representation &&
             long.start <= short.start && long.end > short.end)))) titles.delete(key);

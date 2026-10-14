@@ -671,4 +671,30 @@ export const CORPUS: CorpusEmail[] = [
     text: "Bonjour Robin,\n\nThank you for applying for the Écologue Senior position at Énergie Québec. We have received your application.",
     expect: { kind: "CONFIRMATION_RECEIVED", company: "Énergie Québec", title: "Écologue Senior" },
   },
+
+  // Disclosed evaluation failures promoted after explicit review.
+  {
+    id: "h3-interview-moved",
+    note: "Interview moved to a new time, title and company in one sentence (round 3)",
+    from: '"Talent Team" <talent@vandelay.example>',
+    subject: "Interview time change - Community Manager",
+    text: "Hi Robin,\n\nWe need to move your interview for the Community Manager position at Vandelay Industries. It is now scheduled for Thursday, November 5 at 3:00 PM EST.\n\nVandelay Talent Team",
+    expect: { kind: "INTERVIEW_SCHEDULED", company: "Vandelay Industries", title: "Community Manager" },
+  },
+  {
+    id: "h2-offer-formal",
+    note: "Formal offer letter wording",
+    from: '"HR Department" <hr@gringotts.example>',
+    subject: "Employment Offer - Risk Analyst",
+    text: "Dear Robin,\n\nWe are delighted to offer you employment as a Risk Analyst at Gringotts. Please find your employment offer attached.\n\nGringotts HR",
+    expect: { kind: "OFFER_RECEIVED", company: "Gringotts", title: "Risk Analyst" },
+  },
+  {
+    id: "h2-ibm-style-other-employer",
+    note: "Employer-hosted portal: 'Ref: <req> - <title>' line",
+    from: '"Careers" <careers@globex.example>',
+    subject: "Application confirmation - 77881 - Network Engineer",
+    text: "Dear Robin,\n\nThank you for submitting your application to Globex.\n\nRef: 77881 - Network Engineer\n\nGlobex Careers",
+    expect: { kind: "CONFIRMATION_RECEIVED", company: "Globex", title: "Network Engineer" },
+  },
 ];

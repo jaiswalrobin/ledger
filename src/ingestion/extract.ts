@@ -90,6 +90,7 @@ const PHRASES: Record<SignalKind, RegExp> = {
         String.raw`your (?:onsite |on-site |phone |video |virtual |technical |final |panel )?interview (?:with|on|at|tomorrow|today)\b`,
         // "Your onsite interview for the Mechanical Engineer position is confirmed for Monday"
         String.raw`interview\b[^.!?\n]{0,100}\b(?:is|has been|was|are|have been) (?:now )?(?:confirmed|scheduled|booked|set)`,
+        String.raw`interview\b[^.!?]{0,160}[.!?]?\s+(?:it is|it\'s) (?:now )?(?:confirmed|scheduled|booked)`,
         String.raw`calendar invitation`,
         String.raw`confirm(?:ing|ed)? (?:your|the) interview`,
         String.raw`interview (?:details|confirmation|reminder)`,

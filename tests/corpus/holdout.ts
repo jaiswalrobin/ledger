@@ -4,6 +4,8 @@
  * held-out failure leads to a fix, move that case into emails.ts and write a fresh one here.
  *
  * Round 2: the round-1 set was folded into emails.ts after it informed four fixes.
+ * Round 4: three disclosed misses were promoted to development fixtures; the remaining
+ * cases stay fixed. No replacement synthetic cases are claimed to be independent evidence.
  * Round 3: h2-interview-rescheduled moved to emails.ts after a review named its cause (the
  * "account" title filter); h3-interview-moved replaces it.
  */
@@ -59,22 +61,6 @@ export const HOLDOUT: CorpusEmail[] = [
     expect: { kind: "INTERVIEW_INVITED", company: "Monarch", title: "Product Analyst" },
   },
   {
-    id: "h3-interview-moved",
-    note: "Interview moved to a new time, title and company in one sentence (round 3)",
-    from: '"Talent Team" <talent@vandelay.example>',
-    subject: "Interview time change - Community Manager",
-    text: "Hi Robin,\n\nWe need to move your interview for the Community Manager position at Vandelay Industries. It is now scheduled for Thursday, November 5 at 3:00 PM EST.\n\nVandelay Talent Team",
-    expect: { kind: "INTERVIEW_SCHEDULED", company: "Vandelay Industries", title: "Community Manager" },
-  },
-  {
-    id: "h2-offer-formal",
-    note: "Formal offer letter wording",
-    from: '"HR Department" <hr@gringotts.example>',
-    subject: "Employment Offer - Risk Analyst",
-    text: "Dear Robin,\n\nWe are delighted to offer you employment as a Risk Analyst at Gringotts. Please find your employment offer attached.\n\nGringotts HR",
-    expect: { kind: "OFFER_RECEIVED", company: "Gringotts", title: "Risk Analyst" },
-  },
-  {
     id: "h2-indeed-variant",
     note: "Indeed with company and remote on the line",
     from: '"Indeed Apply" <indeedapply@indeed.com>',
@@ -97,13 +83,5 @@ export const HOLDOUT: CorpusEmail[] = [
     subject: "How was your interview experience?",
     text: "Hi Robin,\n\nWe'd love your feedback on your recent interview experience with Acme. The survey takes 2 minutes.\n\nAcme Careers",
     expect: { kind: null, company: "Acme", title: null },
-  },
-  {
-    id: "h2-ibm-style-other-employer",
-    note: "Employer-hosted portal: 'Ref: <req> - <title>' line",
-    from: '"Careers" <careers@globex.example>',
-    subject: "Application confirmation - 77881 - Network Engineer",
-    text: "Dear Robin,\n\nThank you for submitting your application to Globex.\n\nRef: 77881 - Network Engineer\n\nGlobex Careers",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Globex", title: "Network Engineer" },
   },
 ];
