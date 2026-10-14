@@ -43,6 +43,31 @@ it("MIME merging cannot upgrade a field conflict to high confidence", () => {
   assert.equal(signal.fields.fieldDecisions?.title.state, "AMBIGUOUS");
 });
 
+it("MIME ambiguity keeps the field null in both representation orders", () => {
+  const ambiguous = "We received your application.\nCompany: Acme\nJob Title: Backend Engineer\nFor the Frontend Engineer role at Acme.";
+  const supported = "We received your application.\nCompany: Acme\nJob Title: Frontend Engineer";
+  for (const [text, alternative] of [[ambiguous, supported], [supported, ambiguous]]) {
+    const signal = extractSignal({subject: "Application received", fromName: "Acme Careers", fromAddress: "careers@acme.example", date: null, messageId: null, to: [], text: text!, alternativeTexts: [alternative!]});
+    assert.equal(signal.fields.title, null);
+    assert.equal(signal.fields.fieldDecisions?.title.state, "AMBIGUOUS");
+    assert.equal(signal.fields.fieldDecisions?.title.value, null);
+    assert.equal(signal.confidence, "LOW");
+  }
+});
+
+it("conflicting supported MIME values become ambiguous while a stub can inherit real fields", () => {
+  const message = {subject: "Application received", fromName: "Acme Careers", fromAddress: "careers@acme.example", date: null, messageId: null, to: []};
+  const real = "We received your application.\nCompany: Acme\nJob Title: Backend Engineer";
+  const conflict = extractSignal({...message, text: real, alternativeTexts: [real.replace("Backend", "Frontend")]});
+  assert.equal(conflict.fields.title, null);
+  assert.equal(conflict.fields.fieldDecisions?.title.state, "AMBIGUOUS");
+  assert.ok(conflict.reasons.includes("conflicting-alternatives"));
+  const stub = extractSignal({...message, text: "View this email in your browser.", alternativeTexts: [real, real]});
+  const single = extractSignal({...message, text: real});
+  assert.equal(stub.fields.title, "Backend Engineer");
+  assert.deepEqual(stub.fields.fieldDecisions, single.fields.fieldDecisions);
+});
+
 it("spelling variants of one employer merge instead of conflicting", () => {
   const variants = fields("We received your application for the Data Engineer role at Acme.", "Thank you for applying to Acme Inc");
   assert.equal(variants.decisions.company.state, "SUPPORTED");

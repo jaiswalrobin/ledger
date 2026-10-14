@@ -9,6 +9,7 @@ import { safeField } from "./privacy.ts";
 import { cleanTitle, extractCompanyAndTitle } from "./fields.ts";
 import { messageRegions } from "./regions.ts";
 import { extractCalendar } from "./calendar.ts";
+import { companyKey } from "../domain/normalization.ts";
 
 export const EXTRACTOR_VERSION = "rules-8";
 
@@ -380,7 +381,11 @@ function ibmJobDetails(message: ParsedMessage, body: string) {
 
 // ---- main ---------------------------------------------------------------------------------
 
-function extractOne(raw: ParsedMessage): ExtractedSignal {
+function extractOne(
+  raw: ParsedMessage,
+  calendar: ReturnType<typeof extractCalendar>,
+  calendarFields: ReturnType<typeof extractCompanyAndTitle> | null,
+): ExtractedSignal {
   const message: ParsedMessage = {
     ...raw,
     subject: normalizeForMatching(raw.subject).replace(/\s+/g, " ").trim(),
@@ -395,17 +400,12 @@ function extractOne(raw: ParsedMessage): ExtractedSignal {
     kind = null;
     reasons.push("quoted-history-only");
   }
-  const calendar = extractCalendar(message);
   reasons.push(...calendar.reasons);
   if (calendar.reasons.includes("interview-cancelled")) kind = null;
   else if (calendar.event && !calendar.reasons.length) {
     if (!kind || STEP_KINDS.has(kind)) kind = "INTERVIEW_SCHEDULED";
     else reasons.push("uncertain-calendar");
   }
-  const calendarFields = calendar.event ? extractCompanyAndTitle({
-    subject: calendar.event.summary, body: `${calendar.event.summary}\n${calendar.event.description}\nOrganizer: ${calendar.event.organizer}`,
-    fromName: message.fromName, fromAddress: message.fromAddress,
-  }) : null;
 
   let ats: AtsMatch | null = null;
   let workdaySlugTitle: string | null = null;
@@ -508,7 +508,7 @@ function conflicts(a: ExtractedSignal, b: ExtractedSignal): boolean {
   if (a.reasons.includes("ambiguous-kind") || b.reasons.includes("ambiguous-kind"))
     return true;
   return (Object.keys(a.fields) as (keyof ExtractedFields)[]).some((field) => {
-    if (field === "fieldDecisions") return false;
+    if (field === "fieldDecisions" || field === "company" || field === "title") return false;
     const x = a.fields[field],
       y = b.fields[field];
     if (x == null || y == null) return false;
@@ -525,40 +525,51 @@ function conflicts(a: ExtractedSignal, b: ExtractedSignal): boolean {
  * representations still forces review.
  */
 export function extractSignal(message: ParsedMessage): ExtractedSignal {
-  let merged = extractOne(message);
-  for (const text of message.alternativeTexts ?? []) {
-    const alternative = extractOne({ ...message, text });
-    if (conflicts(merged, alternative))
-      return {
-        ...merged,
-        confidence: "LOW",
-        reasons: [...merged.reasons, "conflicting-alternatives"],
-      };
-    const fields = { ...merged.fields };
-    for (const key of Object.keys(fields) as (keyof ExtractedFields)[])
-      if (key !== "fieldDecisions" && fields[key] == null)
-        (fields as Record<string, unknown>)[key] = alternative.fields[key];
-    if (fields.fieldDecisions && alternative.fields.fieldDecisions) {
-      fields.fieldDecisions = { ...fields.fieldDecisions };
-      for (const key of ["company", "title"] as const) {
-        const other = alternative.fields.fieldDecisions[key];
-        // A conflict in any representation is a conflict: the merged decision, the value and the
-        // "conflicting-fields" reason must agree, or the pipeline and the evaluation diverge.
-        if (fields.fieldDecisions[key].state === "MISSING" || other.state === "AMBIGUOUS") {
-          fields.fieldDecisions[key] = other;
-          if (other.state === "AMBIGUOUS") fields[key] = null;
-        }
-      }
+  const calendar = extractCalendar(message);
+  const calendarFields = calendar.event ? extractCompanyAndTitle({
+    subject: calendar.event.summary,
+    body: `${calendar.event.summary}\n${calendar.event.description}\nOrganizer: ${calendar.event.organizer}`,
+    fromName: normalizeForMatching(message.fromName), fromAddress: message.fromAddress,
+  }) : null;
+  const representations = [...new Set([message.text, ...(message.alternativeTexts ?? [])])]
+    .map(text => extractOne({ ...message, text }, calendar, calendarFields));
+  const primary = representations[0]!;
+  const fields = { ...primary.fields };
+  const reasons = new Set(representations.flatMap(signal => signal.reasons));
+  if (representations.some(signal => conflicts(primary, signal))) reasons.add("conflicting-alternatives");
+  // Alternatives are correlated renderings, not independent votes. Keep the strongest support
+  // for each value and retain ambiguity from every representation, regardless of MIME ordering.
+  fields.fieldDecisions = { ...primary.fields.fieldDecisions! };
+  for (const key of ["company", "title"] as const) {
+    const decisions = representations.map(signal => signal.fields.fieldDecisions![key]);
+    const keyOf = (value: string) => key === "company" ? companyKey(value) : value.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+    const supported = new Map(decisions.filter(d => d.state === "SUPPORTED" && d.value).map(d => [keyOf(d.value!), d.value!]));
+    const candidates = new Map<string, (typeof decisions)[number]["candidates"][number]>();
+    for (const decision of decisions) for (const candidate of decision.candidates) {
+      const id = keyOf(candidate.value), existing = candidates.get(id);
+      if (!existing || candidate.score > existing.score) candidates.set(id, candidate);
     }
-    const kind = merged.kind ?? alternative.kind;
-    const reasons = [...new Set([...merged.reasons, ...alternative.reasons])];
-    merged = {
-      ...merged,
-      kind,
-      fields,
-      reasons,
-      confidence: kind && !reasons.includes("mixed-kind") && !reasons.includes("ambiguous-job-links") && !reasons.includes("conflicting-fields") && !reasons.includes("uncertain-calendar") ? "HIGH" : "LOW",
+    const ambiguous = decisions.some(d => d.state === "AMBIGUOUS") || supported.size > 1;
+    const value = ambiguous ? null : supported.values().next().value ?? null;
+    fields[key] = value;
+    fields.fieldDecisions[key] = {
+      state: ambiguous ? "AMBIGUOUS" : value ? "SUPPORTED" : "MISSING", value,
+      candidates: [...candidates.values()].sort((a, b) => b.score - a.score || a.value.localeCompare(b.value)).slice(0, 8),
     };
+    if (ambiguous) reasons.add("conflicting-fields");
+    if (supported.size > 1) reasons.add("conflicting-alternatives");
   }
-  return merged;
+  for (const key of ["location", "atsKey", "canonicalUrl", "applicantEmail", "externalApplicationId"] as const) {
+    const present = representations.map(signal => signal.fields[key]).filter(value => value != null);
+    const distinct = new Set(present.map(value => STRICT_FIELDS.has(key) ? JSON.stringify(value) : JSON.stringify(value).toLowerCase()));
+    if (distinct.size > 1) {
+      fields[key] = null;
+      reasons.add("conflicting-alternatives");
+    } else (fields as Record<string, unknown>)[key] = present[0] ?? null;
+  }
+  const kinds = new Set(representations.map(signal => signal.kind).filter(kind => kind !== null));
+  if (kinds.size > 1) reasons.add("conflicting-alternatives");
+  const kind = kinds.size === 1 ? [...kinds][0]! : null;
+  const uncertain = ["mixed-kind", "ambiguous-kind", "ambiguous-job-links", "conflicting-fields", "conflicting-alternatives", "uncertain-calendar"];
+  return { ...primary, kind, fields, reasons: [...reasons], confidence: kind && !uncertain.some(reason => reasons.has(reason)) ? "HIGH" : "LOW" };
 }
