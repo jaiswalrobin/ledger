@@ -63,7 +63,9 @@ export async function runScheduledSync(input: {
   let demosPruned = 0,
     pruneFailed = false;
   try {
-    demosPruned = await pruneDemos(input.db);
+    // Each workspace is deleted in its own transaction; count as they commit so a later failure
+    // still reports the deletions that happened.
+    await pruneDemos(input.db, (count) => (demosPruned = count));
   } catch {
     pruneFailed = true;
   }

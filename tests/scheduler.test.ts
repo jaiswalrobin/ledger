@@ -3,6 +3,7 @@ import { after, before, describe, it } from "node:test";
 import type { Db } from "../src/server/db.ts";
 import { runScheduledSync, summarize } from "../src/server/scheduler.ts";
 import { syncAllMailboxes } from "../src/server/gmail/sync.ts";
+import { seedDemo } from "../src/server/demo.ts";
 import { FakeGmail } from "./helpers/fake-gmail.ts";
 import { createTestDb, seedMailbox, seedUser, type TestDb } from "./helpers/db.ts";
 import { greenhouseConfirmation } from "./helpers/fixtures.ts";
@@ -73,6 +74,25 @@ describe("scheduler report", () => {
   });
 });
 
+describe("demo cleanup accounting", () => {
+  it("reports deletions that committed before a later cleanup step failed", async () => {
+    const a = await seedDemo(db), b = await seedDemo(db);
+    await db.query("UPDATE demo_workspaces SET expires_at = now() - interval '1 day' WHERE user_id = ANY($1::uuid[])", [[a, b]]);
+    const failing: Db = {
+      ...db,
+      query: (async (sql: string, params?: unknown[]) => {
+        if (/DELETE FROM browser_rate_limits/.test(sql)) throw new Error("late failure");
+        return db.query(sql, params as never);
+      }) as Db["query"],
+    };
+    const report = await runScheduledSync({ db: failing, sync: null });
+    assert.equal(report.pruneFailed, true);
+    assert.ok(report.demosPruned >= 2, `expected the two committed deletions, got ${report.demosPruned}`);
+    const left = await db.query("SELECT 1 FROM ledger_users WHERE id = ANY($1::uuid[])", [[a, b]]);
+    assert.equal(left.rows.length, 0);
+  });
+});
+
 describe("syncAllMailboxes isolation", () => {
   it("an unexpected error on one mailbox is reported as FAILED and the others still sync", async () => {
     const userId = await seedUser(db);
@@ -96,5 +116,12 @@ describe("syncAllMailboxes isolation", () => {
     const byId = Object.fromEntries(results.map((r) => [r.mailboxId, r.status]));
     assert.equal(byId[first], "FAILED");
     assert.equal(byId[second], "OK");
+    // The crash leaves a safe, findable trace on the mailbox itself.
+    const trace = await db.query<{ last_error_code: string | null; last_attempt_at: unknown }>(
+      "SELECT last_error_code, last_attempt_at FROM connected_mailboxes WHERE id=$1",
+      [first],
+    );
+    assert.equal(trace.rows[0]!.last_error_code, "SYNC_CRASHED");
+    assert.ok(trace.rows[0]!.last_attempt_at);
   });
 });
