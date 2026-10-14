@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AtsKey, Outcome, Stage } from "../domain/types.ts";
 import type { ExtractedFields, SignalKind } from "../ingestion/source.ts";
 import type { Db } from "./db.ts";
+import { reconcileWaitingUpdates } from "./pipeline.ts";
 import { usableEventDate } from "../ingestion/dates.ts";
 import {
   insertAttempt,
@@ -348,6 +349,8 @@ export async function resolveReviewCreate(
       ctx.artifactId,
     );
     await closeReview(tx, userId, reviewId, ctx, "RESOLVED", "CREATED");
+    // The new attempt may be what waiting updates were missing, as after an automatic one.
+    await reconcileWaitingUpdates(tx, userId, new Date());
     return { attemptId, openingId };
   });
 }

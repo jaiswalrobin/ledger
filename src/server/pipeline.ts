@@ -688,10 +688,12 @@ async function apply(
 
 /**
  * Updates can arrive before the submission they belong to (Gmail lists newest first, forwards
- * come in any order). Once a new attempt exists, re-evaluate waiting "no known submission"
- * items under exactly the same rules; anything still ambiguous stays in review untouched.
+ * come in any order). Once a new attempt exists, re-evaluate waiting updates under exactly the
+ * same rules; anything still ambiguous stays in review untouched. Both reasons can become
+ * resolvable: NO_KNOWN_SUBMISSION (no attempt yet) and AMBIGUOUS_ATTEMPT (an application ID that
+ * an earlier attempt on the same opening did not carry, now owned by the new attempt).
  */
-async function reconcileWaitingUpdates(
+export async function reconcileWaitingUpdates(
   tx: Db,
   userId: string,
   observedAt: Date,
@@ -715,7 +717,7 @@ async function reconcileWaitingUpdates(
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
        JOIN source_artifacts a ON a.id = r.source_artifact_id AND a.user_id = r.user_id
-      WHERE r.user_id = $1 AND r.state = 'OPEN' AND r.reason_code = 'NO_KNOWN_SUBMISSION'
+      WHERE r.user_id = $1 AND r.state = 'OPEN' AND r.reason_code IN ('NO_KNOWN_SUBMISSION', 'AMBIGUOUS_ATTEMPT')
       ORDER BY a.original_message_at, r.created_at, r.id`,
     [userId],
   );

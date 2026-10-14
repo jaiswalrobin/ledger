@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { parseEml } from "../src/ingestion/eml.ts";
 import { ingestOriginal, type IngestOutcome } from "../src/server/pipeline.ts";
+import { resolveReviewCreate } from "../src/server/actions.ts";
 import type { Db } from "../src/server/db.ts";
 import { buildEml } from "./helpers/eml.ts";
 import { createTestDb, seedMailbox, seedUser, type TestDb } from "./helpers/db.ts";
@@ -241,5 +242,58 @@ describe("follow-ups without an application ID or submitted email", () => {
       text: "Hi Robin,\n\nUnfortunately, we have decided to move forward with other candidates for the Data Engineer position at Acme.",
     });
     assert.equal(reject.status === "REVIEW" && reject.reason, "TERMINAL_NEEDS_REVIEW");
+  });
+});
+
+describe("waiting updates reconcile when the attempt they need appears", () => {
+  const openReviews = async (user: string) =>
+    (await db.query<{ reason_code: string }>(
+      "SELECT reason_code FROM review_items WHERE user_id=$1 AND state='OPEN'", [user])).rows.map(r => r.reason_code);
+
+  // Both confirmations link the same Greenhouse job, so the opening is identified; company and
+  // title alone never merge two confirmations into one opening.
+  it("an update for a second application waits as AMBIGUOUS_ATTEMPT and applies once that application is confirmed", async () => {
+    const { user, mailbox } = await fresh();
+    await gmail(user, mailbox, {
+      subject: "Application received",
+      text: "We received your application for the Data Engineer role at Acme.\nApplication ID: GH-1\nJob: https://boards.greenhouse.io/acme/jobs/4012345",
+    });
+    const early = await gmail(user, mailbox, {
+      subject: "Interview invitation", date: "Wed, 14 Oct 2026 09:30:00 +0000",
+      text: "We would like to invite you to interview for the Data Engineer role at Acme.\nApplication ID: GH-2",
+    });
+    assert.equal(early.status === "REVIEW" && early.reason, "AMBIGUOUS_ATTEMPT");
+    const second = await gmail(user, mailbox, {
+      subject: "Application received", date: "Tue, 13 Oct 2026 09:30:00 +0000",
+      text: "We received your application for the Data Engineer role at Acme.\nApplication ID: GH-2\nJob: https://boards.greenhouse.io/acme/jobs/4012345",
+    });
+    assert.deepEqual(second, { ...second, status: "APPLIED", reconciled: 1 });
+    assert.deepEqual(await openReviews(user), []);
+    const { rows } = await db.query<{ id: string; kind: string }>(
+      `SELECT a.external_application_id AS id, e.event_kind AS kind FROM application_events e
+         JOIN application_attempts a ON a.id = e.attempt_id WHERE e.user_id=$1 AND e.review_state='ACCEPTED'
+        ORDER BY a.external_application_id, e.occurred_at`, [user]);
+    assert.deepEqual(rows, [
+      { id: "GH-1", kind: "CONFIRMATION_RECEIVED" },
+      { id: "GH-2", kind: "CONFIRMATION_RECEIVED" },
+      { id: "GH-2", kind: "INTERVIEW_INVITED" },
+    ]);
+  });
+
+  it("an attempt created from review lets a waiting update apply", async () => {
+    const { user, mailbox } = await fresh();
+    const incomplete = await gmail(user, mailbox, {
+      subject: "Application received",
+      text: "Thank you for applying to Acme. We have received your application.",
+    });
+    assert.equal(incomplete.status === "REVIEW" && incomplete.reason, "MISSING_JOB_DETAILS");
+    const waiting = await gmail(user, mailbox, {
+      subject: "Interview invitation", date: "Wed, 14 Oct 2026 09:30:00 +0000",
+      text: "We would like to invite you to interview for the Data Engineer role at Acme.",
+    });
+    assert.equal(waiting.status === "REVIEW" && waiting.reason, "NO_KNOWN_SUBMISSION");
+    await resolveReviewCreate(db, user, (incomplete as { reviewId: string }).reviewId, { company: "Acme", title: "Data Engineer" });
+    assert.deepEqual(await openReviews(user), []);
+    assert.deepEqual(await events(user), ["CONFIRMATION_RECEIVED", "INTERVIEW_INVITED"]);
   });
 });
