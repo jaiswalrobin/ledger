@@ -70,6 +70,9 @@ export function resolveSubmission(
 
   if (submission.externalApplicationId) {
     const exact = scoped.filter(a => a.externalApplicationId === submission.externalApplicationId);
+    const email = normalizeEmail(submission.applicantEmail);
+    if (exact.some(a=>email && a.applicantEmail && normalizeEmail(a.applicantEmail)!==email))
+      return {kind:"REVIEW",candidateIds:exact.map(a=>a.id),reason:"Conflicting submitted contact for an application ID"};
     if (exact.length) return choose(exact.map(a => a.id), "Matching ATS application ID");
     return { kind: "CREATE", reason: "Distinct observed ATS submission ID" };
   }
@@ -116,6 +119,7 @@ export function resolveUpdate(
 
   if (update.externalApplicationId) {
     const strong = scoped.filter(a => a.externalApplicationId === update.externalApplicationId);
+    if (strong.some(contradicts))return {kind:"REVIEW",candidateIds:strong.map(a=>a.id),reason:"Conflicting identity for an application ID"};
     if (strong.length) return choose(strong.map(a => a.id), "Exact application ID");
     return sole() ?? { kind: "REVIEW", candidateIds: scoped.map(a => a.id), reason: "Application ID not recognized" };
   }

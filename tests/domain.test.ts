@@ -44,12 +44,17 @@ test("replayed confirmation references existing attempt", () => {
   assert.equal(result.kind, "MATCH");
 });
 test("same ATS application ID never creates a second attempt", () => {
-  const result = resolveSubmission(job.id, submission("fresh-mail", "other@example.com", "app-1"), [attempt("a", "a@example.com", "app-1")]);
+  const result = resolveSubmission(job.id, submission("fresh-mail", "a@example.com", "app-1"), [attempt("a", "a@example.com", "app-1")]);
   assert.equal(result.kind, "MATCH");
 });
 test("different explicit ATS application IDs can represent different submissions", () => {
   const result = resolveSubmission(job.id, submission("new-submission", "a@example.com", "app-2"), [attempt("a", "a@example.com", "app-1")]);
   assert.equal(result.kind, "CREATE");
+});
+test("an exact application ID cannot override contradictory submitted contact evidence",()=>{
+  const known=attempt("a","a@example.com","app-1");
+  assert.equal(resolveSubmission(job.id,submission("another-receipt","b@example.com","app-1"),[known]).kind,"REVIEW");
+  assert.equal(resolveUpdate(job.id,{applicantEmail:"b@example.com",phoneLookupKey:null,externalApplicationId:"app-1"},[known]).kind,"REVIEW");
 });
 test("same email and no external ID is review rather than automatic duplicate or new attempt", () => {
   const result = resolveSubmission(job.id, submission("different-confirmation", "a@example.com"), [attempt("a", "A@example.com")]);

@@ -9,6 +9,7 @@ import {
   insertOpening,
   recordEvent,
   reproject,
+  acceptSubmissionEvidence,
 } from "./store.ts";
 
 export type ActionErrorCode =
@@ -267,6 +268,8 @@ export async function resolveReviewAssign(
     const ctx = await loadOpenReview(tx, userId, reviewId);
     await ownedAttempt(tx, userId, attemptId);
     const { kind, occurredAt } = resolveKindAndTime(ctx, overrides);
+    if (kind === "CONFIRMATION_RECEIVED")
+      await acceptSubmissionEvidence(tx,userId,attemptId,ctx.evidenceKey,occurredAt,ctx.fields);
     await recordEvent(
       tx,
       {
@@ -283,6 +286,7 @@ export async function resolveReviewAssign(
       ctx.artifactId,
     );
     await closeReview(tx, userId, reviewId, ctx, "RESOLVED", "ASSIGNED");
+    if (kind === "CONFIRMATION_RECEIVED") await reconcileWaitingUpdates(tx,userId,new Date());
   });
 }
 
@@ -339,6 +343,7 @@ export async function resolveReviewCreate(
           : f.externalApplicationId,
       submittedAt: kind === "CONFIRMATION_RECEIVED" ? occurredAt : null,
       evidenceKey: ctx.evidenceKey,
+      submissionEvidence: kind === "CONFIRMATION_RECEIVED",
     });
     await recordEvent(
       tx,

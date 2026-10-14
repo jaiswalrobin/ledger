@@ -24,7 +24,7 @@ import {
 } from "../ingestion/source.ts";
 import type { Db } from "./db.ts";
 import {
-  addSubmissionEvidence,
+  acceptSubmissionEvidence,
   findAttemptsByExternalId,
   insertAttempt,
   insertOpening,
@@ -595,7 +595,6 @@ async function apply(
     let createdAttempt = false;
     if (decision.kind === "MATCH") {
       attemptId = decision.id;
-      await addSubmissionEvidence(tx, userId, attemptId, c.evidenceKey);
     } else {
       attemptId = await insertAttempt(tx, userId, openingId, {
         applicantEmail: f.applicantEmail,
@@ -605,6 +604,7 @@ async function apply(
       });
       createdAttempt = true;
     }
+    await acceptSubmissionEvidence(tx,userId,attemptId,c.evidenceKey,c.occurredAt,f);
     const prior = !createdAttempt
       ? await tx.query<{ id: string }>(
           `SELECT id FROM application_events
@@ -632,10 +632,10 @@ async function apply(
     externalApplicationId: f.externalApplicationId,
     phoneLookupKey: null,
   };
-  if (directAttemptId && !f.externalApplicationId && f.calendar && f.applicantEmail) {
+  if (directAttemptId && (f.externalApplicationId || f.applicantEmail)) {
     const identity = resolveUpdate(openingId, update, attempts);
     if (identity.kind !== "MATCH" || identity.id !== directAttemptId)
-      return fail("CALENDAR_REVISION", attempts.map(a=>a.id), [openingId]);
+      return fail(f.calendar ? "CALENDAR_REVISION" : "AMBIGUOUS_ATTEMPT", attempts.map(a=>a.id), [openingId]);
   }
   const decision = directAttemptId
     ? ({

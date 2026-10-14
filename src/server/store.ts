@@ -175,6 +175,7 @@ export async function insertAttempt(
     externalApplicationId: string | null;
     submittedAt: string | null;
     evidenceKey: string;
+    submissionEvidence?: boolean;
   },
 ): Promise<string> {
   const id = randomUUID();
@@ -188,7 +189,7 @@ export async function insertAttempt(
       fields.applicantEmail,
       fields.externalApplicationId,
       fields.submittedAt,
-      [fields.evidenceKey],
+      fields.submissionEvidence === false ? [] : [fields.evidenceKey],
     ],
   );
   return id;
@@ -205,6 +206,18 @@ export async function addSubmissionEvidence(
       WHERE id = $2 AND user_id = $1 AND NOT ($3 = ANY (submission_evidence_ids))`,
     [userId, attemptId, key],
   );
+}
+
+/** Accepted confirmations fill missing submission facts, preserving earlier snapshots and dates.
+ * Receipt evidence is distinct from status-update evidence on a manually created attempt. */
+export async function acceptSubmissionEvidence(
+  db: Db,userId: string,attemptId: string,key: string,occurredAt: string,
+  fields: {applicantEmail:string|null;externalApplicationId:string|null},
+): Promise<void> {
+  await addSubmissionEvidence(db,userId,attemptId,key);
+  await db.query(`UPDATE application_attempts SET submitted_at=coalesce(submitted_at,$3),
+    applicant_email_snapshot=coalesce(applicant_email_snapshot,$4),external_application_id=coalesce(external_application_id,$5)
+    WHERE user_id=$1 AND id=$2`,[userId,attemptId,occurredAt,fields.applicantEmail,fields.externalApplicationId]);
 }
 
 // ---- events & projection ----------------------------------------------------------------
