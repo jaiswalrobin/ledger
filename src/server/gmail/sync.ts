@@ -188,17 +188,18 @@ export async function syncMailbox(
 
   // Fence every durable mutation. A disconnected/reconnected or expired worker cannot
   // overwrite a replacement run's cursor, ingest with an old grant, or clear its lease.
-  const fenced = <T>(work: (tx: Db) => Promise<T>): Promise<T> =>
+  const fenced = <T>(work: (tx: Db) => Promise<T>, domainMutation = false): Promise<T> =>
     db.transaction(async (tx) => {
-      const owner = await tx.query(
-        "SELECT id FROM ledger_users WHERE id=$1 FOR UPDATE",
-        [mailbox.userId],
-      );
-      if (!owner.rows.length) throw new LeaseLost();
+      // Bookkeeping needs only the mailbox lease. Domain writes preserve the common owner ->
+      // mailbox lock order used by disconnect/recheck/actions, avoiding an inverted lock order.
+      if (domainMutation) {
+        const owner = await tx.query("SELECT id FROM ledger_users WHERE id=$1 FOR UPDATE", [mailbox.userId]);
+        if (!owner.rows.length) throw new LeaseLost();
+      }
       const valid = await tx.query(
         `SELECT id FROM connected_mailboxes WHERE id=$1 AND
-      sync_lease_owner=$2 AND sync_lease_until>$3 AND sync_state<>'DISCONNECTED' FOR UPDATE`,
-        [mailboxId, leaseOwner, now().toISOString()],
+      sync_lease_owner=$2 AND sync_lease_until>$3 AND sync_state<>'DISCONNECTED' AND user_id=$4 FOR UPDATE`,
+        [mailboxId, leaseOwner, now().toISOString(), mailbox.userId],
       );
       if (!valid.rows.length) throw new LeaseLost();
       await tx.query(
@@ -209,7 +210,15 @@ export async function syncMailbox(
           new Date(now().getTime() + LEASE_SECONDS * 1000).toISOString(),
         ],
       );
-      return work(tx);
+      const result = await work(tx);
+      await tx.query(
+        `UPDATE sync_runs SET discovered_count=$2,headers_inspected=$3,bodies_fetched=$4,
+          skipped_sensitive=$5,skipped_other=$6,signals_applied=$7,reviews_created=$8,tasks_failed=$9
+          WHERE id=$1 AND state='RUNNING'`,
+        [runId, counters.discovered, counters.headers, counters.bodies, counters.skippedSensitive,
+          counters.skippedOther, counters.applied, counters.reviews, counters.failed],
+      );
+      return result;
     });
   const setMailbox = (sets: string, params: unknown[] = []) =>
     fenced((tx) =>
@@ -220,6 +229,12 @@ export async function syncMailbox(
     );
 
   try {
+    // Successful lease acquisition proves earlier workers no longer own this mailbox. Preserve
+    // their last checkpoint and close only their unfinished audit records before creating ours.
+    await fenced(tx => tx.query(
+      "UPDATE sync_runs SET state='FAILED',finished_at=$2,safe_error_code='WORKER_LEASE_EXPIRED' WHERE mailbox_id=$1 AND state='RUNNING'",
+      [mailboxId, started.toISOString()],
+    ));
     await fenced((tx) =>
       tx.query(
         "INSERT INTO sync_runs (id, mailbox_id, kind, started_at) VALUES ($1,$2,$3,$4)",
@@ -407,6 +422,7 @@ export async function syncMailbox(
       id: string,
       enveloped: boolean,
       senderAuthenticated: boolean,
+      threadId?: string,
     ): IngestSource =>
       enveloped
         ? { kind: "FORWARDED_EML" }
@@ -415,6 +431,7 @@ export async function syncMailbox(
             mailboxId,
             providerMessageId: id,
             senderAuthenticated,
+            ...(threadId ? {providerThreadId:threadId}:{}),
           };
 
     const finish = (id: string, outcome: string) =>
@@ -568,11 +585,13 @@ export async function syncMailbox(
                 id,
                 original.isAttached === true || original.envelopeDate !== null,
                 headers.senderAuthenticated === true,
+                headers.threadId,
               ),
               original,
               observedAt: now(),
               reprocessUnapplied: task.reprocess_requested,
             }),
+            true,
           );
           if (result.status === "APPLIED") {
             counters.applied += 1 + result.reconciled;
@@ -624,8 +643,11 @@ export async function syncMailbox(
       const queue = [...batch.rows];
       const outcomes = await Promise.allSettled(
         Array.from({ length: concurrency }, async () => {
-          for (let task = queue.shift(); task; task = queue.shift())
+          while (elapsed() < budgetMs) {
+            const task = queue.shift();
+            if (!task) break;
             await processTask(task);
+          }
         }),
       );
       const aborted = outcomes.find((r) => r.status === "rejected");
@@ -707,11 +729,11 @@ export async function syncMailbox(
     await db
       .query(
         `UPDATE sync_runs SET finished_at = $2, state = $3, safe_error_code = $4, discovered_count = $5, headers_inspected = $6, bodies_fetched = $7,
-         skipped_sensitive = $8, skipped_other = $9, signals_applied = $10, reviews_created = $11, tasks_failed = $12 WHERE id = $1`,
+         skipped_sensitive = $8, skipped_other = $9, signals_applied = $10, reviews_created = $11, tasks_failed = $12 WHERE id = $1 AND state='RUNNING'`,
         [
           runId,
           now().toISOString(),
-          status === "FAILED" || status === "DEGRADED" ? "FAILED" : "COMPLETED",
+          errorCode || status === "FAILED" || status === "DEGRADED" ? "FAILED" : "COMPLETED",
           errorCode,
           counters.discovered,
           counters.headers,

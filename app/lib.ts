@@ -15,6 +15,11 @@ export const label = (value: string) =>
     .replaceAll("_", " ")
     .replace(/^./, (x) => x.toUpperCase());
 
+export function gmailMessageUrl(address:string|null,id:string|null):string|null {
+  if(!address||!id||!/^[a-f0-9]{8,32}$/i.test(id)||!/^[^\s<>@]+@[^\s<>@]+$/.test(address))return null;
+  return `https://mail.google.com/mail/?authuser=${encodeURIComponent(address)}#all/${id}`;
+}
+
 export const date = (value: string | null) =>
   value
     ? new Date(value).toLocaleDateString(undefined, {
@@ -200,6 +205,13 @@ export const reasonText: Record<string, string> = {
   CONFLICTING_EVENTS: "This update conflicts with the accepted timeline.",
   CONFLICTING_ALTERNATIVES:
     "The plain-text and HTML versions disagree. Choose how this update should be interpreted.",
+  CONFLICTING_FIELDS: "This message names conflicting employers or roles. Choose the correct application details.",
+  UNCERTAIN_CALENDAR: "The calendar invitation needs review before its time or status can be accepted.",
+  CALENDAR_REVISION: "This calendar update is older than, or conflicts with, an accepted invitation.",
+  INTERVIEW_CANCELLED:
+    "This message says an interview was cancelled or postponed. Decide how it affects the timeline.",
+  NOT_SUBMITTED:
+    "This message mentions your application but says it was not submitted or not received.",
 };
 
 export async function api<T>(path: string, body?: unknown): Promise<T> {

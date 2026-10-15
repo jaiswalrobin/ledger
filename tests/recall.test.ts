@@ -3,7 +3,7 @@ import { after, before, describe, it } from "node:test";
 import { extractSignal } from "../src/ingestion/extract.ts";
 import { parseEml } from "../src/ingestion/eml.ts";
 import { classifyHeaders } from "../src/ingestion/header-gate.ts";
-import { hasSensitiveContent } from "../src/ingestion/privacy.ts";
+import { hasSensitiveContent, sensitivity } from "../src/ingestion/privacy.ts";
 import { htmlText } from "../src/ingestion/html.ts";
 import { senderDomain } from "../src/ingestion/ats.ts";
 import { ingestOriginal } from "../src/server/pipeline.ts";
@@ -158,6 +158,36 @@ describe("recall: sensitive screening targets credentials, not ordinary links", 
       "Your veri\u200bfication code is 123456",
     ])
       assert.equal(hasSensitiveContent(text), true, text);
+  });
+});
+
+describe("sensitivity levels separate access links from credential deliveries", () => {
+  it("hiring links with opaque tokens are access links, not credentials", () => {
+    for (const url of [
+      "https://www.hackerrank.com/tests/abc123/login?b=eyJ0b2tlbiI6&token=Zx81",
+      "https://app.codesignal.com/test/xyz?key=Ab12Cd34",
+      "https://app.greenhouse.io/applications/status?token=opaque-access",
+      "https://calendly.com/d/abc-123/interview?ticket=xyz",
+    ])
+      assert.equal(sensitivity(`Start here: ${url}`), "ACCESS_LINK", url);
+  });
+  it("click tracking and signed assets are ordinary", () => {
+    for (const url of [
+      "https://track.example.com/c/AbCdEf0123456789?sig=zzz",
+      "https://u.example.com/ls/click?upn=abc&sig=def",
+      "https://cdn.example.com/logo.png?Signature=abc&Expires=1",
+    ])
+      assert.equal(sensitivity(url), "NONE", url);
+  });
+  it("account changes, raw secrets and bearer tokens are credentials", () => {
+    for (const text of [
+      "https://acme.example/reset-password?token=abc",
+      "https://acme.example/verify-email?token=abc",
+      "https://acme.example/portal?access_token=abc",
+      "Your verification code is 123456",
+      "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abcdefghij",
+    ])
+      assert.equal(sensitivity(text), "CREDENTIAL", text);
   });
 });
 

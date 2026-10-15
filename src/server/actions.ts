@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import type { AtsKey, Outcome, Stage } from "../domain/types.ts";
 import type { ExtractedFields, SignalKind } from "../ingestion/source.ts";
 import type { Db } from "./db.ts";
+import { reconcileWaitingUpdates } from "./pipeline.ts";
 import { usableEventDate } from "../ingestion/dates.ts";
 import {
   insertAttempt,
   insertOpening,
   recordEvent,
   reproject,
+  acceptSubmissionEvidence,
 } from "./store.ts";
 
 export type ActionErrorCode =
@@ -123,6 +125,7 @@ interface ReviewContext {
   fields: ExtractedFields;
   occurredAt: string | null;
   evidenceKey: string;
+  senderDomain: string | null;
 }
 
 async function loadOpenReview(
@@ -140,9 +143,10 @@ async function loadOpenReview(
     original_message_at: unknown;
     original_key: string | null;
     source_fingerprint: string;
+    sender_domain: string | null;
   }>(
     `SELECT r.state, s.id AS signal_id, s.event_kind, s.fields, a.id AS artifact_id, a.source_kind, a.original_message_at,
-            a.original_key, a.source_fingerprint
+            a.original_key, a.source_fingerprint,a.sender_domain
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
        JOIN source_artifacts a ON a.id = r.source_artifact_id AND a.user_id = r.user_id
@@ -162,6 +166,7 @@ async function loadOpenReview(
       ? new Date(row.original_message_at as string | Date).toISOString()
       : null,
     evidenceKey: row.original_key ?? row.source_fingerprint,
+    senderDomain: row.sender_domain,
   };
 }
 
@@ -261,8 +266,10 @@ export async function resolveReviewAssign(
   await db.transaction(async (tx) => {
     await serializeOwner(tx, userId);
     const ctx = await loadOpenReview(tx, userId, reviewId);
-    await ownedAttempt(tx, userId, attemptId);
+    const { openingId } = await ownedAttempt(tx, userId, attemptId);
     const { kind, occurredAt } = resolveKindAndTime(ctx, overrides);
+    if (kind === "CONFIRMATION_RECEIVED")
+      await acceptSubmissionEvidence(tx,userId,attemptId,ctx.evidenceKey,occurredAt,ctx.fields);
     await recordEvent(
       tx,
       {
@@ -273,10 +280,13 @@ export async function resolveReviewAssign(
         sourceType: ctx.sourceKind,
         origin: "MANUAL",
         dedupeKey: `${attemptId}:${kind}:${ctx.evidenceKey}`,
+        signalId: ctx.signalId,
+        ...(kind === "INTERVIEW_SCHEDULED" && ctx.fields.calendar ? {calendar:ctx.fields.calendar,senderDomain:ctx.senderDomain ?? ""}:{}),
       },
       ctx.artifactId,
     );
     await closeReview(tx, userId, reviewId, ctx, "RESOLVED", "ASSIGNED");
+    if (kind === "CONFIRMATION_RECEIVED") await reconcileWaitingUpdates(tx,userId,new Date(),openingId);
   });
 }
 
@@ -333,6 +343,7 @@ export async function resolveReviewCreate(
           : f.externalApplicationId,
       submittedAt: kind === "CONFIRMATION_RECEIVED" ? occurredAt : null,
       evidenceKey: ctx.evidenceKey,
+      submissionEvidence: kind === "CONFIRMATION_RECEIVED",
     });
     await recordEvent(
       tx,
@@ -344,10 +355,14 @@ export async function resolveReviewCreate(
         sourceType: ctx.sourceKind,
         origin: "MANUAL",
         dedupeKey: `${attemptId}:${kind}:${ctx.evidenceKey}`,
+        signalId: ctx.signalId,
+        ...(kind === "INTERVIEW_SCHEDULED" && ctx.fields.calendar ? {calendar:ctx.fields.calendar,senderDomain:ctx.senderDomain ?? ""}:{}),
       },
       ctx.artifactId,
     );
     await closeReview(tx, userId, reviewId, ctx, "RESOLVED", "CREATED");
+    // The new attempt may be what waiting updates were missing, as after an automatic one.
+    await reconcileWaitingUpdates(tx, userId, new Date(), openingId);
     return { attemptId, openingId };
   });
 }

@@ -17,7 +17,9 @@
     "migrate": "node --experimental-strip-types scripts/migrate.ts",
     "test:browser": "playwright test",
     "test:postgres": "node --experimental-strip-types --test tests/postgres/*.test.ts",
-    "smoke": "node --experimental-strip-types scripts/smoke.ts"
+    "smoke": "node --experimental-strip-types scripts/smoke.ts",
+    "eval:parser": "node --experimental-strip-types scripts/parser-eval.ts",
+    "preview:parser": "node --experimental-strip-types scripts/parser-preview.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.9",
@@ -30,11 +32,13 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "ical.js": "^2.2.1",
     "lucide-react": "^1.56.0",
     "next": "^16.4.0",
     "pg": "^8.23.1",
     "postal-mime": "^4.0.5",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "tldts": "^7.4.18"
   }
 }

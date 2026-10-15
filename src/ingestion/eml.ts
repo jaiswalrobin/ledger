@@ -85,6 +85,24 @@ function toMessage(email: Email): ParsedMessage {
     throw error;
   }
   const text = email.text?.trim() ? email.text : html;
+  const replyHeaders = email.headers.filter(header=>["in-reply-to","references"].includes(header.key.toLowerCase()));
+  const replyText = replyHeaders.map(header=>header.value).join(" ");
+  const replyIds = replyText.match(/<[^\s<>]{1,512}>/g) ?? [];
+  const reliableReplies = replyText.length<=10_000 && replyIds.length<=20 &&
+    new Set(replyHeaders.map(header=>header.key.toLowerCase())).size===replyHeaders.length;
+  const calendarParts: { content: string; method: string | null }[] = [];
+  let calendarChars = 0;
+  for (const attachment of email.attachments.filter(part => part.mimeType === "text/calendar")) {
+    if (calendarParts.length >= 10) throw new EmlError("TOO_MANY");
+    let content: string;
+    try {
+      content = typeof attachment.content === "string" ? attachment.content :
+        new TextDecoder("utf-8", { fatal: true }).decode(attachment.content);
+    } catch { throw new EmlError("MALFORMED"); }
+    calendarChars += content.length;
+    if (calendarChars > EML_LIMITS.maxTextChars) throw new EmlError("TOO_LARGE");
+    calendarParts.push({ content, method: attachment.method?.toUpperCase() ?? null });
+  }
   // Never silently discard the tail: it may contain a secret or contradict an earlier phrase.
   if (
     text.length > EML_LIMITS.maxTextChars ||
@@ -92,7 +110,9 @@ function toMessage(email: Email): ParsedMessage {
   )
     throw new EmlError("TOO_LARGE");
   return {
-    messageId: email.messageId?.trim() || null,
+    messageId: email.headers.filter(header=>header.key.toLowerCase()==="message-id").length===1 ? email.messageId?.trim() || null : null,
+    replyMessageIds: reliableReplies ? [...new Set(replyIds)] : [],
+    ...(!reliableReplies?{threadContextUncertain:true}:{}),
     fromName: email.from?.name?.trim() ?? "",
     fromAddress: email.from?.address?.trim().toLowerCase() || null,
     to,
@@ -100,6 +120,7 @@ function toMessage(email: Email): ParsedMessage {
     date: originalDate(email),
     text,
     alternativeTexts: html && html !== text ? [html] : [],
+    ...(calendarParts.length ? { calendarParts } : {}),
     ...(email.html ? { inspectionHtml: email.html } : {}),
   };
 }

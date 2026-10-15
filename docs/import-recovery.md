@@ -10,10 +10,24 @@ belong to one opening, and separate submissions remain separate attempts. Emails
 that identify an employer but not a role stay in review. A role absent from the
 email must be supplied by the owner; Ledger does not invent it.
 
+## Previewing a parser improvement
+
+For an original `.eml` already available locally, run:
+
+```sh
+npm run preview:parser -- original.eml --baseline-ref COMMIT
+```
+
+The output compares extractor proposals, not database application outcomes. It uses current MIME
+decoding and installed dependencies for both versions, prints no message bodies, and changes no
+accepted history. Sensitive content is excluded before either extractor runs. The baseline commit
+must already exist locally. Use the preview to identify records needing an owner-reviewed correction;
+rechecking continues to preserve existing decisions.
+
 ## After deploying a parser improvement
 
 1. Merge the reviewed changes and wait for Ledger CI/CD on `main` to succeed.
-   This release applies `0008_mailbox_recheck.sql` before promotion. Google settings
+   The release applies all pending migrations before promotion. Google settings
    and `DEMO_MODE=false` must already be configured for a private production app.
 2. Open **Connections → Recheck last 60 days**. This starts a fresh, bounded search
    and retries previously skipped candidates using the current parser. It does
@@ -28,17 +42,18 @@ email must be supplied by the owner; Ledger does not invent it.
 5. Verify the IBM confirmation against Gmail: employer IBM, actual role, and
    September 30 confirmation date. The job requisition scopes the opening;
    Candidate ID identifies a person and never identifies an application attempt.
-   Updates without a submission-specific identity require review.
+   A verified unique conversation or the opening's sole compatible attempt may identify an
+   update without repeated submission fields; contradictions or multiple candidates require review.
 
 Rechecks are owner-scoped, rate-limited, refuse active workers, and use a generation
 to avoid requeuing a message twice across overlapping queries. Existing accepted,
 rejected, assigned, or dismissed evidence is protected by transaction checks.
 An old source whose provider payload changed is not silently overwritten.
 
-Privacy checks still exclude OTPs, sign-in/reset/verification links, bearer JWTs,
-and unknown token-bearing access links. Clearly identified tracking/unsubscribe
-links may accompany a legitimate recruiting message, but those links and their
-tokens are never stored. Parsing limits and damaged attachments are reported;
+Privacy checks still exclude delivered OTPs, credential/reset/verification messages and bearer
+secrets. Portal/assessment/scheduling access links may accompany independently recognized hiring
+content; their tokens and URLs are discarded. Clearly identified tracking/unsubscribe links are
+also never persisted. Parsing limits and damaged attachments are reported;
 valid sibling originals can be imported with an explicit partial-processing result.
 Missing dates remain unknown rather than being inferred from mail-routing headers.
 

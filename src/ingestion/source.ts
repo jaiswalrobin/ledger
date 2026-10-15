@@ -7,6 +7,9 @@ import type { ApplicationEventKind, AtsKey } from "../domain/types.ts";
  */
 export interface ParsedMessage {
   messageId: string | null;
+  /** Transient RFC identifiers. Only hashes are persisted; ambiguous/oversized chains are ignored. */
+  replyMessageIds?: readonly string[];
+  threadContextUncertain?: boolean;
   fromName: string;
   fromAddress: string | null;
   /** Original To recipients only. Cc/Bcc and forwarding recipients are deliberately excluded. */
@@ -19,6 +22,8 @@ export interface ParsedMessage {
   alternativeTexts?: readonly string[];
   /** Raw HTML for conservative secret screening, never extraction or persistence. */
   inspectionHtml?: string;
+  /** Scheduling parts remain transient and pass the same secret screen as message text. */
+  calendarParts?: readonly { content: string; method: string | null }[];
 }
 
 export interface ParsedOriginal {
@@ -48,10 +53,28 @@ export const TERMINAL_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>([
   "OFFER_RECEIVED",
 ]);
 
+export interface FieldDecision {
+  state: "SUPPORTED" | "AMBIGUOUS" | "MISSING";
+  value: string | null;
+  candidates: readonly { value: string; score: number; sources: readonly string[] }[];
+}
+
+export interface CalendarFacts {
+  /** Opaque UID hash; raw calendar identifiers and participant addresses are never retained. */
+  uidKey: string;
+  sequence: number;
+  method: string;
+  status: string;
+  scheduledFor: string | null;
+  organizerDomain: string | null;
+}
+
 /** Structured, redacted facts lifted from a message. Safe to persist. */
 export interface ExtractedFields {
   company: string | null;
   title: string | null;
+  fieldDecisions?: { company: FieldDecision; title: FieldDecision };
+  calendar?: CalendarFacts;
   location: string | null;
   atsKey: AtsKey | null;
   /** Query-free job URL on a known ATS host, or a clean job-path URL. Never a signed link. */

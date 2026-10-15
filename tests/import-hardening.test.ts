@@ -100,9 +100,21 @@ test("two different job links require review rather than choosing the first", as
   assert.equal((await listReviews(t.db, userId))[0]!.reason, "AMBIGUOUS_OPENING");
 });
 
+test("a hiring email with a portal access link is processed, and the link is stored nowhere", async () => {
+  const { userId, mailboxId, fake, deps } = await setup();
+  fake.add("portal", { ...ibm, html: '<p>Application received.</p><a href="https://example.org/portal?token=never-persist-me">Career portal</a>' });
+  await syncMailbox(deps, mailboxId, { userId });
+  assert.equal((await t.db.query("SELECT outcome FROM processing_tasks WHERE mailbox_id=$1", [mailboxId])).rows[0]!.outcome, "PROCESSED");
+  assert.equal((await listOpenings(t.db, userId, NOW)).length, 1);
+  for (const table of ["source_artifacts", "extracted_signals", "job_openings", "application_attempts", "application_events", "review_items"]) {
+    const { rows } = await t.db.query(`SELECT row_to_json(x)::text AS row FROM ${table} x WHERE user_id=$1`, [userId]);
+    for (const { row } of rows) assert.ok(!String(row).includes("never-persist-me"), table);
+  }
+});
+
 test("body privacy exclusions have their own durable outcome and no retained secret facts", async () => {
   const { userId, mailboxId, fake, deps } = await setup();
-  fake.add("secret", { ...ibm, html: '<p>Application received.</p><a href="https://example.org/?token=never-persist-me">Career portal</a>' });
+  fake.add("secret", { ...ibm, html: '<p>Application received.</p><a href="https://example.org/verify-email?token=never-persist-me">Verify your email</a>' });
   await syncMailbox(deps, mailboxId, { userId });
   assert.equal((await t.db.query("SELECT outcome FROM processing_tasks WHERE mailbox_id=$1", [mailboxId])).rows[0]!.outcome, "SKIPPED_SENSITIVE");
   const a = (await t.db.query("SELECT subject_redacted,original_key FROM source_artifacts WHERE user_id=$1", [userId])).rows[0]!;
@@ -206,17 +218,20 @@ test("replay after a crash keeps exclusions instead of counting them as processe
   }
 });
 
-test("IBM requisition joins related updates to the opening, but never guesses the applicant identity", async () => {
+test("IBM requisition joins a related update to the only attempt, never via the Candidate ID", async () => {
   const { userId, mailboxId, fake, deps } = await setup();
   fake.add("ibm", ibm);
   fake.add("assessment", { ...ibm, messageId: "<assessment@example.org>", subject: "Action Required: IBM Coding Assessment", text: "Ref: 123456 - Senior Frontend Engineer I - Confluent\nPlease complete your coding assessment. Candidate ID - 98765432" });
   await syncMailbox(deps, mailboxId, { userId });
-  const openings = await listOpenings(t.db, userId, NOW), reviews = await listReviews(t.db, userId);
+  const openings = await listOpenings(t.db, userId, NOW);
   assert.equal(openings.length, 1);
-  assert.equal(reviews.length, 1, "without a submission-specific ID or declared applicant email, assigning to an attempt requires review");
-  assert.equal(reviews[0]!.fields.externalApplicationId, null);
-  assert.equal(reviews[0]!.fields.title, openings[0]!.title);
-  assert.equal(reviews[0]!.kind, "ASSESSMENT_INVITED");
+  assert.deepEqual(await listReviews(t.db, userId), [], "a non-terminal update joins the opening's only attempt");
+  const { rows } = await t.db.query<{ event_kind: string }>(
+    "SELECT event_kind FROM application_events WHERE user_id=$1 AND review_state='ACCEPTED' ORDER BY occurred_at, event_kind", [userId]);
+  assert.deepEqual(rows.map(r => r.event_kind).sort(), ["ASSESSMENT_INVITED", "CONFIRMATION_RECEIVED"]);
+  const attempts = await t.db.query<{ external_application_id: string | null }>(
+    "SELECT external_application_id FROM application_attempts WHERE user_id=$1", [userId]);
+  assert.deepEqual(attempts.rows, [{ external_application_id: null }], "a Candidate ID never becomes an application ID");
 });
 
 test("contradictory IBM requisitions in subject and body require review", async () => {
@@ -224,7 +239,7 @@ test("contradictory IBM requisitions in subject and body require review", async 
   fake.add("ibm", { ...ibm, text: ibm.text!.replace("123456", "654321") });
   await syncMailbox(deps, mailboxId, { userId });
   assert.equal((await listOpenings(t.db, userId, NOW)).length, 0);
-  assert.equal((await listReviews(t.db, userId))[0]!.reason, "AMBIGUOUS_OPENING");
+  assert.equal((await listReviews(t.db, userId))[0]!.reason, "CONFLICTING_FIELDS");
 });
 
 test("recheck detects a changed provider payload instead of silently overwriting prior evidence", async () => {

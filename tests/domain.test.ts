@@ -44,12 +44,17 @@ test("replayed confirmation references existing attempt", () => {
   assert.equal(result.kind, "MATCH");
 });
 test("same ATS application ID never creates a second attempt", () => {
-  const result = resolveSubmission(job.id, submission("fresh-mail", "other@example.com", "app-1"), [attempt("a", "a@example.com", "app-1")]);
+  const result = resolveSubmission(job.id, submission("fresh-mail", "a@example.com", "app-1"), [attempt("a", "a@example.com", "app-1")]);
   assert.equal(result.kind, "MATCH");
 });
 test("different explicit ATS application IDs can represent different submissions", () => {
   const result = resolveSubmission(job.id, submission("new-submission", "a@example.com", "app-2"), [attempt("a", "a@example.com", "app-1")]);
   assert.equal(result.kind, "CREATE");
+});
+test("an exact application ID cannot override contradictory submitted contact evidence",()=>{
+  const known=attempt("a","a@example.com","app-1");
+  assert.equal(resolveSubmission(job.id,submission("another-receipt","b@example.com","app-1"),[known]).kind,"REVIEW");
+  assert.equal(resolveUpdate(job.id,{applicantEmail:"b@example.com",phoneLookupKey:null,externalApplicationId:"app-1"},[known]).kind,"REVIEW");
 });
 test("same email and no external ID is review rather than automatic duplicate or new attempt", () => {
   const result = resolveSubmission(job.id, submission("different-confirmation", "a@example.com"), [attempt("a", "A@example.com")]);
@@ -82,9 +87,24 @@ test("phone mismatch on otherwise matching email is not auto-accepted", () => {
   const result = resolveUpdate(job.id, { applicantEmail: "a@example.com", phoneLookupKey: "hmac-b", externalApplicationId: null }, [attempt("a", "a@example.com", null, "hmac-a")]);
   assert.equal(result.kind, "REVIEW");
 });
-test("no attempt identity means unresolved even with one known attempt", () => {
+test("an update with no identity matches the only attempt, as weaker evidence", () => {
   const result = resolveUpdate(job.id, { applicantEmail: null, phoneLookupKey: null, externalApplicationId: null }, [attempt("a", "a@example.com")]);
+  assert.deepEqual(result, { kind: "MATCH", id: "a", reason: "Sole attempt on the opening" });
+});
+test("no attempt identity stays unresolved when the opening has two attempts", () => {
+  const result = resolveUpdate(job.id, { applicantEmail: null, phoneLookupKey: null, externalApplicationId: null }, [attempt("a", "a@example.com"), attempt("b", "b@example.com")]);
   assert.equal(result.kind, "REVIEW");
+});
+test("an identity the only attempt contradicts never falls back to it", () => {
+  for (const update of [
+    { applicantEmail: null, phoneLookupKey: null, externalApplicationId: "GH-2" },
+    { applicantEmail: "other@example.com", phoneLookupKey: null, externalApplicationId: null },
+  ])
+    assert.equal(resolveUpdate(job.id, update, [attempt("a", "a@example.com", "GH-1")]).kind, "REVIEW");
+});
+test("an identity the only attempt never recorded does not contradict it", () => {
+  const result = resolveUpdate(job.id, { applicantEmail: "a@example.com", phoneLookupKey: null, externalApplicationId: "GH-9" }, [attempt("a", null)]);
+  assert.deepEqual(result, { kind: "MATCH", id: "a", reason: "Sole attempt on the opening" });
 });
 test("attempt state remains independent across two submissions", () => {
   const events = [
@@ -133,4 +153,16 @@ test("'Thank you for applying' confirmations are candidates, including from ATS 
 });
 test("a verification code is still skipped when the subject also says applying", () => {
   assert.equal(classifyHeaders({ from: "no-reply@greenhouse.io", subject: "Your code for applying: 482913 (verification code)" }).kind, "SKIP_SENSITIVE");
+});
+
+test("companyKey merges legal-form and case variants but never a prefix", async () => {
+  const { companyKey } = await import("../src/domain/normalization.ts");
+  for (const variant of ["ACME", "Acme, Inc.", "The Acme Co.", "Acme Inc", "acme  llc"])
+    assert.equal(companyKey(variant), "acme", variant);
+  assert.equal(companyKey("Johnson & Johnson"), companyKey("Johnson and Johnson"));
+  assert.equal(companyKey("McDonald's"), "mcdonalds");
+  assert.notEqual(companyKey("Acme"), companyKey("Acme Robotics"));
+  assert.notEqual(companyKey("Acme"), companyKey("Acme Holdings Ltd"));
+  assert.equal(companyKey("Company"), "company");
+  assert.equal(companyKey("Inc."), "inc");
 });

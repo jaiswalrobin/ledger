@@ -171,6 +171,38 @@ test("real PostgreSQL: a replaced lease fences a still-running worker", async ()
   );
 });
 
+test("real PostgreSQL: mailbox bookkeeping proceeds while the owner domain lock is held", async () => {
+  const user = await owner(), mailbox = await seedMailbox(db, user);
+  const blocker = await pool.connect(), fake = new FakeGmail();
+  let reached!: () => void, release!: () => void;
+  const enteredClient = new Promise<void>(resolve => { reached = resolve; });
+  const clientGate = new Promise<void>(resolve => { release = resolve; });
+  let running: ReturnType<typeof syncMailbox> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await blocker.query("BEGIN");
+    await blocker.query("SELECT id FROM ledger_users WHERE id=$1 FOR UPDATE", [user]);
+    running = syncMailbox({
+      db,
+      clientFor: async () => { reached(); await clientGate; return fake; },
+    }, mailbox, { userId: user });
+    await Promise.race([
+      enteredClient,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Bookkeeping waited for the owner domain lock")), 5000);
+      }),
+    ]);
+    const runs = await db.query("SELECT id FROM sync_runs WHERE mailbox_id=$1 AND state='RUNNING'", [mailbox]);
+    assert.equal(runs.rows.length, 1);
+  } finally {
+    if (timer) clearTimeout(timer);
+    await blocker.query("ROLLBACK");
+    blocker.release();
+    release();
+    if (running) await running;
+  }
+});
+
 test("real PostgreSQL: a populated legacy schema upgrades without losing company/opening identities", async () => {
   const { mkdtemp, readFile, writeFile, readdir, rm } =
     await import("node:fs/promises");
@@ -210,7 +242,7 @@ test("real PostgreSQL: a populated legacy schema upgrades without losing company
         join(directory, file),
         await readFile(join(source, file)),
       );
-    assert.equal((await applyMigrations(isolated, directory)).length, 7);
+    assert.equal((await applyMigrations(isolated, directory)).length, (await readdir(source)).filter(file=>file.endsWith(".sql")).length - 1);
     assert.equal(
       (await isolated.query("SELECT id FROM companies")).rows.length,
       2,

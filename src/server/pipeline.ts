@@ -3,13 +3,14 @@ import {
   resolveOpening,
   resolveSubmission,
   resolveUpdate,
+  SOLE_ATTEMPT,
 } from "../domain/resolution.ts";
 import type { JobOpening } from "../domain/types.ts";
-import { atsKeyId } from "../domain/normalization.ts";
+import { atsKeyId, companyKey, normalizedText } from "../domain/normalization.ts";
 import { redactSubject } from "../ingestion/eml.ts";
-import { EXTRACTOR_VERSION, extractSignal } from "../ingestion/extract.ts";
+import { EXTRACTOR_VERSION, extractSignal, isHiringSignal } from "../ingestion/extract.ts";
 import { classifyHeaders } from "../ingestion/header-gate.ts";
-import { hasSensitiveContent } from "../ingestion/privacy.ts";
+import { messageSensitivity } from "../ingestion/privacy.ts";
 import { usableEventDate } from "../ingestion/dates.ts";
 import {
   isRecruitingSenderDomain,
@@ -22,8 +23,10 @@ import {
   type SignalKind,
 } from "../ingestion/source.ts";
 import type { Db } from "./db.ts";
+import {conversationAttempts,employerOpenings,messageIdKey} from "./conversation.ts";
+import {employerDomain} from "../ingestion/fields.ts";
 import {
-  addSubmissionEvidence,
+  acceptSubmissionEvidence,
   findAttemptsByExternalId,
   insertAttempt,
   insertOpening,
@@ -33,7 +36,11 @@ import {
   weakOpeningCandidates,
   linkEvidence,
   reproject,
+  attemptsForCalendarUid,
+  latestCalendarRevision,
+  sameCalendarRevision,
   automaticEventProblem,
+  attemptConfirmedInMailbox,
 } from "./store.ts";
 
 export type IngestSource =
@@ -42,6 +49,7 @@ export type IngestSource =
       mailboxId: string;
       providerMessageId: string;
       senderAuthenticated?: boolean;
+      providerThreadId?: string;
     }
   // Synthetic fixtures are explicitly trusted by internal demo/test code only.
   // The upload route must never accept this field from a request or message.
@@ -69,7 +77,12 @@ export type ReviewReason =
   | "AMBIGUOUS_APPLICATION_ID"
   | "EVENT_PRECEDES_SUBMISSION"
   | "CONFLICTING_EVENTS"
-  | "CONFLICTING_ALTERNATIVES";
+  | "CONFLICTING_ALTERNATIVES"
+  | "INTERVIEW_CANCELLED"
+  | "NOT_SUBMITTED"
+  | "CONFLICTING_FIELDS"
+  | "UNCERTAIN_CALENDAR"
+  | "CALENDAR_REVISION";
 
 export type IngestOutcome =
   | {
@@ -119,6 +132,7 @@ export function originalKeyOf(original: ParsedOriginal): string | null {
       normalized(m.subject),
       normalized(m.text),
       [...new Set((m.alternativeTexts ?? []).map(normalized))].sort(),
+      ...(m.calendarParts?.length ? [m.calendarParts.map(part => [part.method, normalized(part.content)]).sort()] : []),
     ]),
   );
 }
@@ -136,6 +150,12 @@ interface Context {
   signal: ExtractedSignal;
   occurredAt: string;
   trustedSender: boolean;
+  /** The Gmail mailbox that received this message; null for forwarded files. */
+  mailboxId: string | null;
+  senderDomain: string;
+  senderVerified: boolean;
+  replyMessageKeys: readonly string[];
+  providerThreadId: string | null;
 }
 
 export async function ingestOriginal(
@@ -195,6 +215,8 @@ async function run(
   }
 
   const m = original.message;
+  const replyMessageKeys=(m.replyMessageIds??[]).map(messageIdKey).filter((key):key is string=>key!==null);
+  const providerThreadId=source.kind==="GMAIL"&&!m.threadContextUncertain?source.providerThreadId??null:null;
   const usableDate = usableEventDate(m.date, observedAt);
   const artifactId = existing?.id ?? randomUUID();
   const originalKey = originalKeyOf(original);
@@ -211,13 +233,16 @@ async function run(
   ) => existing
     ? tx.query(
         `UPDATE source_artifacts SET body_access_decision=$3, subject_redacted=$4, original_key=$5,
-          extractor_version=$6, original_message_at=$7, sender_authenticated=$8 WHERE id=$1 AND user_id=$2`,
-        [artifactId, userId, decision, subject, key, extractorVersion, usableDate, trustedSender],
+          extractor_version=$6, original_message_at=$7, sender_authenticated=$8,sender_domain=$9,sender_verified=$10,
+          provider_thread_id=$11,message_id_key=$12,reply_message_keys=$13 WHERE id=$1 AND user_id=$2`,
+        [artifactId, userId, decision, subject, key, extractorVersion, usableDate, trustedSender, decision === "SKIPPED_SENSITIVE" ? null : fromDomain.toLowerCase(), source.kind === "GMAIL" && source.senderAuthenticated === true,
+         decision==="SKIPPED_SENSITIVE"?null:providerThreadId,decision==="SKIPPED_SENSITIVE"?null:messageIdKey(m.messageId),decision==="SKIPPED_SENSITIVE"?[]:replyMessageKeys],
       )
     : tx.query(
       `INSERT INTO source_artifacts (id, user_id, source_kind, mailbox_id, provider_message_id, original_rfc_message_id,
-         source_fingerprint, original_message_at, envelope_message_at, body_access_decision, extractor_version, original_key, subject_redacted,sender_authenticated)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+         source_fingerprint, original_message_at, envelope_message_at, body_access_decision, extractor_version, original_key, subject_redacted,sender_authenticated,sender_domain,sender_verified,
+         provider_thread_id,message_id_key,reply_message_keys)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
       [
         artifactId,
         userId,
@@ -233,6 +258,11 @@ async function run(
         key,
         subject,
         trustedSender,
+        decision === "SKIPPED_SENSITIVE" ? null : fromDomain.toLowerCase(),
+        source.kind === "GMAIL" && source.senderAuthenticated === true,
+        decision==="SKIPPED_SENSITIVE"?null:providerThreadId,
+        decision==="SKIPPED_SENSITIVE"?null:messageIdKey(m.messageId),
+        decision==="SKIPPED_SENSITIVE"?[]:replyMessageKeys,
       ],
     );
   const decision =
@@ -242,14 +272,15 @@ async function run(
     from: `${m.fromName} <${m.fromAddress ?? ""}>`,
     subject: m.subject,
   });
+  // Extraction is transient; nothing is stored before this decision. A credential delivery is
+  // never kept. A message whose only secret is an access link (an assessment or portal link) is
+  // kept only when it is hiring mail; the link itself is never stored.
+  const level = messageSensitivity(m);
+  const signal = extractSignal({ ...m, date: usableDate });
   if (
     gate.kind === "SKIP_SENSITIVE" ||
-    [
-      m.subject,
-      m.text,
-      ...(m.alternativeTexts ?? []),
-      m.inspectionHtml ?? "",
-    ].some(hasSensitiveContent)
+    level === "CREDENTIAL" ||
+    (level === "ACCESS_LINK" && !isHiringSignal(signal))
   ) {
     // Nothing derived from a credential-like message is kept, including its subject.
     await insertArtifact("SKIPPED_SENSITIVE", null, null, null);
@@ -257,7 +288,6 @@ async function run(
     return { status: "SKIPPED_SENSITIVE" };
   }
 
-  const signal = extractSignal({ ...m, date: usableDate });
   const subjectRedacted = redactSubject(m.subject);
 
   if (originalKey) {
@@ -302,14 +332,29 @@ async function run(
     sourceType: source.kind,
     signal,
     trustedSender,
+    mailboxId: source.kind === "GMAIL" ? source.mailboxId : null,
+    senderDomain: fromDomain.toLowerCase(),
+    senderVerified: source.kind === "FORWARDED_EML" || source.senderAuthenticated === true,
+    replyMessageKeys,providerThreadId,
   };
 
   if (signal.reasons.includes("conflicting-alternatives"))
     return review(base, "CONFLICTING_ALTERNATIVES", [], []);
+  if (signal.reasons.includes("conflicting-fields"))
+    return review(base, "CONFLICTING_FIELDS", [], []);
   if (signal.reasons.includes("ambiguous-kind"))
     return review(base, "UNRECOGNIZED", [], []);
   if (signal.reasons.includes("ambiguous-job-links"))
     return review(base, "AMBIGUOUS_OPENING", [], []);
+  if (signal.reasons.includes("interview-cancelled"))
+    return review(base, "INTERVIEW_CANCELLED", [], []);
+  if (signal.reasons.includes("uncertain-calendar"))
+    return review(base, "UNCERTAIN_CALENDAR", [], []);
+  // Receipt wording next to "not submitted"/"not received": contradictory, so never dismissed.
+  if (signal.reasons.includes("not-submitted"))
+    return review(base, "NOT_SUBMITTED", [], []);
+  if (signal.reasons.includes("quoted-history-only"))
+    return review(base, "UNRECOGNIZED", [], []);
   if (!signal.kind) {
     // A synced message is dismissed only when nothing suggests it is hiring mail. Mixed signals,
     // or any unrecognised message from a hiring platform, go to a human instead of disappearing.
@@ -333,10 +378,10 @@ async function run(
       "UPDATE extracted_signals SET processing_state = 'APPLIED' WHERE id = $1",
       [signalId],
     );
-    if (outcome.createdAttempt)
+    if (outcome.kind === "CONFIRMATION_RECEIVED")
       return {
         ...outcome,
-        reconciled: await reconcileWaitingUpdates(tx, userId, observedAt),
+        reconciled: await reconcileWaitingUpdates(tx, userId, observedAt, outcome.openingId),
       };
   }
   return outcome;
@@ -412,12 +457,45 @@ async function apply(
       : Promise.resolve({ status: "REVIEW", reviewId: "", reason });
   const kind = signal.kind!;
   const f = signal.fields;
+  if (f.fieldDecisions && Object.values(f.fieldDecisions).some(d => d.state === "AMBIGUOUS"))
+    return fail("CONFLICTING_FIELDS", [], []);
   const isConfirmation = kind === "CONFIRMATION_RECEIVED";
 
   let openingId: string | null = null;
   let strongOpening = false;
   let createdOpening = false;
   let directAttemptId: string | null = null;
+  let directReason = "Exact application ID";
+  const calendarPrior = f.calendar ? await latestCalendarRevision(tx,userId,c.signalId,f.calendar.uidKey) : null;
+
+  // An accepted calendar UID can link later revisions without inventing applicant contacts.
+  // Explicit application IDs take precedence; conflicting identities never fall back to a UID.
+  if (!isConfirmation && !f.externalApplicationId && f.calendar) {
+    const known = await attemptsForCalendarUid(tx, userId, c.signalId, f.calendar.uidKey);
+    if (known.length > 1)
+      return fail(
+        "CALENDAR_REVISION",
+        known.map((k) => k.attemptId),
+        known.map((k) => k.openingId),
+      );
+    if (known[0]) {
+      if (!c.senderVerified || !f.calendar.organizerDomain || !calendarPrior?.calendar.organizerDomain ||
+          f.calendar.organizerDomain !== calendarPrior.calendar.organizerDomain)
+        return fail("CALENDAR_REVISION", known.map(k=>k.attemptId),known.map(k=>k.openingId));
+      const { attemptId, openingId: knownOpening } = known[0];
+      const opening = (await loadOpenings(tx, userId,{id:knownOpening}))[0]!;
+      // A revision may omit the company or title, but must not name a different one.
+      const differentCompany = f.company && companyKey(f.company) !== companyKey(opening.company);
+      const differentTitle = f.title && normalizedText(f.title) !== normalizedText(opening.title);
+      const differentAts = f.atsKey && (!opening.atsKey || atsKeyId(f.atsKey) !== atsKeyId(opening.atsKey));
+      if (differentCompany || differentTitle || differentAts)
+        return fail("CALENDAR_REVISION", [attemptId], [opening.id]);
+      openingId = opening.id;
+      directAttemptId = attemptId;
+      directReason = "Accepted calendar identity";
+      strongOpening = true;
+    }
+  }
 
   // An observed application id is the strongest link for any update.
   if (!isConfirmation && f.externalApplicationId) {
@@ -433,9 +511,7 @@ async function apply(
         [...new Set(hits.map((h) => h.openingId))],
       );
     if (hits.length === 1) {
-      const known = (await loadOpenings(tx, userId)).find(
-        (o) => o.id === hits[0]!.openingId,
-      );
+      const known = (await loadOpenings(tx, userId,{id:hits[0]!.openingId}))[0];
       // IDs are scoped to employers/openings. A bare reused ID cannot cross that boundary.
       const matching =
         known &&
@@ -451,6 +527,9 @@ async function apply(
         known.atsKey &&
         atsKeyId(f.atsKey) === atsKeyId(known.atsKey);
       if (stable || (matching && !f.atsKey)) {
+        if (known && ((f.company && companyKey(f.company) !== companyKey(known.company)) ||
+            (f.title && normalizedText(f.title) !== normalizedText(known.title))))
+          return fail("AMBIGUOUS_OPENING", [hits[0]!.id], [known.id]);
         openingId = hits[0]!.openingId;
         directAttemptId = hits[0]!.id;
         strongOpening = true;
@@ -458,9 +537,26 @@ async function apply(
     }
   }
 
+  if (!isConfirmation && !openingId && !f.externalApplicationId && c.mailboxId && c.senderVerified &&
+      (c.replyMessageKeys.length || c.providerThreadId)) {
+    const linked=await conversationAttempts(tx,userId,c.mailboxId,c.senderDomain,c.replyMessageKeys,c.providerThreadId,f);
+    if(linked.some(row=>row.conflicting))return fail("AMBIGUOUS_OPENING",linked.map(row=>row.attemptId),linked.map(row=>row.openingId));
+    if(linked.length>1)return fail("AMBIGUOUS_ATTEMPT",linked.map(row=>row.attemptId),linked.map(row=>row.openingId));
+    if(linked[0]){
+      if(!isTrustedAtsDomain(c.senderDomain)&&!employerDomain(c.senderDomain,linked[0].company))return fail("MISSING_JOB_DETAILS",[linked[0].attemptId],[linked[0].openingId]);
+      openingId=linked[0].openingId;directAttemptId=linked[0].attemptId;directReason="Verified conversation";strongOpening=true;
+    }
+  }
+  if (!isConfirmation && !openingId && (!f.company || !f.title) && c.mailboxId && c.senderVerified && !f.externalApplicationId) {
+    const context=await employerOpenings(tx,userId,c.senderDomain);
+    if(context.overflow)return fail("AMBIGUOUS_OPENING",[],context.openings.map(o=>o.id));
+    const known=context.openings.filter(o=>(!f.company||companyKey(f.company)===companyKey(o.company))&&(!f.title||normalizedText(f.title)===normalizedText(o.title)));
+    if(known.length>1)return fail("AMBIGUOUS_OPENING",[],known.map(o=>o.id));
+    if(known[0])openingId=known[0].id;
+  }
   if (!openingId) {
     if (!f.company || !f.title) return fail("MISSING_JOB_DETAILS", [], []);
-    const openings = await loadOpenings(tx, userId);
+    const openings = await loadOpenings(tx, userId,{title:f.title,atsKey:f.atsKey,canonicalUrl:f.canonicalUrl});
     const resolved = resolveOpening(
       {
         company: f.company,
@@ -512,6 +608,8 @@ async function apply(
     sourceType: c.sourceType,
     origin: "AUTO" as const,
     dedupeKey: `${attemptId}:${kind}:${c.evidenceKey}`,
+    signalId: c.signalId,
+    ...(kind === "INTERVIEW_SCHEDULED" && f.calendar ? {calendar: f.calendar, senderDomain: c.senderDomain} : {}),
   });
 
   if (isConfirmation) {
@@ -532,7 +630,6 @@ async function apply(
     let createdAttempt = false;
     if (decision.kind === "MATCH") {
       attemptId = decision.id;
-      await addSubmissionEvidence(tx, userId, attemptId, c.evidenceKey);
     } else {
       attemptId = await insertAttempt(tx, userId, openingId, {
         applicantEmail: f.applicantEmail,
@@ -542,6 +639,7 @@ async function apply(
       });
       createdAttempt = true;
     }
+    await acceptSubmissionEvidence(tx,userId,attemptId,c.evidenceKey,c.occurredAt,f);
     const prior = !createdAttempt
       ? await tx.query<{ id: string }>(
           `SELECT id FROM application_events
@@ -550,7 +648,7 @@ async function apply(
         )
       : null;
     if (prior?.rows[0]) {
-      await linkEvidence(tx, userId, prior.rows[0].id, c.artifactId);
+      await linkEvidence(tx, userId, prior.rows[0].id, c.artifactId, c.signalId);
       await reproject(tx, userId, attemptId);
     } else await recordEvent(tx, event(attemptId), c.artifactId);
     return {
@@ -569,11 +667,16 @@ async function apply(
     externalApplicationId: f.externalApplicationId,
     phoneLookupKey: null,
   };
+  if (directAttemptId && (f.externalApplicationId || f.applicantEmail)) {
+    const identity = resolveUpdate(openingId, update, attempts);
+    if (identity.kind !== "MATCH" || identity.id !== directAttemptId)
+      return fail(f.calendar ? "CALENDAR_REVISION" : "AMBIGUOUS_ATTEMPT", attempts.map(a=>a.id), [openingId]);
+  }
   const decision = directAttemptId
     ? ({
         kind: "MATCH",
         id: directAttemptId,
-        reason: "Exact application ID",
+        reason: directReason,
       } as const)
     : resolveUpdate(openingId, update, attempts);
   if (decision.kind !== "MATCH") {
@@ -583,17 +686,46 @@ async function apply(
       [openingId],
     );
   }
-  // Rejections and offers are irreversible-feeling: only an exact application id, or a unique email
-  // on a strongly matched opening, may apply them without a human.
+  // Rejections and offers are irreversible-feeling: only an exact application id, a unique email
+  // on a strongly matched opening, or the opening's only attempt when its confirmation reached the
+  // same mailbox, may apply them without a human (and always from an authenticated hiring
+  // platform, with high confidence).
   const strongAttempt =
     decision.reason === "Exact application ID" ||
-    (decision.reason === "Unique matching submitted email" && strongOpening);
+    (decision.reason === "Unique matching submitted email" && strongOpening) ||
+    ((decision.reason === SOLE_ATTEMPT || decision.reason === "Verified conversation") &&
+      c.mailboxId !== null &&
+      (await attemptConfirmedInMailbox(tx, userId, decision.id, c.mailboxId)));
   if (
     TERMINAL_KINDS.has(kind) &&
-    (!strongAttempt || !c.trustedSender || signal.confidence !== "HIGH")
+    (!strongAttempt || !(c.trustedSender || (c.mailboxId && c.senderVerified && employerDomain(c.senderDomain,(await loadOpenings(tx,userId,{id:openingId}))[0]!.company))) || signal.confidence !== "HIGH")
   )
     return fail("TERMINAL_NEEDS_REVIEW", [decision.id], [openingId]);
 
+  // Calendar revisions: a lower SEQUENCE, or one belonging to another attempt, never applies; the
+  // same SEQUENCE is a repeat of the accepted revision only if every calendar fact agrees.
+  const prior = calendarPrior;
+  if (f.calendar && prior) {
+    if (f.calendar.organizerDomain !== prior.calendar.organizerDomain ||
+        (prior.senderDomain && prior.senderDomain !== c.senderDomain))
+      return fail("CALENDAR_REVISION", [decision.id], [openingId]);
+    if (prior.attemptId !== decision.id || f.calendar.sequence < prior.calendar.sequence)
+      return fail("CALENDAR_REVISION", [decision.id, prior.attemptId], [openingId]);
+    if (f.calendar.sequence === prior.calendar.sequence) {
+      if (!sameCalendarRevision(f.calendar, prior.calendar))
+        return fail("CALENDAR_REVISION", [decision.id], [openingId]);
+      await linkEvidence(tx, userId, prior.eventId, c.artifactId, c.signalId);
+      return {
+        status: "APPLIED",
+        attemptId: decision.id,
+        openingId,
+        kind,
+        createdAttempt: false,
+        createdOpening: false,
+        reconciled: 0,
+      };
+    }
+  }
   const problem = await automaticEventProblem(tx, event(decision.id));
   if (problem) return fail(problem, [decision.id], [openingId]);
 
@@ -611,14 +743,34 @@ async function apply(
 
 /**
  * Updates can arrive before the submission they belong to (Gmail lists newest first, forwards
- * come in any order). Once a new attempt exists, re-evaluate waiting "no known submission"
- * items under exactly the same rules; anything still ambiguous stays in review untouched.
+ * come in any order). Once a new attempt exists, re-evaluate waiting updates under exactly the
+ * same rules; anything still ambiguous stays in review untouched. Recheck only candidates for
+ * the changed opening, in bounded batches. The scheduler resumes remaining work after commit.
  */
-async function reconcileWaitingUpdates(
+export async function reconcileWaitingUpdates(
   tx: Db,
   userId: string,
   observedAt: Date,
+  openingId: string,
 ): Promise<number> {
+  await tx.query(`INSERT INTO review_reconciliation_jobs(user_id,job_opening_id) VALUES($1,$2)
+    ON CONFLICT(user_id,job_opening_id) DO UPDATE SET requested_at=now(),through_created_at=now(),
+      last_created_at=NULL,last_review_id=NULL`, [userId, openingId]);
+  return reconcileReviewBatch(tx, userId, observedAt, openingId);
+}
+
+const RECONCILIATION_BATCH_SIZE = 25;
+
+/** Called while holding the owner's domain lock; the job cursor advances with domain writes. */
+async function reconcileReviewBatch(tx: Db, userId: string, observedAt: Date, openingId: string): Promise<number> {
+  const jobs = await tx.query<{ through_created_at: unknown; last_created_at: unknown; last_review_id: string | null }>(
+    "SELECT through_created_at,last_created_at,last_review_id FROM review_reconciliation_jobs WHERE user_id=$1 AND job_opening_id=$2 FOR UPDATE",
+    [userId, openingId],
+  );
+  const job = jobs.rows[0];
+  if (!job) return 0;
+  const opening = (await loadOpenings(tx, userId, { id: openingId }))[0];
+  if (!opening) return 0;
   const { rows } = await tx.query<{
     review_id: string;
     signal_id: string;
@@ -630,16 +782,42 @@ async function reconcileWaitingUpdates(
     original_key: string | null;
     source_fingerprint: string;
     sender_authenticated: boolean;
+    mailbox_id: string | null;
+    sender_domain: string | null;
+    sender_verified: boolean;
+    reply_message_keys: string[];
+    provider_thread_id: string | null;
     confidence: "HIGH" | "LOW";
+    review_created_at: unknown;
   }>(
     `SELECT r.id AS review_id, s.id AS signal_id, s.event_kind, s.fields, s.confidence, a.id AS artifact_id, a.source_kind,
-            a.original_message_at, a.original_key, a.source_fingerprint,a.sender_authenticated
+            a.original_message_at, a.original_key, a.source_fingerprint, a.sender_authenticated, a.mailbox_id,
+            a.sender_domain,a.sender_verified,a.reply_message_keys,a.provider_thread_id,r.created_at AS review_created_at
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
        JOIN source_artifacts a ON a.id = r.source_artifact_id AND a.user_id = r.user_id
-      WHERE r.user_id = $1 AND r.state = 'OPEN' AND r.reason_code = 'NO_KNOWN_SUBMISSION'
-      ORDER BY a.original_message_at, r.created_at, r.id`,
-    [userId],
+      WHERE r.user_id=$1 AND r.state='OPEN' AND r.reason_code IN ('NO_KNOWN_SUBMISSION','AMBIGUOUS_ATTEMPT','MISSING_JOB_DETAILS')
+        AND s.event_kind IS NOT NULL AND s.event_kind<>'CONFIRMATION_RECEIVED'
+        AND r.created_at<=$3 AND ($4::timestamptz IS NULL OR (r.created_at,r.id)>($4,$5::uuid))
+        AND ($2::uuid=ANY(r.candidate_opening_ids)
+          OR lower(regexp_replace(btrim(s.fields->>'title'),'\\s+',' ','g'))=$6
+          OR ($7::text IS NOT NULL AND s.fields->>'canonicalUrl'=$7)
+          OR ($8::text IS NOT NULL AND s.fields->'atsKey'->>'provider'=$8
+            AND s.fields->'atsKey'->>'tenant'=$9 AND s.fields->'atsKey'->>'requisitionId'=$10)
+          OR EXISTS (SELECT 1 FROM application_attempts known WHERE known.user_id=$1 AND known.job_opening_id=$2
+            AND known.external_application_id=s.fields->>'externalApplicationId')
+          OR EXISTS (SELECT 1 FROM application_events e JOIN application_attempts known ON known.id=e.attempt_id AND known.user_id=e.user_id
+            JOIN event_evidence ev ON ev.event_id=e.id AND ev.user_id=e.user_id
+            JOIN source_artifacts prior ON prior.id=ev.artifact_id AND prior.user_id=ev.user_id
+            WHERE e.user_id=$1 AND known.job_opening_id=$2 AND e.review_state='ACCEPTED'
+              AND prior.mailbox_id=a.mailbox_id AND prior.sender_domain=a.sender_domain AND prior.sender_verified
+              AND (prior.message_id_key=ANY(a.reply_message_keys)
+                OR (a.provider_thread_id IS NOT NULL AND prior.provider_thread_id=a.provider_thread_id)
+                OR (s.fields->>'title' IS NULL AND a.sender_verified))))
+      ORDER BY r.created_at,r.id LIMIT $11`,
+    [userId, openingId, job.through_created_at, job.last_created_at, job.last_review_id,
+      normalizedText(opening.title), opening.canonicalUrl, opening.atsKey?.provider ?? null,
+      opening.atsKey?.tenant ?? null, opening.atsKey?.requisitionId ?? null, RECONCILIATION_BATCH_SIZE],
   );
   let applied = 0;
   for (const row of rows) {
@@ -669,6 +847,10 @@ async function reconcileWaitingUpdates(
         signal,
         occurredAt,
         trustedSender: row.sender_authenticated,
+        mailboxId: row.mailbox_id,
+        senderDomain: row.sender_domain ?? "",
+        senderVerified: row.source_kind === "FORWARDED_EML" || row.sender_verified,
+        replyMessageKeys:row.reply_message_keys,providerThreadId:row.provider_thread_id,
       },
       false,
     );
@@ -683,5 +865,36 @@ async function reconcileWaitingUpdates(
     );
     applied += 1;
   }
+  if (rows.length < RECONCILIATION_BATCH_SIZE) {
+    await tx.query("DELETE FROM review_reconciliation_jobs WHERE user_id=$1 AND job_opening_id=$2", [userId, openingId]);
+  } else {
+    const last = rows.at(-1)!;
+    await tx.query(`UPDATE review_reconciliation_jobs SET last_created_at=$3,last_review_id=$4,requested_at=now()
+      WHERE user_id=$1 AND job_opening_id=$2`, [userId, openingId, last.review_created_at, last.review_id]);
+  }
   return applied;
+}
+
+/** Scheduled continuation runs even without Gmail credentials. Each opening is isolated. */
+export async function drainReviewReconciliations(db: Db, observedAt = new Date(), maxJobs = 4): Promise<{ applied: number; failed: number }> {
+  const jobs = await db.query<{ user_id: string; job_opening_id: string }>(
+    "SELECT user_id,job_opening_id FROM review_reconciliation_jobs ORDER BY requested_at,user_id,job_opening_id LIMIT $1",
+    [Math.max(1, Math.min(20, Math.floor(maxJobs)))],
+  );
+  let applied = 0, failed = 0;
+  for (const job of jobs.rows) {
+    try {
+      applied += await db.transaction(async tx => {
+        const owner = await tx.query("SELECT id FROM ledger_users WHERE id=$1 FOR UPDATE", [job.user_id]);
+        if (!owner.rows.length) return 0;
+        return reconcileReviewBatch(tx, job.user_id, observedAt, job.job_opening_id);
+      });
+    } catch {
+      failed++;
+      // Keep the failed sweep durable, but let other openings run before retrying it.
+      await db.query("UPDATE review_reconciliation_jobs SET requested_at=now() WHERE user_id=$1 AND job_opening_id=$2",
+        [job.user_id, job.job_opening_id]).catch(() => undefined);
+    }
+  }
+  return { applied, failed };
 }

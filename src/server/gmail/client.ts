@@ -1,4 +1,5 @@
 import { EML_LIMITS } from "../../ingestion/eml.ts";
+import { authenticatedGmailDomain } from "./authentication.ts";
 import { RECRUITMENT_SUBJECT_TERMS } from "../../ingestion/header-gate.ts";
 import {
   RECRUITING_SENDER_DOMAINS,
@@ -30,6 +31,7 @@ export interface MessageHeadersView {
   subject: string;
   labelIds: string[];
   senderAuthenticated?: boolean;
+  threadId?: string;
   /** RFC 5322 Message-ID, used only to ask Gmail search about this one message. */
   rfcMessageId?: string | null;
 }
@@ -73,6 +75,15 @@ export const RECRUITMENT_PHRASES = [
   "not be moving forward",
   "not moving forward",
   "invite you to interview",
+  // Reschedules, cancellations and confirmations often have subjects like "Schedule change".
+  "your interview",
+  "interview has been",
+  "phone interview",
+  "video interview",
+  "virtual interview",
+  "onsite interview",
+  "technical interview",
+  "final interview",
   "schedule an interview",
   "interview invitation",
   "phone screen",
@@ -81,7 +92,18 @@ export const RECRUITMENT_PHRASES = [
   "take-home",
   "offer letter",
   "pleased to offer",
+  "happy to offer",
+  "delighted to offer",
+  "excited to offer",
+  "thrilled to extend",
+  "decided to pursue other candidates",
+  "chosen to pursue other candidates",
+  "no longer being considered",
+  "invite you to complete",
+  "invited you to complete",
   "offer of employment",
+  "extend an offer",
+  "offer you the",
   "hiring team",
   "recruiting team",
   "talent acquisition",
@@ -243,16 +265,11 @@ export function createGmailClient(
       const from = header("from");
       // The address, not an "@" inside a display name such as "jobs@acme via Greenhouse".
       const domain = senderDomain(from);
-      const authentication = header("authentication-results");
-      const authenticatedDomain =
-        authentication.length <= 4096 &&
-        /^\s*mx\.google\.com;/i.test(authentication)
-          ? /(?:^|;)\s*dmarc=pass\b[^;]*\bheader\.from="?([A-Za-z0-9.-]+)/i
-              .exec(authentication)?.[1]
-              ?.toLowerCase()
-          : null;
+      const authenticatedDomain = headers.filter(h=>h.name.toLowerCase()==="from").length===1
+        ? authenticatedGmailDomain(headers) : null;
       return {
         id,
+        ...(typeof r["threadId"]==="string" && /^[a-zA-Z0-9_-]{1,200}$/.test(r["threadId"]) ? {threadId:r["threadId"]} : {}),
         from,
         subject: header("subject"),
         rfcMessageId: header("message-id") || null,

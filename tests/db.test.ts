@@ -96,6 +96,11 @@ describe("schema", () => {
         "0006_demo_retention.sql",
         "0007_submission_date_corrections.sql",
         "0008_mailbox_recheck.sql",
+        "0009_calendar_uid_index.sql",
+        "0010_accepted_calendar_provenance.sql",
+        "0011_conversation_context.sql",
+        "0012_sync_read_indexes.sql",
+        "0013_review_reconciliation.sql",
       ],
     );
   });

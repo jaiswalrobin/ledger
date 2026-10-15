@@ -10,7 +10,7 @@ import type { ApplicationEventKind, Outcome, Stage } from "../domain/types.ts";
 import type { ExtractedFields, SignalKind } from "../ingestion/source.ts";
 import type { Db } from "./db.ts";
 import type { ReviewReason } from "./pipeline.ts";
-import { iso } from "./store.ts";
+import { iso, CALENDAR_REVISION_ORDER } from "./store.ts";
 
 export interface AttemptView {
   id: string;
@@ -19,6 +19,7 @@ export interface AttemptView {
   outcome: Outcome;
   submittedAt: string | null;
   lastActivityAt: string | null;
+  nextInterviewAt: string | null;
   conflicts: string[];
   coverage: Coverage;
   coverageLabel: string;
@@ -52,6 +53,8 @@ async function attemptViews(
   rows: AttemptRow[],
   now: Date,
 ): Promise<Map<string, AttemptView[]>> {
+  if (!rows.length) return new Map();
+  const attemptIds = rows.map(r => r.id);
   const facts = await db.query<{
     attempt_id: string;
     sync_state: SyncState;
@@ -65,9 +68,21 @@ async function attemptViews(
        JOIN event_evidence ev ON ev.event_id = e.id AND ev.user_id = e.user_id
        JOIN source_artifacts a ON a.id = ev.artifact_id AND a.user_id = ev.user_id AND a.source_kind = 'GMAIL'
        JOIN connected_mailboxes m ON m.id = a.mailbox_id AND m.user_id = a.user_id
-      WHERE e.user_id = $1 AND e.review_state = 'ACCEPTED'`,
-    [userId],
+      WHERE e.user_id = $1 AND e.attempt_id=ANY($2::uuid[]) AND e.review_state = 'ACCEPTED'`,
+    [userId, attemptIds],
   );
+  // Select each calendar's latest accepted revision before considering its time. Filtering
+  // future times first would incorrectly revive an older invitation after a reschedule.
+  const schedules = await db.query<{ attempt_id: string; scheduled_for: unknown }>(
+    `SELECT attempt_id,min(scheduled_for) AS scheduled_for FROM (
+       SELECT DISTINCT ON (attempt_id,calendar_uid_key) attempt_id,scheduled_for
+       FROM application_events WHERE user_id=$1 AND attempt_id=ANY($2::uuid[])
+         AND review_state='ACCEPTED' AND calendar_uid_key IS NOT NULL
+       ORDER BY attempt_id,calendar_uid_key,${CALENDAR_REVISION_ORDER}
+     ) current_calendar WHERE scheduled_for >= $3 GROUP BY attempt_id`,
+    [userId, attemptIds, now.toISOString()],
+  );
+  const upcoming = new Map(schedules.rows.map(r => [r.attempt_id, iso(r.scheduled_for)]));
   const byAttempt = new Map<
     string,
     { syncState: SyncState; backfillComplete: boolean }[]
@@ -97,6 +112,7 @@ async function attemptViews(
       outcome: r.outcome,
       submittedAt: r.submitted_at ? iso(r.submitted_at) : null,
       lastActivityAt,
+      nextInterviewAt: r.outcome === "PENDING" ? upcoming.get(r.id) ?? null : null,
       conflicts: r.projection_conflicts,
       coverage,
       coverageLabel: COVERAGE_LABEL[coverage],
@@ -173,6 +189,9 @@ export interface EventView {
   reviewState: "PROPOSED" | "ACCEPTED" | "REJECTED" | "SUPERSEDED";
   origin: "AUTO" | "MANUAL";
   evidence: EvidenceView[];
+  scheduledFor: string | null;
+  calendarRevision: number | null;
+  currentSchedule: boolean;
 }
 
 export interface OpeningDetail extends Omit<OpeningView, "attempts"> {
@@ -221,8 +240,15 @@ export async function getOpening(
     occurred_at: unknown;
     review_state: EventView["reviewState"];
     origin: "AUTO" | "MANUAL";
+    calendar_uid_key: string | null;
+    calendar_sequence: number | null;
+    scheduled_for: unknown;
+    current_schedule: boolean;
   }>(
-    `SELECT id, attempt_id, event_kind, occurred_at, review_state, origin FROM application_events
+    `SELECT id, attempt_id, event_kind, occurred_at, review_state, origin,calendar_uid_key,calendar_sequence,scheduled_for,
+       calendar_uid_key IS NOT NULL AND review_state='ACCEPTED' AND id=first_value(id) OVER (
+         PARTITION BY attempt_id,calendar_uid_key ORDER BY CASE WHEN review_state='ACCEPTED' THEN 0 ELSE 1 END,${CALENDAR_REVISION_ORDER}
+       ) AS current_schedule FROM application_events
       WHERE user_id = $1 AND attempt_id = ANY($2::uuid[]) ORDER BY occurred_at, id`,
     [userId, ids],
   );
@@ -265,6 +291,9 @@ export async function getOpening(
       reviewState: e.review_state,
       origin: e.origin,
       evidence: evidenceByEvent.get(e.id) ?? [],
+      scheduledFor: e.scheduled_for ? iso(e.scheduled_for) : null,
+      calendarRevision: e.calendar_sequence === null ? null : Number(e.calendar_sequence),
+      currentSchedule: e.current_schedule,
     });
     eventViews.set(e.attempt_id, list);
   }
@@ -325,6 +354,8 @@ export interface ReviewView {
   createdAt: string;
   candidates: ReviewCandidate[];
   candidateOpenings: { openingId: string; title: string; company: string }[];
+  mailboxAddress: string | null;
+  providerMessageId: string | null;
 }
 
 export async function listReviews(
@@ -342,12 +373,15 @@ export async function listReviews(
     subject_redacted: string | null;
     source_kind: "GMAIL" | "FORWARDED_EML";
     original_message_at: unknown;
+    mailbox_address: string | null;
+    provider_message_id: string | null;
   }>(
     `SELECT r.id, r.reason_code, r.created_at, r.candidate_attempt_ids, r.candidate_opening_ids, s.event_kind, s.fields,
-            a.subject_redacted, a.source_kind, a.original_message_at
+            a.subject_redacted, a.source_kind, a.original_message_at,m.address AS mailbox_address,a.provider_message_id
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
        JOIN source_artifacts a ON a.id = r.source_artifact_id AND a.user_id = r.user_id
+       LEFT JOIN connected_mailboxes m ON m.id=a.mailbox_id AND m.user_id=a.user_id
       WHERE r.user_id = $1 AND r.state = 'OPEN' ORDER BY r.created_at DESC, r.id`,
     [userId],
   );
@@ -410,6 +444,7 @@ export async function listReviews(
     candidateOpenings: r.candidate_opening_ids.flatMap(
       (id) => openingInfo.get(id) ?? [],
     ),
+    mailboxAddress:r.mailbox_address,providerMessageId:r.provider_message_id,
   }));
 }
 
@@ -489,9 +524,11 @@ export async function listMailboxes(
        FROM connected_mailboxes WHERE user_id = $1 ORDER BY created_at, id`,
     [userId],
   );
-  const result: MailboxView[] = [];
-  for (const m of rows) {
-    const run = await db.query<{
+  if (!rows.length) return [];
+  const mailboxIds = rows.map(m => m.id);
+  // Batch every read across the owner's mailboxes: the query count does not grow per account.
+  const run = await db.query<{
+      mailbox_id: string;
       kind: string;
       state: string;
       started_at: unknown;
@@ -506,47 +543,65 @@ export async function listMailboxes(
       tasks_failed: number;
       safe_error_code: string | null;
     }>(
-      "SELECT * FROM sync_runs WHERE mailbox_id = $1 ORDER BY started_at DESC, id LIMIT 1",
-      [m.id],
+      "SELECT DISTINCT ON (mailbox_id) * FROM sync_runs WHERE mailbox_id = ANY($1::uuid[]) ORDER BY mailbox_id, started_at DESC, id",
+      [mailboxIds],
     );
-    const pending = await db.query<{ n: string }>(
-      "SELECT count(*) AS n FROM processing_tasks WHERE mailbox_id = $1 AND state = 'PENDING'",
-      [m.id],
+    const tasks = await db.query<{ mailbox_id: string; pending: string; failed: string }>(
+      `SELECT mailbox_id, count(*) FILTER (WHERE state='PENDING') AS pending,
+         count(*) FILTER (WHERE state='FAILED' AND outcome<>'DISCONNECTED') AS failed
+       FROM processing_tasks WHERE mailbox_id=ANY($1::uuid[]) AND user_id=$2 GROUP BY mailbox_id`,
+      [mailboxIds, userId],
     );
-    const failed = await db.query<{ n: string }>(
-      "SELECT count(*) AS n FROM processing_tasks WHERE mailbox_id=$1 AND state='FAILED' AND outcome<>'DISCONNECTED'",
-      [m.id],
-    );
-    const r = run.rows[0];
-    const outcomes = await db.query<{ category: string; n: string }>(
-      `SELECT CASE
+    const outcomes = await db.query<{ mailbox_id: string; category: string; n: string }>(
+      `SELECT t.mailbox_id, CASE
          WHEN t.outcome='PROCESSED' THEN 'processed'
          WHEN t.outcome='PROCESSED_PARTIAL' THEN 'partiallyProcessed'
-         WHEN t.outcome='SKIPPED_SENSITIVE' OR EXISTS (SELECT 1 FROM source_artifacts a
-           WHERE a.user_id=$2 AND a.mailbox_id=$1 AND a.provider_message_id=t.provider_message_id AND a.body_access_decision='SKIPPED_SENSITIVE') THEN 'skippedSensitive'
+         WHEN t.outcome='SKIPPED_SENSITIVE' OR a.body_access_decision='SKIPPED_SENSITIVE' THEN 'skippedSensitive'
          WHEN t.outcome='NO_SIGNAL' THEN 'unrecognized'
          WHEN left(t.outcome,12)='QUARANTINED_' THEN 'quarantined'
          ELSE 'skippedOther' END AS category, count(*) AS n
-       FROM processing_tasks t WHERE t.mailbox_id=$1 AND t.user_id=$2 AND t.state='DONE' GROUP BY category`,
-      [m.id, userId],
+       FROM processing_tasks t LEFT JOIN source_artifacts a ON a.user_id=t.user_id AND a.mailbox_id=t.mailbox_id
+         AND a.provider_message_id=t.provider_message_id AND a.source_kind='GMAIL'
+       WHERE t.mailbox_id=ANY($1::uuid[]) AND t.user_id=$2 AND t.state='DONE' GROUP BY t.mailbox_id, category`,
+      [mailboxIds, userId],
     );
-    const processingSummary = { processed: 0, skippedSensitive: 0, unrecognized: 0, skippedOther: 0, quarantined: 0, partiallyProcessed: 0 };
-    for (const o of outcomes.rows) processingSummary[o.category as keyof typeof processingSummary] = Number(o.n);
     const excluded = await db.query<{
+      mailbox_id: string;
       provider_message_id: string;
       reason: MailboxView["excludedMessages"][number]["reason"];
       original_message_at: unknown;
     }>(
-      `SELECT t.provider_message_id, a.original_message_at, CASE
+      `SELECT * FROM (SELECT t.mailbox_id, t.provider_message_id, a.original_message_at,
+         row_number() OVER (PARTITION BY t.mailbox_id ORDER BY t.finished_at DESC NULLS LAST, t.id) AS rank, CASE
          WHEN t.outcome='SKIPPED_SENSITIVE' OR a.body_access_decision='SKIPPED_SENSITIVE' THEN 'PRIVACY_CHECK'
          WHEN left(t.outcome,12)='QUARANTINED_' OR t.outcome='PROCESSED_PARTIAL' THEN 'PARSE_LIMIT'
          WHEN t.outcome='SKIPPED_UNCERTAIN' THEN 'UNCERTAIN_HEADERS' ELSE 'NO_EVENT' END AS reason
-       FROM processing_tasks t LEFT JOIN source_artifacts a ON a.user_id=t.user_id AND a.mailbox_id=t.mailbox_id AND a.provider_message_id=t.provider_message_id
-       WHERE t.mailbox_id=$1 AND t.user_id=$2 AND t.state='DONE'
+       FROM processing_tasks t LEFT JOIN source_artifacts a ON a.user_id=t.user_id AND a.mailbox_id=t.mailbox_id
+         AND a.provider_message_id=t.provider_message_id AND a.source_kind='GMAIL'
+       WHERE t.mailbox_id=ANY($1::uuid[]) AND t.user_id=$2 AND t.state='DONE'
          AND (t.outcome IN ('NO_SIGNAL','SKIPPED_SENSITIVE','SKIPPED_UNCERTAIN','PROCESSED_PARTIAL') OR left(t.outcome,12)='QUARANTINED_')
-       ORDER BY t.finished_at DESC NULLS LAST, t.id LIMIT 20`,
-      [m.id, userId],
+       ) ranked WHERE rank<=20 ORDER BY mailbox_id, rank`,
+      [mailboxIds, userId],
     );
+  const runsByMailbox = new Map(run.rows.map(r => [r.mailbox_id, r]));
+  const tasksByMailbox = new Map(tasks.rows.map(t => [t.mailbox_id, t]));
+  const summaries = new Map<string, MailboxView["processingSummary"]>();
+  for (const o of outcomes.rows) {
+    const summary = summaries.get(o.mailbox_id) ?? { processed: 0, skippedSensitive: 0, unrecognized: 0,
+      skippedOther: 0, quarantined: 0, partiallyProcessed: 0 };
+    summary[o.category as keyof typeof summary] = Number(o.n);
+    summaries.set(o.mailbox_id, summary);
+  }
+  const exclusions = new Map<string, MailboxView["excludedMessages"]>();
+  for (const e of excluded.rows) {
+    const list = exclusions.get(e.mailbox_id) ?? [];
+    list.push({ messageId: e.provider_message_id, reason: e.reason,
+      originalMessageAt: e.original_message_at ? iso(e.original_message_at) : null });
+    exclusions.set(e.mailbox_id, list);
+  }
+  const result: MailboxView[] = [];
+  for (const m of rows) {
+    const r = runsByMailbox.get(m.id), counts = tasksByMailbox.get(m.id);
     result.push({
       id: m.id,
       address: m.address,
@@ -557,15 +612,12 @@ export async function listMailboxes(
       lastSuccessAt: m.last_success_at ? iso(m.last_success_at) : null,
       lastAttemptAt: m.last_attempt_at ? iso(m.last_attempt_at) : null,
       lastErrorCode: m.last_error_code,
-      pendingTasks: Number(pending.rows[0]!.n),
-      failedTasks: Number(failed.rows[0]!.n),
+      pendingTasks: Number(counts?.pending ?? 0),
+      failedTasks: Number(counts?.failed ?? 0),
       recheckInProgress: m.recheck_id !== null,
-      processingSummary,
-      excludedMessages: excluded.rows.map(e => ({
-        messageId: e.provider_message_id,
-        reason: e.reason,
-        originalMessageAt: e.original_message_at ? iso(e.original_message_at) : null,
-      })),
+      processingSummary: summaries.get(m.id) ?? { processed: 0, skippedSensitive: 0, unrecognized: 0,
+        skippedOther: 0, quarantined: 0, partiallyProcessed: 0 },
+      excludedMessages: exclusions.get(m.id) ?? [],
       lastRun: r
         ? {
             kind: r.kind,

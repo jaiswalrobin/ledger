@@ -230,4 +230,31 @@ describe("read models", () => {
     assert.equal(m!.lastRun?.discovered, 12);
     assert.equal(m!.lastRun?.bodiesFetched, 4);
   });
+
+  it("batches mailbox summaries, limits exclusions per account, and isolates owners", async () => {
+    const user = await seedUser(db), other = await seedUser(db);
+    const mailboxes = [await seedMailbox(db, user, "one@example.org"), await seedMailbox(db, user, "two@example.org")];
+    const foreign = await seedMailbox(db, other, "foreign@example.org");
+    for (const [i, mailbox] of [...mailboxes, foreign].entries()) {
+      await db.query(`INSERT INTO processing_tasks(id,user_id,mailbox_id,provider_message_id,state,outcome,finished_at)
+        SELECT gen_random_uuid(),$1,$2,'excluded-'||n,'DONE','NO_SIGNAL',now()-n*interval '1 minute' FROM generate_series(1,25) n`,
+        [i === 2 ? other : user, mailbox]);
+      await db.query(`INSERT INTO processing_tasks(id,user_id,mailbox_id,provider_message_id,state)
+        VALUES(gen_random_uuid(),$1,$2,'pending','PENDING')`, [i === 2 ? other : user, mailbox]);
+    }
+    let queries = 0;
+    const counted: Db = { ...db, query: ((sql, params) => {
+      queries++; return db.query(sql, params);
+    }) as Db["query"] };
+    const views = await listMailboxes(counted, user);
+    assert.equal(queries, 5, "additional mailboxes must not add database round trips");
+    assert.deepEqual(views.map(m => m.address).sort(), ["one@example.org", "two@example.org"]);
+    for (const view of views) {
+      assert.equal(view.pendingTasks, 1);
+      assert.equal(view.processingSummary.unrecognized, 25);
+      assert.equal(view.excludedMessages.length, 20);
+      assert.equal(view.excludedMessages[0]!.messageId, "excluded-1");
+      assert.equal(view.excludedMessages[19]!.messageId, "excluded-20");
+    }
+  });
 });
