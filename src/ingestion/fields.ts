@@ -13,6 +13,56 @@ import { safeField } from "./privacy.ts";
 import { isRecruitingSenderDomain, senderDomain } from "./ats.ts";
 import { companyKey } from "../domain/normalization.ts";
 
+/**
+ * Every rule that proposes a company or title. The ids are stable and safe to persist: field
+ * decisions record which rules proposed each candidate, and the parser evaluation reports which
+ * rules produce wrong values and which never fire.
+ */
+export const FIELD_RULES = [
+  "hint:calendar",
+  "hint:workday-slug",
+  "hint:ibm",
+  "label:field",
+  "label:requisition",
+  "role:hired-as-at",
+  "role:title-role-at",
+  "role:title-role",
+  "role:the-role-title-at",
+  "role:the-role-title",
+  "role:role-of-title",
+  "role:your-application-for",
+  "role:interview-for-at",
+  "company:applied-to",
+  "company:employment-with",
+  "company:submitted-to",
+  "company:viewed-by",
+  "company:on-behalf-of",
+  "company:from",
+  "company:invited-you",
+  "company:interview-with",
+  "company:recruiter-at",
+  "company:join",
+  "signature:team",
+  "signature:role",
+  "sender:ats-display",
+  "sender:department",
+  "subject:prefix-at",
+  "subject:prefix-pair",
+  "subject:prefix-title",
+  "subject:prefix-employer",
+  "subject:leading-company",
+  "subject:title-at",
+  "subject:application-to",
+  "subject:update-on",
+  "subject:invite-name",
+  "subject:domain-phrase",
+  "calendar:event-line",
+  "board:title-place",
+  "board:company-title",
+  "domain:confirms",
+] as const;
+export type FieldRule = (typeof FIELD_RULES)[number];
+
 export interface FieldInput {
   subject: string;
   fromName: string;
@@ -22,8 +72,8 @@ export interface FieldInput {
   /** Signature text may name the employer, but cannot assert a new event or title. */
   signature?: string;
   /** Extra title suggestions from structured sources (Workday URL slug, employer templates). */
-  titleHints?: readonly { value: string; weight: number }[];
-  companyHints?: readonly { value: string; weight: number }[];
+  titleHints?: readonly { value: string; weight: number; rule: FieldRule }[];
+  companyHints?: readonly { value: string; weight: number; rule: FieldRule }[];
   /** Explicit aliases corroborate named candidates only; they never invent an employer. */
   companyAliases?: readonly { company: string; domain: string }[];
 }
@@ -35,6 +85,8 @@ type Candidate = {
   order: number;
   fromContent: boolean;
   evidence: Map<string, number>;
+  /** The rules that proposed this candidate, for attribution only (never for scoring). */
+  rules: Set<FieldRule>;
   spans: Span[];
   spanOverflow?: boolean;
 };
@@ -235,38 +287,38 @@ const END = String.raw`(?=\s*(?:[.,!?;:]|\n|$|\s+(?:and|is|has|will|would|was|we
 const rx = (source: string, flags = "iu") => new RegExp(source, flags);
 
 /** Sentences naming a role, optionally followed by the employer. Highest-precision patterns first. */
-const ROLE_SENTENCES: { re: RegExp; title: number; company?: number; weight: number }[] = [
+const ROLE_SENTENCES: { rule: FieldRule; re: RegExp; title: number; company?: number; weight: number }[] = [
   // "offer you employment as a Risk Analyst at Gringotts", "hire you as Staff Engineer with Acme",
   // "join us as a Data Scientist at Initech".
-  { re: rx(String.raw`\b(?:employment|offer(?:ing)?\s+you(?:\s+(?:a|the)\s+(?:position|role|job))?|hire\s+you|join(?:ing)?\s+(?:us|the\s+team))\s+as\s+(?:an?\s+)?${TITLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
+  { rule: "role:hired-as-at", re: rx(String.raw`\b(?:employment|offer(?:ing)?\s+you(?:\s+(?:a|the)\s+(?:position|role|job))?|hire\s+you|join(?:ing)?\s+(?:us|the\s+team))\s+as\s+(?:an?\s+)?${TITLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
   // "for the Senior Data Analyst position at Visa", "to our Software Engineer, Payments role"
-  { re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:(?:the|our|a|an|this)\s+)?${TITLE}\s+${ROLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
-  { re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:(?:the|our|a|an|this)\s+)?${TITLE}\s+${ROLE}\b`), title: 1, weight: 2.5 },
+  { rule: "role:title-role-at", re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:(?:the|our|a|an|this)\s+)?${TITLE}\s+${ROLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
+  { rule: "role:title-role", re: rx(String.raw`\b(?:for|to|in|about|offer\s+you|offering\s+you)\s+(?:(?:the|our|a|an|this)\s+)?${TITLE}\s+${ROLE}\b`), title: 1, weight: 2.5 },
   // "the position Backend Engineer at Klarna", "the position Data Engineer."
-  { re: rx(String.raw`\bthe\s+${ROLE}\s+(?:of\s+)?${TITLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
-  { re: rx(String.raw`\bthe\s+${ROLE}\s+(?:of\s+)?${TITLE}${END}`), title: 1, weight: 2 },
+  { rule: "role:the-role-title-at", re: rx(String.raw`\bthe\s+${ROLE}\s+(?:of\s+)?${TITLE}\s+(?:at|with)\s+${COMPANY}${END}`), title: 1, company: 2, weight: 3 },
+  { rule: "role:the-role-title", re: rx(String.raw`\bthe\s+${ROLE}\s+(?:of\s+)?${TITLE}${END}`), title: 1, weight: 2 },
   // "an offer for the role of Senior Software Engineer at Acme", "the role of Data Scientist - 45678"
-  { re: rx(String.raw`\b${ROLE}\s+(?:of|as)\s+(?:an?\s+)?${TITLE}(?:\s+with\s+candidate\b|\s+(?:at|with)\s+(?!candidate\b)${COMPANY}${END}|${END})`), title: 1, company: 2, weight: 2.5 },
+  { rule: "role:role-of-title", re: rx(String.raw`\b${ROLE}\s+(?:of|as)\s+(?:an?\s+)?${TITLE}(?:\s+with\s+candidate\b|\s+(?:at|with)\s+(?!candidate\b)${COMPANY}${END}|${END})`), title: 1, company: 2, weight: 2.5 },
   // "Spotify viewed your application for Backend Engineer."
-  { re: rx(String.raw`\byour\s+application\s+for\s+(?:the\s+)?${TITLE}(?:\s+(?:at|with)\s+${COMPANY})?${END}`), title: 1, company: 2, weight: 1.5 },
+  { rule: "role:your-application-for", re: rx(String.raw`\byour\s+application\s+for\s+(?:the\s+)?${TITLE}(?:\s+(?:at|with)\s+${COMPANY})?${END}`), title: 1, company: 2, weight: 1.5 },
   // "applying for the Frontend Developer job at Contoso Labs" (covered above) and "interview for X at Y"
-  { re: rx(String.raw`\b(?:interview|assessment|test|screen|challenge)\s+for\s+(?:the\s+)?${TITLE}\s+(?:${ROLE}\s+)?at\s+${COMPANY}${END}`), title: 1, company: 2, weight: 2.5 },
+  { rule: "role:interview-for-at", re: rx(String.raw`\b(?:interview|assessment|test|screen|challenge)\s+for\s+(?:the\s+)?${TITLE}\s+(?:${ROLE}\s+)?at\s+${COMPANY}${END}`), title: 1, company: 2, weight: 2.5 },
 ];
 
 /** Phrases that name only the employer. */
-const COMPANY_SENTENCES: { re: RegExp; weight: number; strict?: boolean; affiliation?: boolean }[] = [
-  { re: rx(String.raw`\b(?:applying|applied|application|apply|interest|candidacy|career|future)\s+(?:to|at|with|in)\s+${COMPANY}${END}`), weight: 1.5 },
-  { re: rx(String.raw`\bemployment\s+(?:with|at)\s+${COMPANY}${END}`), weight: 2 },
-  { re: rx(String.raw`\b(?:sent|submitted)\s+to\s+${COMPANY}${END}`), weight: 2 },
-  { re: rx(String.raw`\b(?:viewed|reviewed)\s+by\s+${COMPANY}${END}`), weight: 2 },
-  { re: rx(String.raw`\bon\s+behalf\s+of\s+${COMPANY}${END}`), weight: 2 },
+const COMPANY_SENTENCES: { rule: FieldRule; re: RegExp; weight: number; strict?: boolean; affiliation?: boolean }[] = [
+  { rule: "company:applied-to", re: rx(String.raw`\b(?:applying|applied|application|apply|interest|candidacy|career|future)\s+(?:to|at|with|in)\s+${COMPANY}${END}`), weight: 1.5 },
+  { rule: "company:employment-with", re: rx(String.raw`\bemployment\s+(?:with|at)\s+${COMPANY}${END}`), weight: 2 },
+  { rule: "company:submitted-to", re: rx(String.raw`\b(?:sent|submitted)\s+to\s+${COMPANY}${END}`), weight: 2 },
+  { rule: "company:viewed-by", re: rx(String.raw`\b(?:viewed|reviewed)\s+by\s+${COMPANY}${END}`), weight: 2 },
+  { rule: "company:on-behalf-of", re: rx(String.raw`\bon\s+behalf\s+of\s+${COMPANY}${END}`), weight: 2 },
   // "assessment from HackerRank" names the tool as often as the employer.
-  { re: rx(String.raw`\b(?:test|assessment|challenge|invitation|offer)\s+from\s+${COMPANY}${END}`), weight: 2, strict: true },
-  { re: rx(String.raw`(?:^|\n|\.\s+)${COMPANY}\s+(?:has|have)\s+invited\s+you\b`), weight: 2.5 },
-  { re: rx(String.raw`\binterview(?:ing)?\s+with\s+${COMPANY}${END}`), weight: 1.5 },
+  { rule: "company:from", re: rx(String.raw`\b(?:test|assessment|challenge|invitation|offer)\s+from\s+${COMPANY}${END}`), weight: 2, strict: true },
+  { rule: "company:invited-you", re: rx(String.raw`(?:^|\n|\.\s+)${COMPANY}\s+(?:has|have)\s+invited\s+you\b`), weight: 2.5 },
+  { rule: "company:interview-with", re: rx(String.raw`\binterview(?:ing)?\s+with\s+${COMPANY}${END}`), weight: 1.5 },
   // "I'm a recruiter at Aperture", "the hiring team at Hooli"
-  { re: rx(String.raw`\b(?:recruiter|recruiting|talent\s+partner|hiring\s+manager|hiring\s+team|team|coordinator)\s+(?:at|with)\s+${COMPANY}${END}`), weight: 1.5, affiliation: true },
-  { re: rx(String.raw`\b(?:join|joining|welcome\s+to)\s+(?:the\s+)?${COMPANY}${END}`), weight: 1, strict: true },
+  { rule: "company:recruiter-at", re: rx(String.raw`\b(?:recruiter|recruiting|talent\s+partner|hiring\s+manager|hiring\s+team|team|coordinator)\s+(?:at|with)\s+${COMPANY}${END}`), weight: 1.5, affiliation: true },
+  { rule: "company:join", re: rx(String.raw`\b(?:join|joining|welcome\s+to)\s+(?:the\s+)?${COMPANY}${END}`), weight: 1, strict: true },
 ];
 
 /** Subject lines: an event phrase followed by "Title", "Title at Company" or "Title - Company". */
@@ -313,6 +365,7 @@ function add(
   value: string | null,
   weight: number,
   source: Source,
+  rule: FieldRule,
   { fromContent = true, span }: { fromContent?: boolean; span?: Span } = {},
 ) {
   if (!value || weight <= 0) return;
@@ -320,11 +373,12 @@ function add(
   let candidate = map.get(key);
   if (!candidate) {
     if (map.size >= 64) { map.overflow = true; return; }
-    candidate = { forms: new Map(), order: map.size, fromContent, evidence: new Map(), spans: [] };
+    candidate = { forms: new Map(), order: map.size, fromContent, evidence: new Map(), rules: new Set(), spans: [] };
     map.set(key, candidate);
   }
   candidate.forms.set(value, Math.max(weight, candidate.forms.get(value) ?? 0));
   candidate.evidence.set(source, Math.max(weight, candidate.evidence.get(source) ?? 0));
+  candidate.rules.add(rule);
   candidate.fromContent ||= fromContent;
   if (span && candidate.spans.length < 128) candidate.spans.push(span);
   else if (span) candidate.spanOverflow = true;
@@ -335,6 +389,7 @@ function decide(map: Candidates): FieldDecision {
     value: displayForm(c),
     score: [...c.evidence.values()].reduce((sum, weight) => sum + weight, 0),
     sources: [...c.evidence.keys()].sort(),
+    rules: [...c.rules].sort(),
     credible: c.fromContent && [...c.evidence.entries()].some(([source, weight]) => source !== "domain" && weight >= 1.5),
     order: c.order,
   })).sort((a, b) => b.score - a.score || a.order - b.order);
@@ -345,7 +400,7 @@ function decide(map: Candidates): FieldDecision {
     state: ambiguous ? "AMBIGUOUS" : best && best.score >= 1 ? "SUPPORTED" : "MISSING",
     value: !ambiguous && best && best.score >= 1 ? best.value : null,
     // Bounded, safe facts only. Never persist matching sentences, addresses, or snippets.
-    candidates: candidates.slice(0, 8).map(({ value, score, sources }) => ({ value, score, sources })),
+    candidates: candidates.slice(0, 8).map(({ value, score, sources, rules }) => ({ value, score, sources, rules })),
   };
 }
 
@@ -375,15 +430,15 @@ export function extractCompanyAndTitle(input: FieldInput): {
     (input.companyAliases ?? []).some(alias => companyKey(alias.company) === companyKey(value) &&
       hints.includes(parseDomain(alias.domain, { allowPrivateDomains: true }).domainWithoutSuffix ?? ""));
 
-  for (const h of input.titleHints ?? []) add(titles, cleanTitle(h.value), h.weight, "structured:hint");
-  for (const h of input.companyHints ?? []) add(companies, cleanCompany(h.value), h.weight, "structured:hint");
+  for (const h of input.titleHints ?? []) add(titles, cleanTitle(h.value), h.weight, "structured:hint", h.rule);
+  for (const h of input.companyHints ?? []) add(companies, cleanCompany(h.value), h.weight, "structured:hint", h.rule);
 
   // Labelled fields: "Job Title: ...", "Company: ...".
   for (const line of lines) {
     const label = /^(job\s*title|position(?:\s*title)?|role|title|job|company|employer|organi[sz]ation)\s*[:\-–]\s*(.{2,100})$/i.exec(line);
     if (!label) continue;
-    if (/company|employer|organi/i.test(label[1]!)) add(companies, cleanCompany(label[2], false, "label"), 4, "body:label");
-    else add(titles, cleanTitle(label[2], "label"), 4, "body:label");
+    if (/company|employer|organi/i.test(label[1]!)) add(companies, cleanCompany(label[2], false, "label"), 4, "body:label", "label:field");
+    else add(titles, cleanTitle(label[2], "label"), 4, "body:label", "label:field");
   }
 
   // A company capture stops at a connector (END). The name continues when:
@@ -416,7 +471,7 @@ export function extractCompanyAndTitle(input: FieldInput): {
   // Employer-agnostic requisition labels identify a title, never an application attempt ID.
   for (const line of lines) {
     const reference = /^(?:ref(?:erence)?|requisition(?: id)?)\s*:\s*[A-Z]{0,4}[- ]?\d{3,12}\s*[-–]\s*(.{2,100})$/i.exec(line);
-    if (reference) add(titles, cleanTitle(reference[1], "label"), 3, "body:label");
+    if (reference) add(titles, cleanTitle(reference[1], "label"), 3, "body:label", "label:requisition");
   }
   // Role sentences, over the hard-wrapped lines and the flattened text.
   const sentenceSources = [
@@ -430,10 +485,10 @@ export function extractCompanyAndTitle(input: FieldInput): {
         const title = cleanTitle(m[p.title]);
         if (!title) return false;
         const start = m.index + m[0].indexOf(m[p.title]!);
-        add(titles, title, p.weight, source, { span: { representation, start, end: start + m[p.title]!.length } });
+        add(titles, title, p.weight, source, p.rule, { span: { representation, start, end: start + m[p.title]!.length } });
         if (p.company && m[p.company]) {
           const company = companyFrom(m, p.company, false);
-          add(companies, company, p.weight, source);
+          add(companies, company, p.weight, source, p.rule);
           // "at our company", "at our Berlin office", "with the team": the sender refers to itself,
           // which binds the role to no other employer. ("at 123456" still binds it to an unknown one.)
           if (!company && SELF_REFERENCE.test(m[p.company]!)) return true;
@@ -448,16 +503,18 @@ export function extractCompanyAndTitle(input: FieldInput): {
     for (const p of COMPANY_SENTENCES)
       scan(p.re, text, (m) => {
         const company = companyFrom(m, 1, p.strict ?? false);
-        add(companies, company, p.weight, p.affiliation ? "body:signature" : source, { fromContent: !p.affiliation });
+        add(companies, company, p.weight, p.affiliation ? "body:signature" : source, p.rule, {
+          fromContent: !p.affiliation,
+        });
         return !!company;
       });
 
   // Signatures: "Stripe Recruiting", "The Datadog Recruiting Team", "Technical Recruiter, Acme".
   for (const line of [...lines.slice(-8), ...(input.signature ?? "").split("\n").map(line => line.trim())]) {
     const team = /^(?:the\s+)?(.{2,50}?)\s+(?:recruit(?:ing|ment)|talent(?:\s+acquisition)?|careers|hr|people)(?:\s+team)?$/i.exec(line);
-    if (team) add(companies, cleanCompany(team[1]), 1.5, "body:signature", { fromContent: false });
+    if (team) add(companies, cleanCompany(team[1]), 1.5, "body:signature", "signature:team", { fromContent: false });
     const role = /^(?:senior\s+|lead\s+)?(?:technical\s+)?(?:recruiter|talent\s+partner|talent\s+acquisition[\w ]*|hiring\s+manager|hr\s+[\w ]+),\s*(.{2,50})$/i.exec(line);
-    if (role) add(companies, cleanCompany(role[1]), 2, "body:signature", { fromContent: false });
+    if (role) add(companies, cleanCompany(role[1]), 2, "body:signature", "signature:role", { fromContent: false });
   }
 
   // The sender: an ATS display name is the employer; elsewhere only when it is a department
@@ -467,10 +524,12 @@ export function extractCompanyAndTitle(input: FieldInput): {
   if (display) {
     const cleaned = cleanCompany(display);
     if (cleaned) {
-      if (isRecruitingSenderDomain(domain)) add(companies, cleaned, 1.5, "sender:display", { fromContent: false });
+      if (isRecruitingSenderDomain(domain))
+        add(companies, cleaned, 1.5, "sender:display", "sender:ats-display", { fromContent: false });
       // "Barclays Recruitment", "Contoso Careers": a hiring department names its organisation. A
       // plain organisation name ("Career Weekly") may be a newsletter, not an employer.
-      else if (DEPARTMENT.test(` ${display}`)) add(companies, cleaned, 1.5, "sender:display", { fromContent: false });
+      else if (DEPARTMENT.test(` ${display}`))
+        add(companies, cleaned, 1.5, "sender:display", "sender:department", { fromContent: false });
     }
   }
 
@@ -485,21 +544,21 @@ export function extractCompanyAndTitle(input: FieldInput): {
     const toEmployer = /\bto$/i.test(prefixed[1]!) || /^to$/i.test(prefixed[2] ?? "");
     const at = /^(.+?)\s+(?:job\s+)?(?:at|@|with)\s+(.+)$/i.exec(rest);
     if (at) {
-      add(titles, cleanTitle(at[1]), 2.5, "subject");
-      add(companies, cleanCompany(at[2]), 2.5, "subject");
+      add(titles, cleanTitle(at[1]), 2.5, "subject", "subject:prefix-at");
+      add(companies, cleanCompany(at[2]), 2.5, "subject", "subject:prefix-at");
     } else {
       const pair = splitPair(rest, (v) => {
         const cleaned = cleanCompany(v, false);
         return !!cleaned && (matchesDomain(cleaned) || hasCandidate(companies, cleaned));
       });
       if (pair) {
-        add(titles, cleanTitle(pair.title), 2.5, "subject");
-        add(companies, cleanCompany(pair.company), 2.5, "subject");
+        add(titles, cleanTitle(pair.title), 2.5, "subject", "subject:prefix-pair");
+        add(companies, cleanCompany(pair.company), 2.5, "subject", "subject:prefix-pair");
       } else if (!/\s[-–|]\s/.test(rest)) {
         // A lone remainder is a title ("Application received: ML Engineer") or the employer
         // ("Your application to Stripe"); the employer reading needs corroboration.
-        if (toEmployer) add(companies, cleanCompany(rest), 2, "subject");
-        else add(titles, cleanTitle(rest), 2, "subject");
+        if (toEmployer) add(companies, cleanCompany(rest), 2, "subject", "subject:prefix-employer");
+        else add(titles, cleanTitle(rest), 2, "subject", "subject:prefix-title");
       }
     }
   }
@@ -508,30 +567,31 @@ export function extractCompanyAndTitle(input: FieldInput): {
   // "Company - Video Interview Invitation".
   const leading = /^([^:\-–|]{2,60}?)\s*[:\-–|]\s*(?:application\s+received|thank\s+you\s+for\s+your\s+application|(?:video\s+)?interview\s+invitation|your\s+application|application\s+update)\b(?:\s*[-–|:]\s*(.+))?$/i.exec(subject);
   if (leading) {
-    add(companies, cleanCompany(leading[1]), 2.5, "subject");
-    if (leading[2]) add(titles, cleanTitle(leading[2]), 2.5, "subject");
+    add(companies, cleanCompany(leading[1]), 2.5, "subject", "subject:leading-company");
+    if (leading[2]) add(titles, cleanTitle(leading[2]), 2.5, "subject", "subject:leading-company");
   }
   const subjectAt = /^(?:[^:]{2,60}:\s*)?(.{2,100}?)\s+(?:at|@)\s+([A-Z0-9][^:]{1,60})$/.exec(subject);
   const invite = /^(?:updated\s+)?invitation:\s*(.+?)\s+@\s/i.exec(subject);
   // In a calendar invite the "@" introduces the time, not the employer.
   if (subjectAt && !prefixedUsed && !invite) {
-    add(titles, cleanTitle(subjectAt[1]), 2, "subject");
-    add(companies, cleanCompany(subjectAt[2]), 2, "subject");
+    add(titles, cleanTitle(subjectAt[1]), 2, "subject", "subject:title-at");
+    add(companies, cleanCompany(subjectAt[2]), 2, "subject", "subject:title-at");
   }
   for (const m of subject.matchAll(/\b(?:offer|application|candidacy|interview)\s+(?:from|to|at|with)\s+([A-Z0-9][^:|,]{1,60})$/gi))
-    add(companies, cleanCompany(m[1]), 2, "subject");
-  for (const m of subject.matchAll(/\b(?:update|news)\s+on\s+your\s+([A-Z0-9][\w&' .-]{1,40}?)\s+application\b/g))
-    add(companies, cleanCompany(m[1]), 2, "subject");
+    add(companies, cleanCompany(m[1]), 2, "subject", "subject:application-to");
+  // Case-sensitive for the capitalised name, so the subject's own first word is matched in either case.
+  for (const m of subject.matchAll(/\b(?:[Uu]pdate|[Nn]ews)\s+on\s+your\s+([A-Z0-9][\w&' .-]{1,40}?)\s+application\b/g))
+    add(companies, cleanCompany(m[1]), 2, "subject", "subject:update-on");
 
   // Calendar invites: "Invitation: Robin / Hooli - Technical Interview @ ..." and an event line
   // "Technical Interview - Senior Backend Engineer".
   if (invite) {
     for (const name of invite[1]!.split(/\s*(?:\/|<>|&|\+|\bx\b|[-–|])\s*/))
-      if (matchesDomain(name)) add(companies, cleanCompany(name), 3, "subject");
+      if (matchesDomain(name)) add(companies, cleanCompany(name), 3, "subject", "subject:invite-name");
   }
   for (const line of lines) {
     const event = /^(?:[\w ]{0,30}\binterview|phone screen|onsite|technical screen)\s*[-–:|]\s*(.{2,100})$/i.exec(line);
-    if (event) add(titles, cleanTitle(event[1]), 2, "body:calendar");
+    if (event) add(titles, cleanTitle(event[1]), 2, "body:calendar", "calendar:event-line");
   }
 
   // Job-board blocks: a company line followed by a title line (LinkedIn), or a title line followed
@@ -544,19 +604,22 @@ export function extractCompanyAndTitle(input: FieldInput): {
     const here = boardLines[i]!, next = boardLines[i + 1]!;
     const placeLine = /^(.{2,60}?)\s+[-–]\s+(?:[A-Z][\w .'-]+,\s*[A-Z]{2}\b|remote|hybrid|[A-Z][\w .'-]+,\s*[A-Z][a-z]+)/.exec(next);
     if (placeLine && cleanTitle(here) && !PROSE.test(here)) {
-      add(titles, cleanTitle(here), 1.5, "body:layout");
-      add(companies, cleanCompany(placeLine[1]), 1.5, "body:layout");
+      add(titles, cleanTitle(here), 1.5, "body:layout", "board:title-place");
+      add(companies, cleanCompany(placeLine[1]), 1.5, "body:layout", "board:title-place");
     }
     const location = boardLines[i + 2] ?? "";
     const hasLocation = /^(?:remote|hybrid|on[- ]site|[\p{L} .'-]+,\s*[\p{L} .'-]+)/iu.test(location);
     if (hasCandidate(companies, here) && cleanTitle(next) && here.length <= 60 && hasLocation)
-      add(titles, cleanTitle(next), 1.5, "body:layout");
+      add(titles, cleanTitle(next), 1.5, "body:layout", "board:company-title");
   }
 
   // The sender's own domain confirms a candidate the message itself names; it never invents one,
   // and it does not re-confirm the sender's display name (that would count one source twice).
   for (const c of companies.values())
-    if (c.fromContent && [...c.forms.keys()].some(matchesDomain)) c.evidence.set("domain", 2);
+    if (c.fromContent && [...c.forms.keys()].some(matchesDomain)) {
+      c.evidence.set("domain", 2);
+      c.rules.add("domain:confirms");
+    }
   // Capitalised words in the subject that spell the sender's organisation ("Massive Dynamic").
   if (hints.length)
     for (const m of subject.matchAll(/\b([A-Z][\w&'-]*(?:\s+[A-Z][\w&'-]*){0,3})\b/g))
@@ -564,7 +627,7 @@ export function extractCompanyAndTitle(input: FieldInput): {
         const phrase = m[1]!.split(" ").slice(0, n).join(" ");
         if (hints.includes(compact(phrase)) &&
             ![...companies.values()].some(c => [...c.forms.keys()].some(form => compact(form).startsWith(compact(phrase)))))
-          add(companies, cleanCompany(phrase), 1.5, "subject");
+          add(companies, cleanCompany(phrase), 1.5, "subject", "subject:domain-phrase");
       }
 
   // A title must not be the employer's own name.

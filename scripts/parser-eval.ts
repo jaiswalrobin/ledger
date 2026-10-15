@@ -1,5 +1,5 @@
 /** Scores the extractor against the labeled corpus: `node --experimental-strip-types scripts/parser-eval.ts` */
-import { scoreCorpus, summarize, type Field } from "../tests/corpus/score.ts";
+import { ruleReport, scoreCorpus, summarize, type Field } from "../tests/corpus/score.ts";
 import { CORPUS } from "../tests/corpus/emails.ts";
 import { HOLDOUT } from "../tests/corpus/holdout.ts";
 
@@ -19,3 +19,13 @@ for (const r of failures) {
     if (r.verdicts[f] !== "correct")
       console.log(`    ${f.padEnd(8)} ${r.verdicts[f].padEnd(9)} expected ${JSON.stringify(r.email.expect[f])}, got ${JSON.stringify(r.actual[f])}`);
 }
+
+// Which company/title rules produced the values. A rule that backs wrong values, or only ever
+// loses, is a candidate for tightening; one that never fires has no example in this set.
+const { stats, unfired } = ruleReport(results);
+const fired = [...stats].filter(([, s]) => s.fired > 0).sort(([a, x], [b, y]) => y.wrong - x.wrong || y.fired - x.fired || a.localeCompare(b));
+console.log(`\nRules: ${fired.length} of ${stats.size} fired\n`);
+console.log("rule                        fired  correct  wrong  lost");
+for (const [rule, s] of fired)
+  console.log(`${rule.padEnd(26)} ${String(s.fired).padStart(6)}  ${String(s.correct).padStart(7)}  ${String(s.wrong).padStart(5)}  ${String(s.lost).padStart(4)}`);
+if (unfired.length) console.log(`\nNever fired: ${unfired.join(", ")}`);

@@ -1,4 +1,6 @@
+import { companyKey } from "../../src/domain/normalization.ts";
 import { extractSignal } from "../../src/ingestion/extract.ts";
+import { FIELD_RULES, type FieldRule } from "../../src/ingestion/fields.ts";
 import { parseEml } from "../../src/ingestion/eml.ts";
 import { buildEml } from "../helpers/eml.ts";
 import { CORPUS, type CorpusEmail } from "./emails.ts";
@@ -21,10 +23,40 @@ export function verdict(expected: string | null, actual: string | null): Verdict
   return "wrong";
 }
 
+export type RuleField = "company" | "title";
+
+/** Which extraction rules took part in one field of one email. */
+export interface RuleTrace {
+  /** Every rule that proposed any candidate. */
+  fired: readonly FieldRule[];
+  /** Rules behind the value the extractor emitted. */
+  emitted: readonly FieldRule[];
+  /** Rules that proposed the labelled value, whether or not it won. */
+  expected: readonly FieldRule[];
+}
+
 export interface CaseResult {
   email: CorpusEmail;
   actual: Record<Field, string | null>;
   verdicts: Record<Field, Verdict>;
+  rules: Record<RuleField, RuleTrace>;
+}
+
+function traceRules(
+  field: RuleField,
+  candidates: readonly { value: string; rules?: readonly string[] }[],
+  emitted: string | null,
+  expected: string | null,
+): RuleTrace {
+  const same = (a: string, b: string | null) =>
+    b != null && (field === "company" ? companyKey(a) === companyKey(b) : norm(a) === norm(b));
+  const rulesOf = (keep: (value: string) => boolean) =>
+    [...new Set(candidates.filter((c) => keep(c.value)).flatMap((c) => c.rules ?? []))].sort() as FieldRule[];
+  return {
+    fired: rulesOf(() => true),
+    emitted: rulesOf((value) => same(value, emitted)),
+    expected: rulesOf((value) => same(value, expected)),
+  };
 }
 
 export async function scoreCorpus(emails: readonly CorpusEmail[] = CORPUS): Promise<CaseResult[]> {
@@ -42,9 +74,14 @@ export async function scoreCorpus(emails: readonly CorpusEmail[] = CORPUS): Prom
     const [original] = await parseEml(new TextEncoder().encode(raw));
     const signal = extractSignal(original!.message);
     const actual = { kind: signal.kind, company: signal.fields.company, title: signal.fields.title };
+    const decisions = signal.fields.fieldDecisions;
     results.push({
       email,
       actual,
+      rules: {
+        company: traceRules("company", decisions?.company.candidates ?? [], actual.company, email.expect.company),
+        title: traceRules("title", decisions?.title.candidates ?? [], actual.title, email.expect.title),
+      },
       verdicts: {
         kind: verdict(email.expect.kind, actual.kind),
         company: verdict(email.expect.company, actual.company),
@@ -73,4 +110,30 @@ export function summarize(results: CaseResult[]) {
     }),
   ) as Record<Field, { correct: number; missed: number; wrong: number; spurious: number; accuracy: number;
     support: number; emitted: number; recovered: number; precision: number | null; recall: number | null; coverage: number }>;
+}
+
+export interface RuleStats {
+  /** Emails in which the rule proposed any candidate. */
+  fired: number;
+  /** Emails in which it backed the emitted value, and that value was right. */
+  correct: number;
+  /** Emails in which it backed the emitted value, and that value was wrong or invented. */
+  wrong: number;
+  /** Emails in which it proposed the labelled value, but the extractor emitted another or none. */
+  lost: number;
+}
+
+/** Per-rule attribution over both fields: which rules earn their place, and which never fire. */
+export function ruleReport(results: readonly CaseResult[]): { stats: Map<FieldRule, RuleStats>; unfired: FieldRule[] } {
+  const stats = new Map<FieldRule, RuleStats>(FIELD_RULES.map((rule) => [rule, { fired: 0, correct: 0, wrong: 0, lost: 0 }]));
+  for (const result of results)
+    for (const field of ["company", "title"] as const) {
+      const trace = result.rules[field];
+      const verdict = result.verdicts[field];
+      for (const rule of trace.fired) stats.get(rule)!.fired++;
+      for (const rule of trace.emitted) stats.get(rule)![verdict === "correct" ? "correct" : "wrong"]++;
+      if (verdict === "missed" || verdict === "wrong")
+        for (const rule of trace.expected) stats.get(rule)!.lost++;
+    }
+  return { stats, unfired: FIELD_RULES.filter((rule) => stats.get(rule)!.fired === 0) };
 }

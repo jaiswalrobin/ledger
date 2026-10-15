@@ -466,13 +466,13 @@ function extractOne(
     body,
     signature: regions.signature,
     titleHints: [
-      ...(calendarFields?.title ? [{ value: calendarFields.title, weight: 3 }] : []),
-      ...(workdaySlugTitle ? [{ value: workdaySlugTitle, weight: 1 }] : []),
-      ...(ibm && !ibm.conflict && ibm.title ? [{ value: ibm.title, weight: 3 }] : []),
+      ...(calendarFields?.title ? [{ value: calendarFields.title, weight: 3, rule: "hint:calendar" as const }] : []),
+      ...(workdaySlugTitle ? [{ value: workdaySlugTitle, weight: 1, rule: "hint:workday-slug" as const }] : []),
+      ...(ibm && !ibm.conflict && ibm.title ? [{ value: ibm.title, weight: 3, rule: "hint:ibm" as const }] : []),
     ],
     companyHints: [
-      ...(ibm && !ibm.conflict ? [{ value: "IBM", weight: 3 }] : []),
-      ...(calendarFields?.company ? [{ value: calendarFields.company, weight: 3 }] : []),
+      ...(ibm && !ibm.conflict ? [{ value: "IBM", weight: 3, rule: "hint:ibm" as const }] : []),
+      ...(calendarFields?.company ? [{ value: calendarFields.company, weight: 3, rule: "hint:calendar" as const }] : []),
     ],
   });
   // Candidate IDs identify a person, not a particular submission.
@@ -577,7 +577,8 @@ export function extractSignal(message: ParsedMessage): ExtractedSignal {
     const candidates = new Map<string, (typeof decisions)[number]["candidates"][number]>();
     for (const decision of decisions) for (const candidate of decision.candidates) {
       const id = keyOf(candidate.value), existing = candidates.get(id);
-      if (!existing || candidate.score > existing.score) candidates.set(id, candidate);
+      const rules = [...new Set([...(existing?.rules ?? []), ...(candidate.rules ?? [])])].sort();
+      candidates.set(id, { ...(!existing || candidate.score > existing.score ? candidate : existing), rules });
     }
     const ambiguous = decisions.some(d => d.state === "AMBIGUOUS") || supported.size > 1;
     const value = ambiguous ? null : supported.values().next().value ?? null;

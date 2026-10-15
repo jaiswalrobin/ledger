@@ -53,7 +53,8 @@ export type SignalKind = Extract<
 export interface FieldDecision {
   state: "SUPPORTED" | "AMBIGUOUS" | "MISSING";
   value: string | null;
-  candidates: readonly { value: string; score: number; sources: readonly string[] }[];
+  /** `rules` names the extraction rules that proposed a value; absent in decisions stored earlier. */
+  candidates: readonly { value: string; score: number; sources: readonly string[]; rules?: readonly string[] }[];
 }
 
 /** Structured, redacted facts lifted from a message. Safe to persist. */
