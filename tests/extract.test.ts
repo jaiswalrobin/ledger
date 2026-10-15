@@ -174,3 +174,52 @@ describe("fail-closed behaviour", () => {
     assert.equal(s.fields.atsKey, null);
   });
 });
+
+describe("next-round signal", () => {
+  const signal = (subject: string, text: string) =>
+    extractSignal({
+      messageId: "<round@example.com>",
+      fromName: "Weave Recruiting",
+      fromAddress: "recruiting@weave.example",
+      to: [],
+      subject,
+      date: "2026-10-07T09:00:00Z",
+      text,
+    });
+
+  it("marks a step that follows an earlier round", () => {
+    for (const [subject, text] of [
+      [
+        "Robin, Weave Next Steps!",
+        "Good news! We received positive feedback from your previous interview for the Senior Frontend Engineer role. We would like to invite you to the next round.",
+      ],
+      [
+        "Final round interview",
+        "We would like to invite you to the final round interview for the Data Engineer position.",
+      ],
+      [
+        "Next stage",
+        "Congratulations, we would like to move you forward to the next stage. Please schedule an interview for the Backend Engineer role.",
+      ],
+    ] as const)
+      assert.equal(signal(subject, text).fields.nextRound, true, subject);
+  });
+
+  it("does not mark first invitations, reminders or outcomes", () => {
+    for (const [subject, text] of [
+      [
+        "Next steps",
+        "Thank you for applying. As a next step, we would like to schedule a phone screen for the Backend Engineer role.",
+      ],
+      [
+        "Reminder: Submit Your Availability for Weave",
+        "Just a quick reminder to share your availability so we can schedule your interview for the Senior Frontend Engineer role.",
+      ],
+      [
+        "Your application to Weave",
+        "Thank you for your previous interview. Unfortunately, we have decided to move forward with other candidates.",
+      ],
+    ] as const)
+      assert.equal(signal(subject, text).fields.nextRound, undefined, subject);
+  });
+});

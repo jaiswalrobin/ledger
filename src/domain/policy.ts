@@ -198,6 +198,22 @@ export function judgeCalendarRevision(
   return "NEW";
 }
 
+// 3b. Employer context --------------------------------------------------------------------
+
+/**
+ * Whether an update that does not name both its company and title may be matched to the one
+ * pending application at its sender's employer domain. Allowed for mail Gmail delivered to the
+ * connected mailbox from an authenticated sender, and for mail the user forwarded on purpose,
+ * except rejections and offers: a forwarded copy cannot prove who sent it.
+ */
+export const mayUseEmployerContext = (facts: {
+  kind: ApplicationEventKind;
+  authenticatedMailbox: boolean;
+  forwardedByUser: boolean;
+}): boolean =>
+  facts.authenticatedMailbox ||
+  (facts.forwardedByUser && !needsAuthority(facts.kind));
+
 // 4. Authority to apply ----------------------------------------------------------------------
 
 /** Rejections and offers: the events a person would most regret seeing applied wrongly. */

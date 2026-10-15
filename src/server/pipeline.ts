@@ -12,12 +12,14 @@ import {
   gateSignal,
   judgeCalendarRevision,
   mayApplyAutomatically,
+  mayUseEmployerContext,
   needsAuthority,
   screenSensitive,
   type AuthorityFacts,
   type MatchBasis,
   type ReviewReason,
 } from "../domain/policy.ts";
+import { isStep, placeStep } from "../domain/rounds.ts";
 import type { CalendarFacts } from "../domain/types.ts";
 import {
   atsKeyId,
@@ -51,6 +53,7 @@ import {
 } from "./conversation.ts";
 import {
   acceptSubmissionEvidence,
+  attachEvidence,
   attemptConfirmedInMailbox,
   attemptsForCalendarUid,
   automaticEventProblem,
@@ -63,7 +66,9 @@ import {
   loadOpenings,
   recordEvent,
   reproject,
+  stepEvents,
   weakOpeningCandidates,
+  type NewEvent,
 } from "./store.ts";
 
 export type { ReviewReason };
@@ -729,9 +734,12 @@ async function employerContextOpening(
   const f = c.signal.fields;
   if (
     (f.company && f.title) ||
-    !c.mailboxId ||
-    !c.senderVerified ||
-    f.externalApplicationId
+    f.externalApplicationId ||
+    !mayUseEmployerContext({
+      kind: c.kind,
+      authenticatedMailbox: !!c.mailboxId && c.senderVerified,
+      forwardedByUser: c.sourceType === "FORWARDED_EML",
+    })
   )
     return next(null);
   const context = await employerOpenings(c.tx, c.userId, c.senderDomain);
@@ -1011,7 +1019,28 @@ async function applyUpdate(
       return stop("CALENDAR_REVISION", [attemptId], [openingId]);
   }
 
-  const event = eventFor(c, attemptId);
+  let event: NewEvent = eventFor(c, attemptId);
+  if (isStep(c.kind)) {
+    // Reminders and repeat confirmations are evidence for the round's existing fact.
+    const placement = placeStep(await stepEvents(tx, userId, attemptId), {
+      kind: c.kind,
+      occurredAt: c.occurredAt,
+      calendar: event.calendar ?? null,
+      startsRound: c.signal.fields.nextRound === true,
+    });
+    if (placement.action === "ATTACH") {
+      await attachEvidence(
+        tx,
+        userId,
+        placement.eventId,
+        c.artifactId,
+        c.occurredAt,
+        c.signalId,
+      );
+      return next(applied(c, attemptId, openingId));
+    }
+    event = { ...event, startsRound: placement.startsRound };
+  }
   const problem = await automaticEventProblem(tx, event);
   if (problem) return stop(problem, [attemptId], [openingId]);
   await recordEvent(tx, event, c.artifactId);
@@ -1040,6 +1069,12 @@ export async function reconcileWaitingUpdates(
 }
 
 const RECONCILIATION_BATCH_SIZE = 25;
+
+/** The company name as it would appear in its domain ("Weave Inc." → "weaveinc"), if usable. */
+const employerToken = (company: string): string | null => {
+  const token = companyKey(company).replace(/[^a-z0-9]/g, "");
+  return token.length >= 3 ? token : null;
+};
 
 /** Called while holding the owner's domain lock; the job cursor advances with domain writes. */
 async function reconcileReviewBatch(
@@ -1102,7 +1137,11 @@ async function reconcileReviewBatch(
               AND prior.mailbox_id=a.mailbox_id AND prior.sender_domain=a.sender_domain AND prior.sender_verified
               AND (prior.message_id_key=ANY(a.reply_message_keys)
                 OR (a.provider_thread_id IS NOT NULL AND prior.provider_thread_id=a.provider_thread_id)
-                OR (s.fields->>'title' IS NULL AND a.sender_verified))))
+                OR (s.fields->>'title' IS NULL AND a.sender_verified)))
+          -- An update missing its company or title, from a domain that may be the employer's.
+          -- A prefilter only: apply() checks the employer domain exactly.
+          OR ($12::text IS NOT NULL AND (s.fields->>'company' IS NULL OR s.fields->>'title' IS NULL)
+            AND strpos(replace(lower(a.sender_domain),'.',''),$12) > 0))
       ORDER BY r.created_at,r.id LIMIT $11`,
     [
       userId,
@@ -1116,6 +1155,7 @@ async function reconcileReviewBatch(
       opening.atsKey?.tenant ?? null,
       opening.atsKey?.requisitionId ?? null,
       RECONCILIATION_BATCH_SIZE,
+      employerToken(opening.company),
     ],
   );
   let applied = 0;

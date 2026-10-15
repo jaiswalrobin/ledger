@@ -22,6 +22,7 @@ import {
   greeting,
   plural,
   relative,
+  roundOf,
   statusOf,
   type Bucket,
 } from "../lib.ts";
@@ -335,7 +336,12 @@ export function ApplicationsScreen({
                 </div>
                 <div className="table-statuses">
                   {opening.attempts.map((a) => (
-                    <Pill key={a.id} value={statusOf(a)} />
+                    <span key={a.id} className="status-with-round">
+                      <Pill value={statusOf(a)} />
+                      {roundOf(a) && (
+                        <em className="attempt-chip">{roundOf(a)}</em>
+                      )}
+                    </span>
                   ))}
                 </div>
                 <span className={`coverage ${cov.tone}`}>

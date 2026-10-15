@@ -162,6 +162,27 @@ revision history remains visible; the latest accepted revision supplies the curr
 and the dashboard agenda. Legacy provenance is backfilled only when unambiguous. Cancelling or
 rejecting an interpretation requires review/owner action; revisions do not erase accepted history.
 
+**Interview rounds.** Employers send several emails per step: an invitation, a reminder to share
+availability, a confirmation with details, a calendar invite, reschedules and reminders. Rounds
+(`src/domain/rounds.ts`) are a pure projection of an attempt's accepted assessment and interview
+events. A new round starts on next-round wording ("positive feedback from your previous
+interview", "the next round", stored as `starts_round`), on a change between assessment and
+interview, on any step after the round's meeting was held, or on an invitation more than a day
+after the round was scheduled. Calendar revisions and replacement invites before the meeting stay
+in their round. While ingesting, the same rules decide whether an email starts a round, records a
+new fact, or only attaches as evidence to the fact it repeats, so a reminder never adds a second
+"interview scheduled". The application view shows each round with its current meeting time,
+reschedules and email count.
+
+**Forwarded updates and reviews.** An update that does not name both its company and title may
+be matched to the one pending application at its sender's employer domain. This applies to
+authenticated mailbox mail, and to mail the user forwarded on purpose except rejections and
+offers, which a forwarded copy cannot authenticate (`mayUseEmployerContext` in
+`src/domain/policy.ts`). When an application is created or an email is assigned to one, waiting
+reviews are re-checked, including those whose sender domain may be the employer's. Needs review
+groups open reviews that are probably about one job, so an interview thread that arrived before
+its application reads as one decision.
+
 **Measurement.** `tests/corpus/emails.ts` is the synthetic development/regression corpus.
 `tests/corpus/holdout.ts` retains fixed evaluation cases. Disclosed failures used to guide fixes are
 promoted to development; replacement cases written by the same developer are not independent

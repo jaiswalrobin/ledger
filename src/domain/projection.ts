@@ -58,9 +58,12 @@ export function projectAttempt(
       conflicts.push("Invalid event timestamp: " + event.id);
       continue;
     }
-    if (eventMillis > latestActivityMillis) {
-      latestActivityMillis = eventMillis;
-      lastActivityAt = event.occurredAt;
+    for (const activity of [event.occurredAt, event.latestEvidenceAt]) {
+      const millis = activity ? Date.parse(activity) : NaN;
+      if (millis > latestActivityMillis) {
+        latestActivityMillis = millis;
+        lastActivityAt = activity!;
+      }
     }
 
     if (event.kind === "MANUAL_CORRECTION") {

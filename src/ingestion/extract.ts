@@ -111,9 +111,9 @@ const PHRASES: Record<SignalKind, RegExp> = {
   INTERVIEW_INVITED: new RegExp(
     String.raw`\b(?:` +
       [
-        String.raw`invite you (?:to|for) (?:an? |the |your )?(?:first[- ]round |initial |technical |final |video |virtual |phone |onsite |on-site )?(?:interview|phone screen|video|call|conversation|chat|meeting|next (?:round|stage|step))`,
+        String.raw`invite you (?:to|for) (?:an? |the |your )?(?:(?:first|second|third|fourth|final|next|1st|2nd|3rd|4th)[- ]round |initial |technical |final |video |virtual |phone |onsite |on-site ){0,3}(?:interview|phone screen|video|call|conversation|chat|meeting|next (?:round|stage|step))`,
         String.raw`invitation to (?:an? )?(?:interview|phone screen)`,
-        String.raw`(?:schedule|book|arrange|set up|organize|organise) (?:an? |your |the |some )?(?:first[- ]round |initial |technical |final |video |virtual |phone |quick |brief |short )?(?:interview|phone screen|call|chat|time to (?:talk|chat|speak|meet)|conversation)`,
+        String.raw`(?:schedule|book|arrange|set up|organize|organise) (?:an? |your |the |some )?(?:(?:first|second|third|fourth|final|next|1st|2nd|3rd|4th)[- ]round |initial |technical |final |video |virtual |phone |quick |brief |short ){0,3}(?:interview|phone screen|call|chat|time to (?:talk|chat|speak|meet)|conversation)`,
         String.raw`interview invitation`,
         String.raw`invite(?:d)? you to (?:complete|take|schedule|record|attend) (?:an? |your |the )?(?:one-way |recorded |video |virtual |online |phone |first |initial )*interview`,
         String.raw`would (?:like|love) to (?:interview|speak with|talk with|talk to|chat|meet|set up)`,
@@ -183,6 +183,23 @@ const STEP_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>([
   "INTERVIEW_INVITED",
   "INTERVIEW_SCHEDULED",
 ]);
+
+/**
+ * Wording that places a step after an earlier one. "Next steps" alone is not enough: first
+ * invitations and reminders use it too ("the next step is to share your availability").
+ */
+const NEXT_ROUND = new RegExp(
+  String.raw`\b(?:` +
+    [
+      String.raw`next (?:interview )?(?:round|stage)`,
+      String.raw`(?:second|2nd|third|3rd|fourth|4th|fifth|5th|final|last|following|subsequent) (?:interview )?(?:round|stage)`,
+      String.raw`positive feedback`,
+      String.raw`(?:previous|last|recent|first) (?:interview|round|conversation|call|assessment)`,
+      String.raw`(?:move|moving|advance|advancing|progress|progressing) (?:you )?(?:forward )?(?:to|into) (?:the )?next`,
+    ].join("|") +
+    String.raw`)\b`,
+  "i",
+);
 
 const CONDITION_START = /^(?:if|unless|should|in case|when)\b/i;
 /** Where the main clause of a comma-less conditional sentence usually begins. */
@@ -576,6 +593,11 @@ function extractOne(
       declaredEmail && declaredEmail.length <= 254 ? declaredEmail : null,
     externalApplicationId:
       externalId && /\d/.test(externalId) ? externalId : null,
+    ...(kind &&
+    STEP_KINDS.has(kind) &&
+    NEXT_ROUND.test(`${message.subject}\n${body}`)
+      ? { nextRound: true }
+      : {}),
   };
   if (jobLinks.size > 1 || ibm?.conflict) {
     fields.atsKey = null;
@@ -748,6 +770,14 @@ export function extractSignal(message: ParsedMessage): ExtractedSignal {
   );
   if (kinds.size > 1) reasons.add("conflicting-alternatives");
   const kind = kinds.size === 1 ? [...kinds][0]! : null;
+  // Any representation saying the step follows an earlier round is enough.
+  delete fields.nextRound;
+  if (
+    kind &&
+    STEP_KINDS.has(kind) &&
+    representations.some((signal) => signal.fields.nextRound)
+  )
+    fields.nextRound = true;
   const uncertain = [
     "mixed-kind",
     "ambiguous-kind",

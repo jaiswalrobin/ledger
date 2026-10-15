@@ -1059,4 +1059,40 @@ export const CORPUS: CorpusEmail[] = [
       title: "Data Engineer",
     },
   },
+  {
+    id: "r8-details-trailing-company",
+    note: "A recruiter's 'Details- Weave' subject names the employer after an unspaced dash",
+    from: '"Swati Jain" <swati.jain@weave.example>',
+    subject: "Robin, Interview Confirmation and Details- Weave",
+    text: "Hi Robin,\n\nThanks for submitting your availability for the Senior Frontend Engineer role. Your interview is confirmed for Thursday at 9am IST. Here is what to expect.\n\nSwati",
+    expect: {
+      kind: "INTERVIEW_SCHEDULED",
+      company: "Weave",
+      title: "Senior Frontend Engineer",
+    },
+  },
+  {
+    id: "r9-next-round",
+    note: "Positive feedback and an invitation to the next round of the same application",
+    from: '"Nikita Rathi" <nikita.rathi@weave.example>',
+    subject: "Robin, Weave Next Steps!",
+    text: "Hi Robin,\n\nGood news! We received positive feedback from your previous interview for the Senior Frontend Engineer role, and we would like to invite you to the next round. Please submit your availability.\n\nNikita",
+    expect: {
+      kind: "INTERVIEW_INVITED",
+      company: "Weave",
+      title: "Senior Frontend Engineer",
+    },
+  },
+  {
+    id: "r10-availability-reminder",
+    note: "An ATS reminder about the same step: no new round",
+    from: '"Weave Talent Acquisition" <no-reply@ashbyhq.com>',
+    subject: "Reminder: Submit Your Availability for Weave",
+    text: "Hi Robin,\n\nJust a quick reminder to share your availability so we can schedule your interview for the Senior Frontend Engineer role.\n\nWeave Talent Acquisition",
+    expect: {
+      kind: "INTERVIEW_INVITED",
+      company: "Weave",
+      title: "Senior Frontend Engineer",
+    },
+  },
 ];

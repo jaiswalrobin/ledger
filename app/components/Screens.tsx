@@ -26,6 +26,7 @@ import type {
 } from "../../src/server/queries.ts";
 import { PageTitle, Pill } from "./ui.tsx";
 import { ReviewCard } from "./Forms.tsx";
+import { groupReviews } from "../../src/domain/review-groups.ts";
 import { date, errorText, label, relative } from "../lib.ts";
 
 export type Theme = "system" | "light" | "dark";
@@ -65,20 +66,62 @@ export function ReviewScreen({
         </div>
       ) : (
         <div className="review-stack">
-          {reviews.map((review, i) => (
-            <ReviewCard
-              key={review.id}
-              review={review}
-              openings={openings}
-              busy={busy}
-              position={`${i + 1} of ${reviews.length}`}
-              submit={submit}
-            />
-          ))}
+          {reviewGroups(reviews).map((group, i, groups) => {
+            const position = `${i + 1} of ${groups.length}`;
+            const card = (review: ReviewView, at = position) => (
+              <ReviewCard
+                key={review.id}
+                review={review}
+                openings={openings}
+                busy={busy}
+                position={at}
+                submit={submit}
+              />
+            );
+            if (group.rest.length === 0) return card(group.lead);
+            const about = [group.lead.fields.company, group.lead.fields.title]
+              .filter(Boolean)
+              .join(" — ");
+            return (
+              <section className="review-group" key={group.lead.id}>
+                <p className="review-group-head">
+                  <strong>{group.rest.length + 1} emails</strong>
+                  {about ? ` about ${about}` : " from the same sender"}. Resolve
+                  the first; the others are checked again right after and follow
+                  when they match.
+                </p>
+                {card(group.lead)}
+                <details>
+                  <summary>Show the other {group.rest.length}</summary>
+                  {group.rest.map((review) => card(review, "same job"))}
+                </details>
+              </section>
+            );
+          })}
         </div>
       )}
     </>
   );
+}
+
+/** Open reviews about one job, led by the earliest email, which usually carries the most. */
+function reviewGroups(reviews: readonly ReviewView[]) {
+  const byId = new Map(reviews.map((review) => [review.id, review]));
+  const earliest = (a: ReviewView, b: ReviewView) =>
+    (a.originalMessageAt ?? a.createdAt).localeCompare(
+      b.originalMessageAt ?? b.createdAt,
+    );
+  return groupReviews(
+    reviews.map((review) => ({
+      id: review.id,
+      company: review.fields.company,
+      title: review.fields.title,
+      employerDomain: review.employerDomain,
+    })),
+  ).map((ids) => {
+    const [lead, ...rest] = ids.map((id) => byId.get(id)!).sort(earliest);
+    return { lead: lead!, rest };
+  });
 }
 
 // ---- import -----------------------------------------------------------------------------
