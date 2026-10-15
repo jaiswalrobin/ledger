@@ -59,10 +59,14 @@ export function ApplicationsScreen({
   const active = attempts.filter((a) => a.outcome === "PENDING");
   const interviews = active.filter((a) => a.stage === "INTERVIEW");
   const offers = attempts.filter((a) => a.outcome === "OFFERED");
-  const upcoming = openings.flatMap(o => o.attempts
-    .filter(a => a.outcome === "PENDING" && a.nextInterviewAt)
-    .map(a => ({ opening: o, attempt: a, time: a.nextInterviewAt! })))
-    .sort((a, b) => a.time.localeCompare(b.time)).slice(0, 5);
+  const upcoming = openings
+    .flatMap((o) =>
+      o.attempts
+        .filter((a) => a.outcome === "PENDING" && a.nextInterviewAt)
+        .map((a) => ({ opening: o, attempt: a, time: a.nextInterviewAt! })),
+    )
+    .sort((a, b) => a.time.localeCompare(b.time))
+    .slice(0, 5);
 
   const matches = (o: OpeningView, f: Filter) =>
     f === "all" ||
@@ -77,7 +81,9 @@ export function ApplicationsScreen({
     const list = openings.filter(
       (o) =>
         words.every((w) =>
-          `${o.company} ${o.title} ${o.location ?? ""}`.toLowerCase().includes(w),
+          `${o.company} ${o.title} ${o.location ?? ""}`
+            .toLowerCase()
+            .includes(w),
         ) &&
         matches(o, filter) &&
         (!bucket || o.attempts.some((a) => bucketOf(a) === bucket)),
@@ -85,7 +91,18 @@ export function ApplicationsScreen({
     const rank = (o: OpeningView) =>
       Math.max(
         ...o.attempts.map((a) =>
-          a.outcome === "OFFERED" ? 5 : a.outcome !== "PENDING" ? 0 : ({ UNKNOWN: 1, APPLIED: 2, ASSESSMENT: 3, INTERVIEW: 4 } as const)[a.stage],
+          a.outcome === "OFFERED"
+            ? 5
+            : a.outcome !== "PENDING"
+              ? 0
+              : (
+                  {
+                    UNKNOWN: 1,
+                    APPLIED: 2,
+                    ASSESSMENT: 3,
+                    INTERVIEW: 4,
+                  } as const
+                )[a.stage],
         ),
       );
     return [...list].sort((a, b) =>
@@ -93,15 +110,19 @@ export function ApplicationsScreen({
         ? a.company.localeCompare(b.company)
         : sort === "progress"
           ? rank(b) - rank(a)
-          : Date.parse(b.latestActivityAt ?? "0") - Date.parse(a.latestActivityAt ?? "0"),
+          : Date.parse(b.latestActivityAt ?? "0") -
+            Date.parse(a.latestActivityAt ?? "0"),
     );
   }, [openings, query, filter, bucket, sort]);
 
   const name = session.isDemo ? "" : (session.email?.split("@")[0] ?? "");
   const summary: string[] = [];
-  if (active.length) summary.push(`${plural(active.length, "application")} in motion`);
-  if (interviews.length) summary.push(`${plural(interviews.length, "interview")} on the horizon`);
-  if (offers.length) summary.push(`${plural(offers.length, "offer")} to consider`);
+  if (active.length)
+    summary.push(`${plural(active.length, "application")} in motion`);
+  if (interviews.length)
+    summary.push(`${plural(interviews.length, "interview")} on the horizon`);
+  if (offers.length)
+    summary.push(`${plural(offers.length, "offer")} to consider`);
   if (reviews) summary.push(`${plural(reviews, "update")} waiting for you`);
 
   const tabs: { id: Filter; name: string }[] = [
@@ -134,10 +155,28 @@ export function ApplicationsScreen({
       </div>
 
       <div className="stats">
-        <Stat name="Application attempts" value={attempts.length} note={`across ${plural(openings.length, "opening")}`} />
-        <Stat name="Still in progress" value={active.length} note="No outcome yet" />
-        <Stat name="At interview stage" value={interviews.length} note="The conversation is moving" accent="interview" />
-        <Stat name="Need a closer look" value={reviews} note={reviews ? "Waiting for your review" : "All caught up"} accent={reviews ? "attention" : undefined} />
+        <Stat
+          name="Application attempts"
+          value={attempts.length}
+          note={`across ${plural(openings.length, "opening")}`}
+        />
+        <Stat
+          name="Still in progress"
+          value={active.length}
+          note="No outcome yet"
+        />
+        <Stat
+          name="At interview stage"
+          value={interviews.length}
+          note="The conversation is moving"
+          accent="interview"
+        />
+        <Stat
+          name="Need a closer look"
+          value={reviews}
+          note={reviews ? "Waiting for your review" : "All caught up"}
+          accent={reviews ? "attention" : undefined}
+        />
       </div>
 
       {attempts.length > 0 && (
@@ -153,7 +192,8 @@ export function ApplicationsScreen({
           <span className="review-banner-text">
             <strong>A little context from you goes a long way.</strong>
             <small>
-              {reviews} update{reviews === 1 ? " needs" : "s need"} review before changing an application.
+              {reviews} update{reviews === 1 ? " needs" : "s need"} review
+              before changing an application.
             </small>
           </span>
           <span className="review-link">
@@ -163,16 +203,28 @@ export function ApplicationsScreen({
       )}
 
       {upcoming.length > 0 && (
-        <section className="upcoming-interviews" aria-label="Upcoming interviews">
-          <h2><CalendarDays size={18} aria-hidden /> Upcoming interviews</h2>
-          <p className="small muted">Times from accepted invitations, shown in your local time zone.</p>
+        <section
+          className="upcoming-interviews"
+          aria-label="Upcoming interviews"
+        >
+          <h2>
+            <CalendarDays size={18} aria-hidden /> Upcoming interviews
+          </h2>
+          <p className="small muted">
+            Times from accepted invitations, shown in your local time zone.
+          </p>
           <ul>
             {upcoming.map(({ opening, attempt, time }) => (
-              <li key={attempt.id}><button onClick={() => open(opening.id)}>
-                <span><strong>{opening.company}</strong><small>{opening.title}</small></span>
-                <time dateTime={time}>{fullDate(time)}</time>
-                <ChevronRight size={16} aria-hidden />
-              </button></li>
+              <li key={attempt.id}>
+                <button onClick={() => open(opening.id)}>
+                  <span>
+                    <strong>{opening.company}</strong>
+                    <small>{opening.title}</small>
+                  </span>
+                  <time dateTime={time}>{fullDate(time)}</time>
+                  <ChevronRight size={16} aria-hidden />
+                </button>
+              </li>
             ))}
           </ul>
         </section>
@@ -199,7 +251,11 @@ export function ApplicationsScreen({
               }}
             />
             {query ? (
-              <button className="icon-button clear" aria-label="Clear search" onClick={() => setQuery("")}>
+              <button
+                className="icon-button clear"
+                aria-label="Clear search"
+                onClick={() => setQuery("")}
+              >
                 <X size={14} />
               </button>
             ) : (
@@ -226,7 +282,10 @@ export function ApplicationsScreen({
           <label className="sort">
             <ArrowDownUp size={14} aria-hidden />
             <span className="sr-only">Sort applications</span>
-            <select value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as Sort)}
+            >
               <option value="recent">Latest activity</option>
               <option value="progress">Furthest along</option>
               <option value="company">Company A–Z</option>
@@ -236,7 +295,9 @@ export function ApplicationsScreen({
         {bucket && (
           <div className="active-filter">
             Showing applications at <strong>{bucket}</strong> stage
-            <button className="text-button" onClick={() => setBucket(null)}>Clear</button>
+            <button className="text-button" onClick={() => setBucket(null)}>
+              Clear
+            </button>
           </div>
         )}
 
@@ -265,7 +326,9 @@ export function ApplicationsScreen({
                     <small>
                       {opening.location ?? "Location unknown"}
                       {opening.attempts.length > 1 && (
-                        <em className="attempt-chip">{opening.attempts.length} attempts</em>
+                        <em className="attempt-chip">
+                          {opening.attempts.length} attempts
+                        </em>
                       )}
                     </small>
                   </div>
@@ -279,7 +342,10 @@ export function ApplicationsScreen({
                   <i aria-hidden />
                   {cov.text}
                 </span>
-                <span className="last-activity" title={date(opening.latestActivityAt)}>
+                <span
+                  className="last-activity"
+                  title={date(opening.latestActivityAt)}
+                >
                   {relative(opening.latestActivityAt)}
                 </span>
                 <button
@@ -302,7 +368,11 @@ export function ApplicationsScreen({
             <span className="empty-art" aria-hidden>
               <FileText size={26} />
             </span>
-            <h3>{narrowed ? "No matching applications" : "Start your application ledger"}</h3>
+            <h3>
+              {narrowed
+                ? "No matching applications"
+                : "Start your application ledger"}
+            </h3>
             <p>
               {narrowed
                 ? "Try another company or role, or clear the filters."
@@ -328,7 +398,8 @@ export function ApplicationsScreen({
         )}
         <div className="table-footer">
           <ShieldCheck size={14} aria-hidden />
-          Independent attempts. Evidence-backed updates. Silence is never a rejection.
+          Independent attempts. Evidence-backed updates. Silence is never a
+          rejection.
         </div>
       </section>
     </>

@@ -17,7 +17,10 @@ import { parseEml } from "../../src/ingestion/eml.ts";
 import { extractSignal } from "../../src/ingestion/extract.ts";
 import type { ParsedOriginal, SignalKind } from "../../src/ingestion/source.ts";
 import { senderAuthenticated } from "../../src/server/gmail/authentication.ts";
-import { drainReviewReconciliations, ingestOriginal } from "../../src/server/pipeline.ts";
+import {
+  drainReviewReconciliations,
+  ingestOriginal,
+} from "../../src/server/pipeline.ts";
 import { loadOpenings } from "../../src/server/store.ts";
 import { createTestDb, seedMailbox, seedUser } from "../helpers/db.ts";
 import { scoreSignal, verdict, type Scored } from "./score.ts";
@@ -46,10 +49,15 @@ export type Labels = Record<string, Label>;
 const LABELS = "labels.json";
 
 /** Top-level header fields of a raw message, unfolded. Only used for Authentication-Results/From. */
-export function topLevelHeaders(raw: Uint8Array): { name: string; value: string }[] {
+export function topLevelHeaders(
+  raw: Uint8Array,
+): { name: string; value: string }[] {
   const text = new TextDecoder("latin1").decode(raw);
   const end = text.search(/\r?\n\r?\n/);
-  const block = (end < 0 ? text : text.slice(0, end)).replace(/\r?\n[ \t]+/g, " ");
+  const block = (end < 0 ? text : text.slice(0, end)).replace(
+    /\r?\n[ \t]+/g,
+    " ",
+  );
   return block
     .split(/\r?\n/)
     .map((line) => /^([!-9;-~]+):[ \t]*(.*)$/.exec(line))
@@ -64,22 +72,35 @@ interface Email {
 }
 
 /** Each downloaded message once. Forwarded copies attached inside a message are not evaluated. */
-async function loadEmails(dir: string): Promise<{ emails: Email[]; unreadable: string[] }> {
-  const files = (await readdir(dir)).filter((name) => name.toLowerCase().endsWith(".eml")).sort();
+async function loadEmails(
+  dir: string,
+): Promise<{ emails: Email[]; unreadable: string[] }> {
+  const files = (await readdir(dir))
+    .filter((name) => name.toLowerCase().endsWith(".eml"))
+    .sort();
   const emails: Email[] = [];
   const unreadable: string[] = [];
   for (const file of files) {
     try {
       const raw = new Uint8Array(await readFile(join(dir, file)));
-      const original = (await parseEml(raw)).find((candidate) => !candidate.isAttached);
+      const original = (await parseEml(raw)).find(
+        (candidate) => !candidate.isAttached,
+      );
       if (!original) throw new Error("no top-level message");
-      emails.push({ file, original, senderAuthenticated: senderAuthenticated(topLevelHeaders(raw)) });
+      emails.push({
+        file,
+        original,
+        senderAuthenticated: senderAuthenticated(topLevelHeaders(raw)),
+      });
     } catch {
       unreadable.push(file);
     }
   }
   // Gmail sync and reconciliation both depend on order: ingest as the mail arrived.
-  const at = (email: Email) => (email.original.message.date ? Date.parse(email.original.message.date) : Infinity);
+  const at = (email: Email) =>
+    email.original.message.date
+      ? Date.parse(email.original.message.date)
+      : Infinity;
   emails.sort((a, b) => at(a) - at(b) || a.file.localeCompare(b.file));
   return { emails, unreadable };
 }
@@ -94,8 +115,10 @@ export async function readLabels(dir: string): Promise<Labels> {
   const parsed = JSON.parse(text) as Record<string, Partial<Label>>;
   const labels: Labels = {};
   for (const [file, label] of Object.entries(parsed)) {
-    const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
-    if (label.kind != null && !KINDS.includes(label.kind)) throw new Error(`${file}: unknown kind ${label.kind}`);
+    const text = (value: unknown) =>
+      typeof value === "string" && value.trim() ? value.trim() : null;
+    if (label.kind != null && !KINDS.includes(label.kind))
+      throw new Error(`${file}: unknown kind ${label.kind}`);
     labels[file] = {
       verified: label.verified === true,
       kind: label.kind ?? null,
@@ -108,24 +131,41 @@ export async function readLabels(dir: string): Promise<Labels> {
 }
 
 /** Adds unverified, extractor-filled labels for new emails; existing labels are never changed. */
-export async function labelEmails(dir: string): Promise<{ added: string[]; unverified: number; unreadable: string[] }> {
+export async function labelEmails(
+  dir: string,
+): Promise<{ added: string[]; unverified: number; unreadable: string[] }> {
   const labels = await readLabels(dir);
   const { emails, unreadable } = await loadEmails(dir);
   const added: string[] = [];
   for (const { file, original } of emails) {
     if (labels[file]) continue;
     const signal = extractSignal(original.message);
-    labels[file] = { verified: false, kind: signal.kind, company: signal.fields.company, title: signal.fields.title, note: "" };
+    labels[file] = {
+      verified: false,
+      kind: signal.kind,
+      company: signal.fields.company,
+      title: signal.fields.title,
+      note: "",
+    };
     added.push(file);
   }
-  const sorted = Object.fromEntries(Object.entries(labels).sort(([a], [b]) => a.localeCompare(b)));
+  const sorted = Object.fromEntries(
+    Object.entries(labels).sort(([a], [b]) => a.localeCompare(b)),
+  );
   await writeFile(join(dir, LABELS), `${JSON.stringify(sorted, null, 2)}\n`);
-  return { added, unverified: Object.values(labels).filter((label) => !label.verified).length, unreadable };
+  return {
+    added,
+    unverified: Object.values(labels).filter((label) => !label.verified).length,
+    unreadable,
+  };
 }
 
 /** Where an email ended up after the whole folder was processed. */
 export type FinalState =
-  | { status: "APPLIED"; events: { kind: string; company: string; title: string }[] }
+  | {
+      status: "APPLIED";
+      events: { kind: string; company: string; title: string }[];
+    }
   | { status: "REVIEW"; reason: string }
   | { status: "NO_SIGNAL" | "SKIPPED_SENSITIVE" | "DUPLICATE" | "ERROR" };
 
@@ -149,14 +189,20 @@ export type Judgement =
 export function judge(label: Label, state: FinalState): Judgement {
   if (state.status === "ERROR") return "error";
   if (state.status === "DUPLICATE") return "duplicate";
-  if (!label.kind) return state.status === "APPLIED" ? "applied-wrongly" : state.status === "REVIEW" ? "review-noise" : "ignored";
+  if (!label.kind)
+    return state.status === "APPLIED"
+      ? "applied-wrongly"
+      : state.status === "REVIEW"
+        ? "review-noise"
+        : "ignored";
   if (state.status === "REVIEW") return "review";
   if (state.status !== "APPLIED") return "lost";
   // Only fields the label names are compared: an update may not repeat the job title.
   const right = state.events.some(
     (event) =>
       event.kind === label.kind &&
-      (!label.company || companyKey(event.company) === companyKey(label.company)) &&
+      (!label.company ||
+        companyKey(event.company) === companyKey(label.company)) &&
       (!label.title || verdict(label.title, event.title) === "correct"),
   );
   return right ? "applied-correctly" : "applied-wrongly";
@@ -167,10 +213,18 @@ export interface RealReport {
   verified: number;
   unreadable: string[];
   extraction: (Scored & { file: string })[];
-  outcomes: { file: string; label: Label; state: FinalState; judgement: Judgement }[];
+  outcomes: {
+    file: string;
+    label: Label;
+    state: FinalState;
+    judgement: Judgement;
+  }[];
 }
 
-export async function evaluateReal(dir: string, observedAt = new Date()): Promise<RealReport> {
+export async function evaluateReal(
+  dir: string,
+  observedAt = new Date(),
+): Promise<RealReport> {
   const labels = await readLabels(dir);
   const { emails, unreadable } = await loadEmails(dir);
   const verified = emails.filter((email) => labels[email.file]?.verified);
@@ -188,11 +242,19 @@ export async function evaluateReal(dir: string, observedAt = new Date()): Promis
       try {
         const outcome = await ingestOriginal(t.db, {
           userId,
-          source: { kind: "GMAIL", mailboxId, providerMessageId: email.file, senderAuthenticated: email.senderAuthenticated },
+          source: {
+            kind: "GMAIL",
+            mailboxId,
+            providerMessageId: email.file,
+            senderAuthenticated: email.senderAuthenticated,
+          },
           original: email.original,
           observedAt,
         });
-        if (outcome.status === "DUPLICATE" || outcome.status === "DUPLICATE_OBSERVATION")
+        if (
+          outcome.status === "DUPLICATE" ||
+          outcome.status === "DUPLICATE_OBSERVATION"
+        )
           states.set(email.file, { status: "DUPLICATE" });
       } catch {
         states.set(email.file, { status: "ERROR" });
@@ -200,7 +262,9 @@ export async function evaluateReal(dir: string, observedAt = new Date()): Promis
     }
     // Reconciliation continues in bounded batches, as the scheduler would run it.
     for (let round = 0; round < 1000; round++) {
-      const pending = await t.db.query("SELECT 1 FROM review_reconciliation_jobs LIMIT 1");
+      const pending = await t.db.query(
+        "SELECT 1 FROM review_reconciliation_jobs LIMIT 1",
+      );
       if (!pending.rows.length) break;
       await drainReviewReconciliations(t.db, observedAt, 20);
     }
@@ -223,7 +287,11 @@ export async function evaluateReal(dir: string, observedAt = new Date()): Promis
         WHERE a.user_id = $1`,
       [userId],
     );
-    const events = await t.db.query<{ file: string; kind: string; opening_id: string }>(
+    const events = await t.db.query<{
+      file: string;
+      kind: string;
+      opening_id: string;
+    }>(
       `SELECT a.provider_message_id AS file, e.event_kind AS kind, t.job_opening_id AS opening_id
          FROM event_evidence ev
          JOIN source_artifacts a ON a.id = ev.artifact_id AND a.user_id = ev.user_id
@@ -232,14 +300,23 @@ export async function evaluateReal(dir: string, observedAt = new Date()): Promis
         WHERE ev.user_id = $1 AND e.review_state = 'ACCEPTED'`,
       [userId],
     );
-    const openings = new Map((await loadOpenings(t.db, userId)).map((opening) => [opening.id, opening]));
+    const openings = new Map(
+      (await loadOpenings(t.db, userId)).map((opening) => [
+        opening.id,
+        opening,
+      ]),
+    );
     for (const row of artifacts.rows) {
       if (states.has(row.file)) continue;
       const applied = events.rows
         .filter((event) => event.file === row.file)
         .map((event) => {
           const opening = openings.get(event.opening_id)!;
-          return { kind: event.kind, company: opening.company, title: opening.title };
+          return {
+            kind: event.kind,
+            company: opening.company,
+            title: opening.title,
+          };
         });
       states.set(
         row.file,
@@ -259,7 +336,13 @@ export async function evaluateReal(dir: string, observedAt = new Date()): Promis
       const state = states.get(file) ?? { status: "ERROR" as const };
       return { file, label, state, judgement: judge(label, state) };
     });
-    return { emails: emails.length, verified: verified.length, unreadable, extraction, outcomes };
+    return {
+      emails: emails.length,
+      verified: verified.length,
+      unreadable,
+      extraction,
+      outcomes,
+    };
   } finally {
     await t.close();
   }

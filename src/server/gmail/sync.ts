@@ -11,10 +11,7 @@ import {
   type GmailClient,
   type MessageHeadersView,
 } from "./client.ts";
-import {
-  isRecruitingSenderDomain,
-  senderDomain,
-} from "../../ingestion/ats.ts";
+import { isRecruitingSenderDomain, senderDomain } from "../../ingestion/ats.ts";
 import { TokenUnreadableError } from "./vault.ts";
 
 export type SyncScope = { userId: string } | { system: true };
@@ -188,12 +185,18 @@ export async function syncMailbox(
 
   // Fence every durable mutation. A disconnected/reconnected or expired worker cannot
   // overwrite a replacement run's cursor, ingest with an old grant, or clear its lease.
-  const fenced = <T>(work: (tx: Db) => Promise<T>, domainMutation = false): Promise<T> =>
+  const fenced = <T>(
+    work: (tx: Db) => Promise<T>,
+    domainMutation = false,
+  ): Promise<T> =>
     db.transaction(async (tx) => {
       // Bookkeeping needs only the mailbox lease. Domain writes preserve the common owner ->
       // mailbox lock order used by disconnect/recheck/actions, avoiding an inverted lock order.
       if (domainMutation) {
-        const owner = await tx.query("SELECT id FROM ledger_users WHERE id=$1 FOR UPDATE", [mailbox.userId]);
+        const owner = await tx.query(
+          "SELECT id FROM ledger_users WHERE id=$1 FOR UPDATE",
+          [mailbox.userId],
+        );
         if (!owner.rows.length) throw new LeaseLost();
       }
       const valid = await tx.query(
@@ -215,8 +218,17 @@ export async function syncMailbox(
         `UPDATE sync_runs SET discovered_count=$2,headers_inspected=$3,bodies_fetched=$4,
           skipped_sensitive=$5,skipped_other=$6,signals_applied=$7,reviews_created=$8,tasks_failed=$9
           WHERE id=$1 AND state='RUNNING'`,
-        [runId, counters.discovered, counters.headers, counters.bodies, counters.skippedSensitive,
-          counters.skippedOther, counters.applied, counters.reviews, counters.failed],
+        [
+          runId,
+          counters.discovered,
+          counters.headers,
+          counters.bodies,
+          counters.skippedSensitive,
+          counters.skippedOther,
+          counters.applied,
+          counters.reviews,
+          counters.failed,
+        ],
       );
       return result;
     });
@@ -231,10 +243,12 @@ export async function syncMailbox(
   try {
     // Successful lease acquisition proves earlier workers no longer own this mailbox. Preserve
     // their last checkpoint and close only their unfinished audit records before creating ours.
-    await fenced(tx => tx.query(
-      "UPDATE sync_runs SET state='FAILED',finished_at=$2,safe_error_code='WORKER_LEASE_EXPIRED' WHERE mailbox_id=$1 AND state='RUNNING'",
-      [mailboxId, started.toISOString()],
-    ));
+    await fenced((tx) =>
+      tx.query(
+        "UPDATE sync_runs SET state='FAILED',finished_at=$2,safe_error_code='WORKER_LEASE_EXPIRED' WHERE mailbox_id=$1 AND state='RUNNING'",
+        [mailboxId, started.toISOString()],
+      ),
+    );
     await fenced((tx) =>
       tx.query(
         "INSERT INTO sync_runs (id, mailbox_id, kind, started_at) VALUES ($1,$2,$3,$4)",
@@ -292,7 +306,13 @@ export async function syncMailbox(
                AND (EXISTS (SELECT 1 FROM event_evidence e WHERE e.user_id=$1 AND e.artifact_id=a.id)
                  OR EXISTS (SELECT 1 FROM extracted_signals s JOIN review_items r ON r.signal_id=s.id AND r.user_id=s.user_id
                    WHERE s.user_id=$1 AND s.source_artifact_id=a.id)))`,
-        [mailbox.userId, mailboxId, [...new Set(ids)], row.recheck_id, now().toISOString()],
+        [
+          mailbox.userId,
+          mailboxId,
+          [...new Set(ids)],
+          row.recheck_id,
+          now().toISOString(),
+        ],
       );
       return r.rowCount;
     };
@@ -388,14 +408,18 @@ export async function syncMailbox(
 
     try {
       try {
-        if (state === "INITIALIZING") discoveryDone = await discover("BACKFILL");
-        else if (state === "RESYNC_REQUIRED") discoveryDone = await discover("RESYNC");
+        if (state === "INITIALIZING")
+          discoveryDone = await discover("BACKFILL");
+        else if (state === "RESYNC_REQUIRED")
+          discoveryDone = await discover("RESYNC");
         if (discoveryDone) discoveryDone = await catchUp();
       } catch (error) {
-        if (!(error instanceof GmailError) || error.code !== "history_expired") throw error;
+        if (!(error instanceof GmailError) || error.code !== "history_expired")
+          throw error;
         // A cursor can expire during a paused backfill/recheck too. Restart the
         // correct window, rather than resuming a permanently expired baseline.
-        const mode = state === "INITIALIZING" || row.recheck_id ? "BACKFILL" : "RESYNC";
+        const mode =
+          state === "INITIALIZING" || row.recheck_id ? "BACKFILL" : "RESYNC";
         state = mode === "BACKFILL" ? "INITIALIZING" : "RESYNC_REQUIRED";
         runKind = mode;
         scan = null;
@@ -404,12 +428,15 @@ export async function syncMailbox(
           "sync_state=$2, scan_state=NULL, history_scan_state=NULL, last_error_code='CURSOR_EXPIRED'",
           [state],
         );
-        await fenced(tx => tx.query("UPDATE sync_runs SET kind=$2 WHERE id=$1", [runId, mode]));
+        await fenced((tx) =>
+          tx.query("UPDATE sync_runs SET kind=$2 WHERE id=$1", [runId, mode]),
+        );
         discoveryDone = await discover(mode);
         if (discoveryDone) discoveryDone = await catchUp();
       }
     } catch (error) {
-      if (error instanceof GmailError && error.code === "unauthorized") throw new AuthAbort();
+      if (error instanceof GmailError && error.code === "unauthorized")
+        throw new AuthAbort();
       throw error;
     }
 
@@ -431,7 +458,7 @@ export async function syncMailbox(
             mailboxId,
             providerMessageId: id,
             senderAuthenticated,
-            ...(threadId ? {providerThreadId:threadId}:{}),
+            ...(threadId ? { providerThreadId: threadId } : {}),
           };
 
     const finish = (id: string, outcome: string) =>
@@ -578,19 +605,21 @@ export async function syncMailbox(
         let omitted = 0;
         for (const original of originals) {
           omitted += original.omittedOriginals?.length ?? 0;
-          const result = await fenced((tx) =>
-            ingestOriginal(tx, {
-              userId: mailbox.userId,
-              source: sourceFor(
-                id,
-                original.isAttached === true || original.envelopeDate !== null,
-                headers.senderAuthenticated === true,
-                headers.threadId,
-              ),
-              original,
-              observedAt: now(),
-              reprocessUnapplied: task.reprocess_requested,
-            }),
+          const result = await fenced(
+            (tx) =>
+              ingestOriginal(tx, {
+                userId: mailbox.userId,
+                source: sourceFor(
+                  id,
+                  original.isAttached === true ||
+                    original.envelopeDate !== null,
+                  headers.senderAuthenticated === true,
+                  headers.threadId,
+                ),
+                original,
+                observedAt: now(),
+                reprocessUnapplied: task.reprocess_requested,
+              }),
             true,
           );
           if (result.status === "APPLIED") {
@@ -612,7 +641,10 @@ export async function syncMailbox(
         }
         if (omitted) {
           counters.skippedOther += omitted;
-          outcome = outcome === "PROCESSED" ? "PROCESSED_PARTIAL" : "QUARANTINED_PARTIAL";
+          outcome =
+            outcome === "PROCESSED"
+              ? "PROCESSED_PARTIAL"
+              : "QUARANTINED_PARTIAL";
         }
         await finish(task.id, outcome);
       } catch (error) {
@@ -733,7 +765,9 @@ export async function syncMailbox(
         [
           runId,
           now().toISOString(),
-          errorCode || status === "FAILED" || status === "DEGRADED" ? "FAILED" : "COMPLETED",
+          errorCode || status === "FAILED" || status === "DEGRADED"
+            ? "FAILED"
+            : "COMPLETED",
           errorCode,
           counters.discovered,
           counters.headers,

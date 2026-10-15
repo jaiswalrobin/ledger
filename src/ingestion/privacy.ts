@@ -12,12 +12,16 @@ const DELIVERED_SECRET =
   /\b(?:your|the|this)\s+(?:passcode|pin|code)\s+(?:is|:)\s*[A-Z0-9-]{4,12}\b/i;
 
 const JWT = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/;
-const SECRET_PARAMETER = /[?&#](?:token|code|secret|password|signature|sig|auth|session|key|ticket|otp|access_token|refresh_token)=/i;
+const SECRET_PARAMETER =
+  /[?&#](?:token|code|secret|password|signature|sig|auth|session|key|ticket|otp|access_token|refresh_token)=/i;
 /** Parameters that only ever carry a secret, whatever the link is for. */
-const RAW_SECRET_PARAMETER = /[?&#](?:secret|password|otp|access_token|refresh_token)=/i;
+const RAW_SECRET_PARAMETER =
+  /[?&#](?:secret|password|otp|access_token|refresh_token)=/i;
 /** Paths that change or prove account ownership: a token here is a credential delivery. */
-const CREDENTIAL_PATH = /(?:reset|password|passwd|verify|verification|magic|otp|2fa|mfa)/i;
-const TRACKING_PATH = /(?:^|\/)(?:unsub(?:scribe)?|unsubscribe|preferences|email-preferences|track(?:ing)?|click|open|c|ls|wf|e)(?:[\/._-]|$)/i;
+const CREDENTIAL_PATH =
+  /(?:reset|password|passwd|verify|verification|magic|otp|2fa|mfa)/i;
+const TRACKING_PATH =
+  /(?:^|\/)(?:unsub(?:scribe)?|unsubscribe|preferences|email-preferences|track(?:ing)?|click|open|c|ls|wf|e)(?:[\/._-]|$)/i;
 /** Signed static assets (logos, fonts, stylesheets) carry signatures, never account access. */
 const ASSET_PATH = /\.(?:png|jpe?g|gif|svg|webp|ico|css|woff2?|ttf)$/i;
 
@@ -31,26 +35,41 @@ const ASSET_PATH = /\.(?:png|jpe?g|gif|svg|webp|ico|css|woff2?|ttf)$/i;
  *   verification, magic links, bearer tokens). Nothing derived from it is kept.
  */
 export type { Sensitivity };
-const RANK: Record<Sensitivity, number> = { NONE: 0, ACCESS_LINK: 1, CREDENTIAL: 2 };
-const higher = (a: Sensitivity, b: Sensitivity): Sensitivity => (RANK[b] > RANK[a] ? b : a);
+const RANK: Record<Sensitivity, number> = {
+  NONE: 0,
+  ACCESS_LINK: 1,
+  CREDENTIAL: 2,
+};
+const higher = (a: Sensitivity, b: Sensitivity): Sensitivity =>
+  RANK[b] > RANK[a] ? b : a;
 
 function normalizeCredentials(value: string): string {
-  return value.normalize("NFKC").replace(/[\u00ad\u200b-\u200f\u2060\ufeff]/g, "");
+  return value
+    .normalize("NFKC")
+    .replace(/[\u00ad\u200b-\u200f\u2060\ufeff]/g, "");
 }
 function urlSensitivity(raw: string): Sensitivity {
   let decoded = raw.replace(/&amp;/gi, "&");
   // Bound decoding and catch percent-encoded paths, keys, and bearer tokens.
-  for (let i=0; i<2; i++) {
-    try { const next = decodeURIComponent(decoded); if (next === decoded) break; decoded = next; }
-    catch { break; }
+  for (let i = 0; i < 2; i++) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      break;
+    }
   }
   decoded = normalizeCredentials(decoded);
-  if (JWT.test(decoded) || RAW_SECRET_PARAMETER.test(decoded)) return "CREDENTIAL";
+  if (JWT.test(decoded) || RAW_SECRET_PARAMETER.test(decoded))
+    return "CREDENTIAL";
   if (!SECRET_PARAMETER.test(decoded)) return "NONE";
   try {
     const url = new URL(decoded);
-    if (CREDENTIAL_PATH.test(`${url.hostname}${url.pathname}`)) return "CREDENTIAL";
-    if (TRACKING_PATH.test(url.pathname) || ASSET_PATH.test(url.pathname)) return "NONE";
+    if (CREDENTIAL_PATH.test(`${url.hostname}${url.pathname}`))
+      return "CREDENTIAL";
+    if (TRACKING_PATH.test(url.pathname) || ASSET_PATH.test(url.pathname))
+      return "NONE";
     // Portal, assessment, scheduling and login links: access, but not a credential delivery.
     return "ACCESS_LINK";
   } catch {
@@ -71,7 +90,11 @@ export function sensitivity(text: string): Sensitivity {
   if (!text) return "NONE";
   const normalized = normalizeCredentials(text);
   const prose = normalized.replace(URL_PATTERN, " ");
-  if (JWT.test(normalized) || CREDENTIAL_PHRASE.test(prose) || DELIVERED_SECRET.test(prose))
+  if (
+    JWT.test(normalized) ||
+    CREDENTIAL_PHRASE.test(prose) ||
+    DELIVERED_SECRET.test(prose)
+  )
     return "CREDENTIAL";
   let level: Sensitivity = "NONE";
   for (const url of normalized.match(URL_PATTERN) ?? []) {
@@ -82,7 +105,8 @@ export function sensitivity(text: string): Sensitivity {
 }
 
 /** Any secret-bearing content, including access links. Used to keep values out of storage. */
-export const hasSensitiveContent = (text: string): boolean => sensitivity(text) !== "NONE";
+export const hasSensitiveContent = (text: string): boolean =>
+  sensitivity(text) !== "NONE";
 
 /** Every transient representation is screened before extraction, including folded calendar data. */
 export function messageSensitivity(message: ParsedMessage): Sensitivity {
@@ -91,7 +115,9 @@ export function messageSensitivity(message: ParsedMessage): Sensitivity {
     message.text,
     ...(message.alternativeTexts ?? []),
     message.inspectionHtml ?? "",
-    ...(message.calendarParts ?? []).map((part) => part.content.replace(/\r?\n[ \t]/g, "").replace(/\\[nN]/g, " ")),
+    ...(message.calendarParts ?? []).map((part) =>
+      part.content.replace(/\r?\n[ \t]/g, "").replace(/\\[nN]/g, " "),
+    ),
   ];
   let level: Sensitivity = "NONE";
   for (const text of texts) level = higher(level, sensitivity(text));

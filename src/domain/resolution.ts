@@ -1,4 +1,10 @@
-import { atsKeyId, canonicalUrlId, companyKey, normalizeEmail, normalizedText } from "./normalization.ts";
+import {
+  atsKeyId,
+  canonicalUrlId,
+  companyKey,
+  normalizeEmail,
+  normalizedText,
+} from "./normalization.ts";
 import type {
   ApplicationAttempt,
   JobOpening,
@@ -21,32 +27,57 @@ export function resolveOpening(
   openings: readonly JobOpening[],
 ): Resolution {
   if (!normalizedText(signal.company) || !normalizedText(signal.title)) {
-    return { kind: "REVIEW", candidateIds: [], reason: "Missing employer or title" };
+    return {
+      kind: "REVIEW",
+      candidateIds: [],
+      reason: "Missing employer or title",
+    };
   }
 
-  if (signal.atsKey?.provider && signal.atsKey.tenant && signal.atsKey.requisitionId) {
+  if (
+    signal.atsKey?.provider &&
+    signal.atsKey.tenant &&
+    signal.atsKey.requisitionId
+  ) {
     const key = atsKeyId(signal.atsKey);
-    const matching = openings.filter(o => o.atsKey && atsKeyId(o.atsKey) === key);
-    if (matching.length) return choose(matching.map(o => o.id), "Matching scoped ATS requisition");
+    const matching = openings.filter(
+      (o) => o.atsKey && atsKeyId(o.atsKey) === key,
+    );
+    if (matching.length)
+      return choose(
+        matching.map((o) => o.id),
+        "Matching scoped ATS requisition",
+      );
     return { kind: "CREATE", reason: "Distinct scoped ATS requisition" };
   }
 
-  const candidateUrl = signal.canonicalUrl && canonicalUrlId(signal.canonicalUrl);
+  const candidateUrl =
+    signal.canonicalUrl && canonicalUrlId(signal.canonicalUrl);
   if (candidateUrl) {
-    const matching = openings.filter(o => o.canonicalUrl && canonicalUrlId(o.canonicalUrl) === candidateUrl);
-    if (matching.length) return choose(matching.map(o => o.id), "Matching canonical job URL");
+    const matching = openings.filter(
+      (o) => o.canonicalUrl && canonicalUrlId(o.canonicalUrl) === candidateUrl,
+    );
+    if (matching.length)
+      return choose(
+        matching.map((o) => o.id),
+        "Matching canonical job URL",
+      );
     // URLs may be stale aliases; never create a second opening solely due to URL mismatch.
   }
 
-  const weak = openings.filter(o =>
-    companyKey(o.company) === companyKey(signal.company) &&
-    normalizedText(o.title) === normalizedText(signal.title) &&
-    normalizedText(o.location || "") === normalizedText(signal.location || ""));
-  if (weak.length) return {
-    kind: "REVIEW",
-    candidateIds: weak.map(o => o.id),
-    reason: "Company/title/location match is not a stable job identity",
-  };
+  const weak = openings.filter(
+    (o) =>
+      companyKey(o.company) === companyKey(signal.company) &&
+      normalizedText(o.title) === normalizedText(signal.title) &&
+      normalizedText(o.location || "") ===
+        normalizedText(signal.location || ""),
+  );
+  if (weak.length)
+    return {
+      kind: "REVIEW",
+      candidateIds: weak.map((o) => o.id),
+      reason: "Company/title/location match is not a stable job identity",
+    };
 
   return { kind: "CREATE", reason: "No candidate opening found" };
 }
@@ -61,33 +92,69 @@ export function resolveSubmission(
   submission: SubmissionSignal,
   attempts: readonly ApplicationAttempt[],
 ): Resolution {
-  if (!submission.evidenceId.trim()) return {
-    kind: "REVIEW", candidateIds: [], reason: "Submission has no stable evidence ID",
-  };
-  const scoped = attempts.filter(a => a.openingId === openingId);
-  const sourceMatches = scoped.filter(a => a.submissionEvidenceIds.includes(submission.evidenceId));
-  if (sourceMatches.length) return choose(sourceMatches.map(a => a.id), "Already processed submission evidence");
+  if (!submission.evidenceId.trim())
+    return {
+      kind: "REVIEW",
+      candidateIds: [],
+      reason: "Submission has no stable evidence ID",
+    };
+  const scoped = attempts.filter((a) => a.openingId === openingId);
+  const sourceMatches = scoped.filter((a) =>
+    a.submissionEvidenceIds.includes(submission.evidenceId),
+  );
+  if (sourceMatches.length)
+    return choose(
+      sourceMatches.map((a) => a.id),
+      "Already processed submission evidence",
+    );
 
   if (submission.externalApplicationId) {
-    const exact = scoped.filter(a => a.externalApplicationId === submission.externalApplicationId);
+    const exact = scoped.filter(
+      (a) => a.externalApplicationId === submission.externalApplicationId,
+    );
     const email = normalizeEmail(submission.applicantEmail);
-    if (exact.some(a=>email && a.applicantEmail && normalizeEmail(a.applicantEmail)!==email))
-      return {kind:"REVIEW",candidateIds:exact.map(a=>a.id),reason:"Conflicting submitted contact for an application ID"};
-    if (exact.length) return choose(exact.map(a => a.id), "Matching ATS application ID");
+    if (
+      exact.some(
+        (a) =>
+          email &&
+          a.applicantEmail &&
+          normalizeEmail(a.applicantEmail) !== email,
+      )
+    )
+      return {
+        kind: "REVIEW",
+        candidateIds: exact.map((a) => a.id),
+        reason: "Conflicting submitted contact for an application ID",
+      };
+    if (exact.length)
+      return choose(
+        exact.map((a) => a.id),
+        "Matching ATS application ID",
+      );
     return { kind: "CREATE", reason: "Distinct observed ATS submission ID" };
   }
 
   const email = normalizeEmail(submission.applicantEmail);
-  const possible = scoped.filter(a =>
-    (email && normalizeEmail(a.applicantEmail) === email) ||
-    (!email && submission.phoneLookupKey && a.phoneLookupKey === submission.phoneLookupKey) ||
-    (!email && !submission.phoneLookupKey));
-  if (possible.length) return {
-    kind: "REVIEW", candidateIds: possible.map(a => a.id),
-    reason: "Possibly resent confirmation or separate submission; insufficient unique evidence",
-  };
+  const possible = scoped.filter(
+    (a) =>
+      (email && normalizeEmail(a.applicantEmail) === email) ||
+      (!email &&
+        submission.phoneLookupKey &&
+        a.phoneLookupKey === submission.phoneLookupKey) ||
+      (!email && !submission.phoneLookupKey),
+  );
+  if (possible.length)
+    return {
+      kind: "REVIEW",
+      candidateIds: possible.map((a) => a.id),
+      reason:
+        "Possibly resent confirmation or separate submission; insufficient unique evidence",
+    };
   // Same phone with a DIFFERENT evidenced applicant email must not collapse submissions.
-  return { kind: "CREATE", reason: "New observed submission with no competing attempt identity" };
+  return {
+    kind: "CREATE",
+    reason: "New observed submission with no competing attempt identity",
+  };
 }
 
 /** Reasons resolveUpdate gives for a match; the pipeline maps them to a policy MatchBasis. */
@@ -108,41 +175,95 @@ export const SOLE_ATTEMPT = "Sole attempt on the opening";
  */
 export function resolveUpdate(
   openingId: string,
-  update: Pick<SubmissionSignal, "applicantEmail" | "externalApplicationId" | "phoneLookupKey">,
+  update: Pick<
+    SubmissionSignal,
+    "applicantEmail" | "externalApplicationId" | "phoneLookupKey"
+  >,
   attempts: readonly ApplicationAttempt[],
 ): Resolution {
-  const scoped = attempts.filter(a => a.openingId === openingId);
-  if (!scoped.length) return { kind: "REVIEW", candidateIds: [], reason: "No known submission attempt" };
+  const scoped = attempts.filter((a) => a.openingId === openingId);
+  if (!scoped.length)
+    return {
+      kind: "REVIEW",
+      candidateIds: [],
+      reason: "No known submission attempt",
+    };
   const email = normalizeEmail(update.applicantEmail);
   const only = scoped.length === 1 ? scoped[0]! : null;
   const contradicts = (a: ApplicationAttempt) =>
-    (!!update.externalApplicationId && !!a.externalApplicationId && a.externalApplicationId !== update.externalApplicationId) ||
-    (!!email && !!a.applicantEmail && normalizeEmail(a.applicantEmail) !== email) ||
-    (!!update.phoneLookupKey && !!a.phoneLookupKey && a.phoneLookupKey !== update.phoneLookupKey);
-  const sole = (): Resolution | null => (only && !contradicts(only) ? { kind: "MATCH", id: only.id, reason: SOLE_ATTEMPT } : null);
+    (!!update.externalApplicationId &&
+      !!a.externalApplicationId &&
+      a.externalApplicationId !== update.externalApplicationId) ||
+    (!!email &&
+      !!a.applicantEmail &&
+      normalizeEmail(a.applicantEmail) !== email) ||
+    (!!update.phoneLookupKey &&
+      !!a.phoneLookupKey &&
+      a.phoneLookupKey !== update.phoneLookupKey);
+  const sole = (): Resolution | null =>
+    only && !contradicts(only)
+      ? { kind: "MATCH", id: only.id, reason: SOLE_ATTEMPT }
+      : null;
 
   if (update.externalApplicationId) {
-    const strong = scoped.filter(a => a.externalApplicationId === update.externalApplicationId);
-    if (strong.some(contradicts))return {kind:"REVIEW",candidateIds:strong.map(a=>a.id),reason:"Conflicting identity for an application ID"};
-    if (strong.length) return choose(strong.map(a => a.id), EXACT_APPLICATION_ID);
-    return sole() ?? { kind: "REVIEW", candidateIds: scoped.map(a => a.id), reason: "Application ID not recognized" };
+    const strong = scoped.filter(
+      (a) => a.externalApplicationId === update.externalApplicationId,
+    );
+    if (strong.some(contradicts))
+      return {
+        kind: "REVIEW",
+        candidateIds: strong.map((a) => a.id),
+        reason: "Conflicting identity for an application ID",
+      };
+    if (strong.length)
+      return choose(
+        strong.map((a) => a.id),
+        EXACT_APPLICATION_ID,
+      );
+    return (
+      sole() ?? {
+        kind: "REVIEW",
+        candidateIds: scoped.map((a) => a.id),
+        reason: "Application ID not recognized",
+      }
+    );
   }
   if (email) {
-    const matched = scoped.filter(a => normalizeEmail(a.applicantEmail) === email);
+    const matched = scoped.filter(
+      (a) => normalizeEmail(a.applicantEmail) === email,
+    );
     if (matched.length === 1) {
       const selected = matched[0]!;
-      if (update.phoneLookupKey && selected.phoneLookupKey && update.phoneLookupKey !== selected.phoneLookupKey) {
-        return { kind: "REVIEW", candidateIds: [selected.id], reason: "Conflicting submitted phone identity" };
+      if (
+        update.phoneLookupKey &&
+        selected.phoneLookupKey &&
+        update.phoneLookupKey !== selected.phoneLookupKey
+      ) {
+        return {
+          kind: "REVIEW",
+          candidateIds: [selected.id],
+          reason: "Conflicting submitted phone identity",
+        };
       }
       return { kind: "MATCH", id: selected.id, reason: UNIQUE_SUBMITTED_EMAIL };
     }
-    return (matched.length ? null : sole()) ?? {
-      kind: "REVIEW",
-      candidateIds: matched.length ? matched.map(a => a.id) : scoped.map(a => a.id),
-      reason: "Update email does not uniquely identify a submission",
-    };
+    return (
+      (matched.length ? null : sole()) ?? {
+        kind: "REVIEW",
+        candidateIds: matched.length
+          ? matched.map((a) => a.id)
+          : scoped.map((a) => a.id),
+        reason: "Update email does not uniquely identify a submission",
+      }
+    );
   }
 
   // A shared phone is an ATS deduplication hint, not proof of application identity.
-  return sole() ?? { kind: "REVIEW", candidateIds: scoped.map(a => a.id), reason: "Missing unambiguous application identity" };
+  return (
+    sole() ?? {
+      kind: "REVIEW",
+      candidateIds: scoped.map((a) => a.id),
+      reason: "Missing unambiguous application identity",
+    }
+  );
 }

@@ -94,39 +94,98 @@ test("email upload runs the real parser and survives reload", async ({
   await expect(page.getByText("Test Company", { exact: true })).toBeVisible();
 });
 
-test("calendar imports show an upcoming interview and rejecting it removes the agenda entry", async ({ page }) => {
+test("calendar imports show an upcoming interview and rejecting it removes the agenda entry", async ({
+  page,
+}) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Explore the demo" }).click();
-  await page.getByRole("button", { name: "Import emails", exact: true }).first().click();
-  const now = Date.now(), start = new Date(now + 2 * 86400000);
-  const stamp = (date: Date) => date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-  const common = { from: "Agenda Labs Careers <careers@agendalabs.example>", to: "applicant@example.com" };
-  const receipt = buildEml({ ...common, subject: "Application received", date: new Date(now - 7200000).toUTCString(),
-    text: "We received your application for the Backend Engineer role at Agenda Labs.\nApplication ID: AGENDA-11111" });
-  const calendar = ["BEGIN:VCALENDAR", "VERSION:2.0", "METHOD:REQUEST", "BEGIN:VEVENT",
-    "UID:browser-agenda@example.com", "SEQUENCE:1", `DTSTAMP:${stamp(new Date(now - 3600000))}`,
-    `DTSTART:${stamp(start)}`, "SUMMARY:Technical Interview - Backend Engineer",
+  await page
+    .getByRole("button", { name: "Import emails", exact: true })
+    .first()
+    .click();
+  const now = Date.now(),
+    start = new Date(now + 2 * 86400000);
+  const stamp = (date: Date) =>
+    date
+      .toISOString()
+      .replace(/[-:]/g, "")
+      .replace(/\.\d{3}Z$/, "Z");
+  const common = {
+    from: "Agenda Labs Careers <careers@agendalabs.example>",
+    to: "applicant@example.com",
+  };
+  const receipt = buildEml({
+    ...common,
+    subject: "Application received",
+    date: new Date(now - 7200000).toUTCString(),
+    text: "We received your application for the Backend Engineer role at Agenda Labs.\nApplication ID: AGENDA-11111",
+  });
+  const calendar = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "METHOD:REQUEST",
+    "BEGIN:VEVENT",
+    "UID:browser-agenda@example.com",
+    "SEQUENCE:1",
+    `DTSTAMP:${stamp(new Date(now - 3600000))}`,
+    `DTSTART:${stamp(start)}`,
+    "SUMMARY:Technical Interview - Backend Engineer",
     "DESCRIPTION:Interview for the Backend Engineer role at Agenda Labs.",
-    "ORGANIZER:mailto:careers@agendalabs.example", "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
-  const invitation = buildEml({ ...common, subject: "Interview invitation", date: new Date(now - 3600000).toUTCString(),
-    text: "Application ID: AGENDA-11111", attachments: [{ filename: "interview.ics", mime: "text/calendar; method=REQUEST", content: calendar }] });
+    "ORGANIZER:mailto:careers@agendalabs.example",
+    "END:VEVENT",
+    "END:VCALENDAR",
+    "",
+  ].join("\r\n");
+  const invitation = buildEml({
+    ...common,
+    subject: "Interview invitation",
+    date: new Date(now - 3600000).toUTCString(),
+    text: "Application ID: AGENDA-11111",
+    attachments: [
+      {
+        filename: "interview.ics",
+        mime: "text/calendar; method=REQUEST",
+        content: calendar,
+      },
+    ],
+  });
   await page.getByLabel("Email files").setInputFiles([
-    { name: "agenda-receipt.eml", mimeType: "message/rfc822", buffer: Buffer.from(receipt) },
-    { name: "agenda-invitation.eml", mimeType: "message/rfc822", buffer: Buffer.from(invitation) },
+    {
+      name: "agenda-receipt.eml",
+      mimeType: "message/rfc822",
+      buffer: Buffer.from(receipt),
+    },
+    {
+      name: "agenda-invitation.eml",
+      mimeType: "message/rfc822",
+      buffer: Buffer.from(invitation),
+    },
   ]);
   await page.getByRole("button", { name: "Import selected emails" }).click();
-  await expect(page.getByText("Added to your timeline", { exact: true })).toHaveCount(2);
+  await expect(
+    page.getByText("Added to your timeline", { exact: true }),
+  ).toHaveCount(2);
   await page.getByRole("button", { name: "View your ledger" }).click();
   const agenda = page.getByRole("region", { name: "Upcoming interviews" });
   await expect(agenda).toBeVisible();
   const entry = agenda.getByRole("button", { name: /Agenda Labs/ });
-  await expect(entry.locator("time")).toHaveAttribute("datetime", new Date(Math.floor(start.getTime() / 1000) * 1000).toISOString());
+  await expect(entry.locator("time")).toHaveAttribute(
+    "datetime",
+    new Date(Math.floor(start.getTime() / 1000) * 1000).toISOString(),
+  );
   await entry.click();
-  const scheduled = page.locator(".timeline-event").filter({ hasText: "Interview scheduled" });
+  const scheduled = page
+    .locator(".timeline-event")
+    .filter({ hasText: "Interview scheduled" });
   await expect(scheduled.getByText(/Current interview time:/)).toBeVisible();
   await scheduled.getByRole("button", { name: "Reject update" }).click();
-  await expect(scheduled.getByRole("button", { name: "Restore" })).toBeVisible();
-  await page.getByRole("navigation").getByRole("button", { name: "Applications", exact: true }).click();
+  await expect(
+    scheduled.getByRole("button", { name: "Restore" }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Applications", exact: true })
+    .click();
   await expect(agenda).toHaveCount(0);
   await page.reload();
   await expect(agenda).toHaveCount(0);
@@ -156,9 +215,14 @@ test("HTTP ownership, CSRF, cron authentication, and logout revocation fail clos
     ).ok(),
   ).toBeTruthy();
   const dashboard = await (await first.request.get("/api/dashboard")).json();
-  expect((await first.request.post("/api/recheck", {
-    headers: { Origin: origin }, data: { mailboxId: "00000000-0000-4000-8000-000000000000" },
-  })).status()).toBe(403);
+  expect(
+    (
+      await first.request.post("/api/recheck", {
+        headers: { Origin: origin },
+        data: { mailboxId: "00000000-0000-4000-8000-000000000000" },
+      })
+    ).status(),
+  ).toBe(403);
   expect(
     (
       await second.request.get(`/api/openings/${dashboard.openings[0].id}`)
@@ -311,13 +375,11 @@ test("review creation uses an existing opening without dummy fields, and submiss
     "",
     "A selected note without employer or role fields.",
   ].join("\r\n");
-  await page
-    .getByLabel("Email files")
-    .setInputFiles({
-      name: "existing.eml",
-      mimeType: "message/rfc822",
-      buffer: Buffer.from(raw),
-    });
+  await page.getByLabel("Email files").setInputFiles({
+    name: "existing.eml",
+    mimeType: "message/rfc822",
+    buffer: Buffer.from(raw),
+  });
   await page.getByRole("button", { name: "Import selected emails" }).click();
   await expect(
     page.getByText("Saved for review", { exact: true }),
@@ -326,14 +388,12 @@ test("review creation uses an existing opening without dummy fields, and submiss
     .getByRole("navigation")
     .getByRole("button", { name: "Needs review" })
     .click();
-  const card = page
-    .locator(".review-card")
-    .filter({
-      has: page.getByRole("heading", {
-        name: "Application notes",
-        exact: true,
-      }),
-    });
+  const card = page.locator(".review-card").filter({
+    has: page.getByRole("heading", {
+      name: "Application notes",
+      exact: true,
+    }),
+  });
   await card.locator("summary").click();
   await card
     .getByLabel("Job opening", { exact: true })
@@ -375,37 +435,88 @@ test("review creation uses an existing opening without dummy fields, and submiss
   await expect(page.getByText(/Submission date corrected from/)).toBeVisible();
 });
 
-test("connections explain email counts and preserve partial recheck progress", async ({ page }) => {
+test("connections explain email counts and preserve partial recheck progress", async ({
+  page,
+}) => {
   const mailboxId = "00000000-0000-4000-8000-000000000001";
   const mailbox = {
-    id: mailboxId, address: "jobs@example.org", syncState: "HEALTHY",
-    backfillComplete: true, backfillStart: "2026-08-21T00:00:00Z", backfillEnd: "2026-10-20T00:00:00Z",
-    lastSuccessAt: "2026-10-20T00:00:00Z", lastAttemptAt: "2026-10-20T00:00:00Z", lastErrorCode: null,
-    pendingTasks: 0, failedTasks: 0, lastRun: null, recheckInProgress: false,
-    processingSummary: { processed: 4, skippedSensitive: 1, unrecognized: 2, skippedOther: 3, quarantined: 1, partiallyProcessed: 0 },
-    excludedMessages: [{ messageId: "abcdef123456", reason: "PRIVACY_CHECK", originalMessageAt: "2026-09-30T02:59:00Z" }],
+    id: mailboxId,
+    address: "jobs@example.org",
+    syncState: "HEALTHY",
+    backfillComplete: true,
+    backfillStart: "2026-08-21T00:00:00Z",
+    backfillEnd: "2026-10-20T00:00:00Z",
+    lastSuccessAt: "2026-10-20T00:00:00Z",
+    lastAttemptAt: "2026-10-20T00:00:00Z",
+    lastErrorCode: null,
+    pendingTasks: 0,
+    failedTasks: 0,
+    lastRun: null,
+    recheckInProgress: false,
+    processingSummary: {
+      processed: 4,
+      skippedSensitive: 1,
+      unrecognized: 2,
+      skippedOther: 3,
+      quarantined: 1,
+      partiallyProcessed: 0,
+    },
+    excludedMessages: [
+      {
+        messageId: "abcdef123456",
+        reason: "PRIVACY_CHECK",
+        originalMessageAt: "2026-09-30T02:59:00Z",
+      },
+    ],
   };
-  await page.route("**/api/session", route => route.fulfill({ json: {
-    session: { userId: "00000000-0000-4000-8000-000000000002", email: "jobs@example.org", isDemo: false },
-    demoEnabled: false, googleReady: true,
-  } }));
-  await page.route("**/api/dashboard", route => route.fulfill({ json: { openings: [], reviews: [], mailboxes: [mailbox] } }));
-  await page.route("**/api/recheck", async route => {
+  await page.route("**/api/session", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          userId: "00000000-0000-4000-8000-000000000002",
+          email: "jobs@example.org",
+          isDemo: false,
+        },
+        demoEnabled: false,
+        googleReady: true,
+      },
+    }),
+  );
+  await page.route("**/api/dashboard", (route) =>
+    route.fulfill({
+      json: { openings: [], reviews: [], mailboxes: [mailbox] },
+    }),
+  );
+  await page.route("**/api/recheck", async (route) => {
     expect(route.request().postDataJSON()).toEqual({ mailboxId });
     mailbox.recheckInProgress = true;
     mailbox.pendingTasks = 2;
     await route.fulfill({ json: { runs: [{ mailboxId, status: "PARTIAL" }] } });
   });
   await page.goto("/");
-  await page.getByRole("navigation").getByRole("button", { name: "Connections", exact: true }).click();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Connections", exact: true })
+    .click();
   const totals = page.getByLabel("Email processing totals");
   await expect(totals).toContainText("4 emails used for timelines or review");
   await expect(totals).toContainText("1 excluded by privacy checks");
-  await expect(page.getByText(/A completed sync does not guarantee/)).toBeVisible();
+  await expect(
+    page.getByText(/A completed sync does not guarantee/),
+  ).toBeVisible();
   await page.getByText("See recent excluded emails").click();
-  await expect(page.getByRole("link", { name: "Open in Gmail" })).toHaveAttribute("href", "https://mail.google.com/mail/?authuser=jobs%40example.org#all/abcdef123456");
+  await expect(
+    page.getByRole("link", { name: "Open in Gmail" }),
+  ).toHaveAttribute(
+    "href",
+    "https://mail.google.com/mail/?authuser=jobs%40example.org#all/abcdef123456",
+  );
   await page.getByRole("button", { name: "Recheck last 60 days" }).click();
-  await expect(page.locator(".notice[role='alert']")).toContainText("Some work remains");
-  await expect(page.getByRole("button", { name: "Recheck last 60 days" })).toBeDisabled();
+  await expect(page.locator(".notice[role='alert']")).toContainText(
+    "Some work remains",
+  );
+  await expect(
+    page.getByRole("button", { name: "Recheck last 60 days" }),
+  ).toBeDisabled();
   await expect(page.getByRole("button", { name: "Sync now" })).toBeEnabled();
 });

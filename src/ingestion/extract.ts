@@ -186,7 +186,8 @@ const STEP_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>([
 
 const CONDITION_START = /^(?:if|unless|should|in case|when)\b/i;
 /** Where the main clause of a comma-less conditional sentence usually begins. */
-const MAIN_CLAUSE = /\s(?=(?:then|we|we'd|we'll|we're|please|kindly|you will|you'll|our team|i|i'd|i'll)\b)/i;
+const MAIN_CLAUSE =
+  /\s(?=(?:then|we|we'd|we'll|we're|please|kindly|you will|you'll|our team|i|i'd|i'll)\b)/i;
 
 /**
  * A conditional sentence asserts its main clause, not its condition. "If your interview is
@@ -208,31 +209,62 @@ export function detectKind(haystack: string): {
   reasons: string[];
 } {
   // Phrases are prose: a hostname in a link ("www.hackerrank.com/...") is not a mention.
-  const normalized = normalizeForMatching(haystack).replace(/https?:\/\/\S+/gi, " ");
+  const normalized = normalizeForMatching(haystack).replace(
+    /https?:\/\/\S+/gi,
+    " ",
+  );
   // Keep assertion boundaries; ordinary hard wrapping may still join within a clause.
-  const clauses = normalized.split(/(?:[.!?]+(?:\s+|$)|\n{2,}|\n(?=\s*(?:if|unless|should|in case|when)\b))/i)
-    .map(flatten).map(withoutCondition).filter(Boolean);
+  const clauses = normalized
+    .split(
+      /(?:[.!?]+(?:\s+|$)|\n{2,}|\n(?=\s*(?:if|unless|should|in case|when)\b))/i,
+    )
+    .map(flatten)
+    .map(withoutCondition)
+    .filter(Boolean);
   // "Thank you for taking the time to interview with us" opens most post-interview rejections;
   // a thank-you sentence describes the past, so it never proposes an interview/assessment step.
-  const withoutThanks = clauses.map(clause => clause.replace(
-    /\bthank(?:s| you)(?: (?:so|very) much)? for (?:taking (?:the )?time|your time|interviewing|your (?:recent )?interview|meeting|speaking|talking|chatting|completing|the opportunity|participating|attending|your patience)[^.!?\n]{0,200}[.!?]?/gi,
-    " ",
-  ));
-  if (withoutThanks.some(clause => INTERVIEW_CANCELLED.test(clause)))
+  const withoutThanks = clauses.map((clause) =>
+    clause.replace(
+      /\bthank(?:s| you)(?: (?:so|very) much)? for (?:taking (?:the )?time|your time|interviewing|your (?:recent )?interview|meeting|speaking|talking|chatting|completing|the opportunity|participating|attending|your patience)[^.!?\n]{0,200}[.!?]?/gi,
+      " ",
+    ),
+  );
+  if (withoutThanks.some((clause) => INTERVIEW_CANCELLED.test(clause)))
     return { kind: null, reasons: ["interview-cancelled"] };
-  const notYetScheduled = withoutThanks.some(clause => INTERVIEW_NOT_YET_SCHEDULED.test(clause));
-  const negatedReceipt = clauses.some(clause => NOT_SUBMITTED.test(clause) || NOT_RECEIVED.test(clause));
-  const hit = (Object.keys(PHRASES) as SignalKind[]).filter(
-    k => (STEP_KINDS.has(k) ? withoutThanks : clauses).some(clause =>
-      !(k === "INTERVIEW_SCHEDULED" && INTERVIEW_NOT_YET_SCHEDULED.test(clause)) &&
-      !(k === "CONFIRMATION_RECEIVED" && (NOT_SUBMITTED.test(clause) || NOT_RECEIVED.test(clause))) && PHRASES[k].test(clause)),
+  const notYetScheduled = withoutThanks.some((clause) =>
+    INTERVIEW_NOT_YET_SCHEDULED.test(clause),
+  );
+  const negatedReceipt = clauses.some(
+    (clause) => NOT_SUBMITTED.test(clause) || NOT_RECEIVED.test(clause),
+  );
+  const hit = (Object.keys(PHRASES) as SignalKind[]).filter((k) =>
+    (STEP_KINDS.has(k) ? withoutThanks : clauses).some(
+      (clause) =>
+        !(
+          k === "INTERVIEW_SCHEDULED" &&
+          INTERVIEW_NOT_YET_SCHEDULED.test(clause)
+        ) &&
+        !(
+          k === "CONFIRMATION_RECEIVED" &&
+          (NOT_SUBMITTED.test(clause) || NOT_RECEIVED.test(clause))
+        ) &&
+        PHRASES[k].test(clause),
+    ),
   );
   // Only an explicit referent can connect adjacent sentences; no other rule borrows a noun
   // from a subject or previous assertion to give an unrelated clause its event meaning.
   for (let i = 0; i + 1 < withoutThanks.length; i++) {
-    const before = withoutThanks[i]!, after = withoutThanks[i + 1]!;
-    if (/\binterview\b/i.test(before) && /^(?:(?:this|that|the) (?:call|meeting|session|interview|appointment)|it|this|that)(?: is|'s| has been| was) (?:now )?(?:confirmed|scheduled|booked|set|rescheduled|moved) (?:for|to|on|at)\b/i.test(after) &&
-        !INTERVIEW_NOT_YET_SCHEDULED.test(before) && !hit.includes("INTERVIEW_SCHEDULED")) hit.push("INTERVIEW_SCHEDULED");
+    const before = withoutThanks[i]!,
+      after = withoutThanks[i + 1]!;
+    if (
+      /\binterview\b/i.test(before) &&
+      /^(?:(?:this|that|the) (?:call|meeting|session|interview|appointment)|it|this|that)(?: is|'s| has been| was) (?:now )?(?:confirmed|scheduled|booked|set|rescheduled|moved) (?:for|to|on|at)\b/i.test(
+        after,
+      ) &&
+      !INTERVIEW_NOT_YET_SCHEDULED.test(before) &&
+      !hit.includes("INTERVIEW_SCHEDULED")
+    )
+      hit.push("INTERVIEW_SCHEDULED");
   }
   const reasons = hit.map((k) => "phrase:" + k);
   if (notYetScheduled) reasons.push("interview-not-yet-scheduled");
@@ -353,7 +385,8 @@ function atsFromUrl(raw: string): AtsMatch | null {
       (jobIndex === 2 && !/^[a-z]{2}-[a-z]{2}$/i.test(seg[0]!)) ||
       seg.length !== jobIndex + 3 ||
       !/^[a-z0-9_-]{1,80}$/i.test(seg[jobIndex - 1]!)
-    ) return null;
+    )
+      return null;
     const requisition = /_([A-Za-z]*-?\d+)$/.exec(
       seg[seg.length - 1] ?? "",
     )?.[1];
@@ -394,9 +427,16 @@ function labelled(text: string, labels: string): string | null {
 /** A job requisition is employer-scoped; Candidate ID must never identify a submission. */
 function ibmJobDetails(message: ParsedMessage, body: string) {
   if (!/@ibm\.com$/i.test(message.fromAddress ?? "")) return null;
-  const subject = /^you have successfully submitted your IBM job application\s*-\s*(\d{4,10})\s*-\s*(.{2,100})$/i.exec(message.subject);
-  const sentence = /applying to the role of\s+(.{2,100}?)\s*-\s*(\d{4,10})\s+with Candidate ID\s*-\s*\d+\s+at IBM\b/i.exec(body);
-  const reference = /(?:^|\n)\s*Ref\s*:\s*(\d{4,10})\s*-\s*([^\n|]{2,100})/i.exec(body);
+  const subject =
+    /^you have successfully submitted your IBM job application\s*-\s*(\d{4,10})\s*-\s*(.{2,100})$/i.exec(
+      message.subject,
+    );
+  const sentence =
+    /applying to the role of\s+(.{2,100}?)\s*-\s*(\d{4,10})\s+with Candidate ID\s*-\s*\d+\s+at IBM\b/i.exec(
+      body,
+    );
+  const reference =
+    /(?:^|\n)\s*Ref\s*:\s*(\d{4,10})\s*-\s*([^\n|]{2,100})/i.exec(body);
   const candidates = [
     subject && { id: subject[1]!, title: cleanTitle(subject[2]) },
     sentence && { id: sentence[2]!, title: cleanTitle(sentence[1]) },
@@ -404,8 +444,13 @@ function ibmJobDetails(message: ParsedMessage, body: string) {
   ].filter((c): c is { id: string; title: string | null } => !!c);
   if (!candidates.length) return null;
   const first = candidates[0]!;
-  const conflict = candidates.some(c => c.id !== first.id ||
-    (c.title && first.title && c.title.toLowerCase() !== first.title.toLowerCase()));
+  const conflict = candidates.some(
+    (c) =>
+      c.id !== first.id ||
+      (c.title &&
+        first.title &&
+        c.title.toLowerCase() !== first.title.toLowerCase()),
+  );
   return { id: first.id, title: first.title, conflict };
 }
 
@@ -428,7 +473,9 @@ function extractOne(
   const reasons = detected.reasons;
   if (/^\s*re\s*:/i.test(message.subject) && !detectKind(body).kind) {
     kind = null;
-    reasons.push(regions.hasQuotedHistory ? "quoted-history-only" : "reply-subject-only");
+    reasons.push(
+      regions.hasQuotedHistory ? "quoted-history-only" : "reply-subject-only",
+    );
   }
   reasons.push(...calendar.reasons);
   if (calendar.reasons.includes("interview-cancelled")) kind = null;
@@ -443,7 +490,10 @@ function extractOne(
   const jobLinks = new Set<string>();
   const ibm = ibmJobDetails(message, body);
   if (ibm && !ibm.conflict) {
-    ats = { key: { provider: "ibm", tenant: "ibm", requisitionId: ibm.id }, canonicalUrl: "" };
+    ats = {
+      key: { provider: "ibm", tenant: "ibm", requisitionId: ibm.id },
+      canonicalUrl: "",
+    };
     jobLinks.add(JSON.stringify(ats.key));
   }
   for (const url of findUrls(body)) {
@@ -460,19 +510,47 @@ function extractOne(
   }
 
   const { company, title, decisions } = extractCompanyAndTitle({
-    subject: message.subject.replace(/^(?:\s*re\s*:\s*)+/i,""),
+    subject: message.subject.replace(/^(?:\s*re\s*:\s*)+/i, ""),
     fromName: message.fromName,
     fromAddress: message.fromAddress,
     body,
     signature: regions.signature,
     titleHints: [
-      ...(calendarFields?.title ? [{ value: calendarFields.title, weight: 3, rule: "hint:calendar" as const }] : []),
-      ...(workdaySlugTitle ? [{ value: workdaySlugTitle, weight: 1, rule: "hint:workday-slug" as const }] : []),
-      ...(ibm && !ibm.conflict && ibm.title ? [{ value: ibm.title, weight: 3, rule: "hint:ibm" as const }] : []),
+      ...(calendarFields?.title
+        ? [
+            {
+              value: calendarFields.title,
+              weight: 3,
+              rule: "hint:calendar" as const,
+            },
+          ]
+        : []),
+      ...(workdaySlugTitle
+        ? [
+            {
+              value: workdaySlugTitle,
+              weight: 1,
+              rule: "hint:workday-slug" as const,
+            },
+          ]
+        : []),
+      ...(ibm && !ibm.conflict && ibm.title
+        ? [{ value: ibm.title, weight: 3, rule: "hint:ibm" as const }]
+        : []),
     ],
     companyHints: [
-      ...(ibm && !ibm.conflict ? [{ value: "IBM", weight: 3, rule: "hint:ibm" as const }] : []),
-      ...(calendarFields?.company ? [{ value: calendarFields.company, weight: 3, rule: "hint:calendar" as const }] : []),
+      ...(ibm && !ibm.conflict
+        ? [{ value: "IBM", weight: 3, rule: "hint:ibm" as const }]
+        : []),
+      ...(calendarFields?.company
+        ? [
+            {
+              value: calendarFields.company,
+              weight: 3,
+              rule: "hint:calendar" as const,
+            },
+          ]
+        : []),
     ],
   });
   // Candidate IDs identify a person, not a particular submission.
@@ -504,11 +582,24 @@ function extractOne(
     fields.canonicalUrl = null;
     reasons.push("ambiguous-job-links");
   }
-  if (Object.values(decisions).some(d => d.state === "AMBIGUOUS")) reasons.push("conflicting-fields");
-  if (calendarFields && Object.values(calendarFields.decisions).some(d => d.state === "AMBIGUOUS")) reasons.push("conflicting-fields");
+  if (Object.values(decisions).some((d) => d.state === "AMBIGUOUS"))
+    reasons.push("conflicting-fields");
+  if (
+    calendarFields &&
+    Object.values(calendarFields.decisions).some((d) => d.state === "AMBIGUOUS")
+  )
+    reasons.push("conflicting-fields");
   return {
     kind,
-    confidence: kind && !reasons.includes("mixed-kind") && !reasons.includes("conflicting-fields") && !reasons.includes("uncertain-calendar") && jobLinks.size <= 1 && !ibm?.conflict ? "HIGH" : "LOW",
+    confidence:
+      kind &&
+      !reasons.includes("mixed-kind") &&
+      !reasons.includes("conflicting-fields") &&
+      !reasons.includes("uncertain-calendar") &&
+      jobLinks.size <= 1 &&
+      !ibm?.conflict
+        ? "HIGH"
+        : "LOW",
     fields,
     occurredAt: message.date,
     reasons,
@@ -525,7 +616,8 @@ const HIRING_REASONS: ReadonlySet<string> = new Set([
 
 /** Whether a message is about an application at all, as opposed to account or other mail. */
 export const isHiringSignal = (signal: ExtractedSignal): boolean =>
-  signal.kind !== null || signal.reasons.some((reason) => HIRING_REASONS.has(reason));
+  signal.kind !== null ||
+  signal.reasons.some((reason) => HIRING_REASONS.has(reason));
 
 const STRICT_FIELDS: ReadonlySet<keyof ExtractedFields> = new Set([
   "externalApplicationId",
@@ -535,10 +627,14 @@ const STRICT_FIELDS: ReadonlySet<keyof ExtractedFields> = new Set([
 
 function conflicts(a: ExtractedSignal, b: ExtractedSignal): boolean {
   if (a.kind && b.kind && a.kind !== b.kind) return true;
-  if (a.reasons.includes("ambiguous-kind") || b.reasons.includes("ambiguous-kind"))
+  if (
+    a.reasons.includes("ambiguous-kind") ||
+    b.reasons.includes("ambiguous-kind")
+  )
     return true;
   return (Object.keys(a.fields) as (keyof ExtractedFields)[]).some((field) => {
-    if (field === "fieldDecisions" || field === "company" || field === "title") return false;
+    if (field === "fieldDecisions" || field === "company" || field === "title")
+      return false;
     const x = a.fields[field],
       y = b.fields[field];
     if (x == null || y == null) return false;
@@ -556,51 +652,113 @@ function conflicts(a: ExtractedSignal, b: ExtractedSignal): boolean {
  */
 export function extractSignal(message: ParsedMessage): ExtractedSignal {
   const calendar = extractCalendar(message);
-  const calendarFields = calendar.event ? extractCompanyAndTitle({
-    subject: calendar.event.summary,
-    body: `${calendar.event.summary}\n${calendar.event.description}\nOrganizer: ${calendar.event.organizer}`,
-    fromName: normalizeForMatching(message.fromName), fromAddress: message.fromAddress,
-  }) : null;
-  const representations = [...new Set([message.text, ...(message.alternativeTexts ?? [])])]
-    .map(text => extractOne({ ...message, text }, calendar, calendarFields));
+  const calendarFields = calendar.event
+    ? extractCompanyAndTitle({
+        subject: calendar.event.summary,
+        body: `${calendar.event.summary}\n${calendar.event.description}\nOrganizer: ${calendar.event.organizer}`,
+        fromName: normalizeForMatching(message.fromName),
+        fromAddress: message.fromAddress,
+      })
+    : null;
+  const representations = [
+    ...new Set([message.text, ...(message.alternativeTexts ?? [])]),
+  ].map((text) => extractOne({ ...message, text }, calendar, calendarFields));
   const primary = representations[0]!;
   const fields = { ...primary.fields };
-  const reasons = new Set(representations.flatMap(signal => signal.reasons));
-  if (representations.some(signal => conflicts(primary, signal))) reasons.add("conflicting-alternatives");
+  const reasons = new Set(representations.flatMap((signal) => signal.reasons));
+  if (representations.some((signal) => conflicts(primary, signal)))
+    reasons.add("conflicting-alternatives");
   // Alternatives are correlated renderings, not independent votes. Keep the strongest support
   // for each value and retain ambiguity from every representation, regardless of MIME ordering.
   fields.fieldDecisions = { ...primary.fields.fieldDecisions! };
   for (const key of ["company", "title"] as const) {
-    const decisions = representations.map(signal => signal.fields.fieldDecisions![key]);
-    const keyOf = (value: string) => key === "company" ? companyKey(value) : value.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
-    const supported = new Map(decisions.filter(d => d.state === "SUPPORTED" && d.value).map(d => [keyOf(d.value!), d.value!]));
-    const candidates = new Map<string, (typeof decisions)[number]["candidates"][number]>();
-    for (const decision of decisions) for (const candidate of decision.candidates) {
-      const id = keyOf(candidate.value), existing = candidates.get(id);
-      const rules = [...new Set([...(existing?.rules ?? []), ...(candidate.rules ?? [])])].sort();
-      candidates.set(id, { ...(!existing || candidate.score > existing.score ? candidate : existing), rules });
-    }
-    const ambiguous = decisions.some(d => d.state === "AMBIGUOUS") || supported.size > 1;
-    const value = ambiguous ? null : supported.values().next().value ?? null;
+    const decisions = representations.map(
+      (signal) => signal.fields.fieldDecisions![key],
+    );
+    const keyOf = (value: string) =>
+      key === "company"
+        ? companyKey(value)
+        : value.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+    const supported = new Map(
+      decisions
+        .filter((d) => d.state === "SUPPORTED" && d.value)
+        .map((d) => [keyOf(d.value!), d.value!]),
+    );
+    const candidates = new Map<
+      string,
+      (typeof decisions)[number]["candidates"][number]
+    >();
+    for (const decision of decisions)
+      for (const candidate of decision.candidates) {
+        const id = keyOf(candidate.value),
+          existing = candidates.get(id);
+        const rules = [
+          ...new Set([...(existing?.rules ?? []), ...(candidate.rules ?? [])]),
+        ].sort();
+        candidates.set(id, {
+          ...(!existing || candidate.score > existing.score
+            ? candidate
+            : existing),
+          rules,
+        });
+      }
+    const ambiguous =
+      decisions.some((d) => d.state === "AMBIGUOUS") || supported.size > 1;
+    const value = ambiguous ? null : (supported.values().next().value ?? null);
     fields[key] = value;
     fields.fieldDecisions[key] = {
-      state: ambiguous ? "AMBIGUOUS" : value ? "SUPPORTED" : "MISSING", value,
-      candidates: [...candidates.values()].sort((a, b) => b.score - a.score || a.value.localeCompare(b.value)).slice(0, 8),
+      state: ambiguous ? "AMBIGUOUS" : value ? "SUPPORTED" : "MISSING",
+      value,
+      candidates: [...candidates.values()]
+        .sort((a, b) => b.score - a.score || a.value.localeCompare(b.value))
+        .slice(0, 8),
     };
     if (ambiguous) reasons.add("conflicting-fields");
     if (supported.size > 1) reasons.add("conflicting-alternatives");
   }
-  for (const key of ["location", "atsKey", "canonicalUrl", "applicantEmail", "externalApplicationId"] as const) {
-    const present = representations.map(signal => signal.fields[key]).filter(value => value != null);
-    const distinct = new Set(present.map(value => STRICT_FIELDS.has(key) ? JSON.stringify(value) : JSON.stringify(value).toLowerCase()));
+  for (const key of [
+    "location",
+    "atsKey",
+    "canonicalUrl",
+    "applicantEmail",
+    "externalApplicationId",
+  ] as const) {
+    const present = representations
+      .map((signal) => signal.fields[key])
+      .filter((value) => value != null);
+    const distinct = new Set(
+      present.map((value) =>
+        STRICT_FIELDS.has(key)
+          ? JSON.stringify(value)
+          : JSON.stringify(value).toLowerCase(),
+      ),
+    );
     if (distinct.size > 1) {
       fields[key] = null;
       reasons.add("conflicting-alternatives");
     } else (fields as Record<string, unknown>)[key] = present[0] ?? null;
   }
-  const kinds = new Set(representations.map(signal => signal.kind).filter(kind => kind !== null));
+  const kinds = new Set(
+    representations
+      .map((signal) => signal.kind)
+      .filter((kind) => kind !== null),
+  );
   if (kinds.size > 1) reasons.add("conflicting-alternatives");
   const kind = kinds.size === 1 ? [...kinds][0]! : null;
-  const uncertain = ["mixed-kind", "ambiguous-kind", "ambiguous-job-links", "conflicting-fields", "conflicting-alternatives", "uncertain-calendar"];
-  return { ...primary, kind, fields, reasons: [...reasons], confidence: kind && !uncertain.some(reason => reasons.has(reason)) ? "HIGH" : "LOW" };
+  const uncertain = [
+    "mixed-kind",
+    "ambiguous-kind",
+    "ambiguous-job-links",
+    "conflicting-fields",
+    "conflicting-alternatives",
+    "uncertain-calendar",
+  ];
+  return {
+    ...primary,
+    kind,
+    fields,
+    reasons: [...reasons],
+    confidence:
+      kind && !uncertain.some((reason) => reasons.has(reason)) ? "HIGH" : "LOW",
+  };
 }

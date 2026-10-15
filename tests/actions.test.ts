@@ -269,19 +269,50 @@ describe("authorization", () => {
   });
 });
 
-it("manual confirmation assignment fills missing submission facts and preserves existing snapshots", async()=>{
-  const user=await seedUser(db);
-  const invitation=await ingest(user,{from:"Acme Careers <careers@acme.example>",to:"applicant@example.com",subject:"Interview invitation",date:"Mon, 12 Oct 2026 09:30:00 +0000",text:"We would like to invite you to interview for the Backend Engineer role at Acme."});
-  assert.equal(invitation.status,"REVIEW");if(invitation.status!=="REVIEW")return;
-  const created=await resolveReviewCreate(db,user,invitation.reviewId,{company:"Acme",title:"Backend Engineer"});
-  const query=async()=>(await db.query<{submitted_at:unknown;applicant_email_snapshot:string|null;external_application_id:string|null;submission_evidence_ids:string[]}>("SELECT submitted_at,applicant_email_snapshot,external_application_id,submission_evidence_ids FROM application_attempts WHERE id=$1",[created.attemptId])).rows[0]!;
-  assert.deepEqual((await query()).submission_evidence_ids,[]);
-  const receipt=await ingest(user,{from:"Acme Careers <careers@acme.example>",to:"applicant@example.com",subject:"Application received",date:"Mon, 05 Oct 2026 09:30:00 +0000",text:"We received your application.\nCompany: Acme\nApplicant email: robin@example.com\nApplication ID: APP-9000"});
-  assert.equal(receipt.status,"REVIEW");if(receipt.status!=="REVIEW")return;
-  await resolveReviewAssign(db,user,receipt.reviewId,created.attemptId);
-  const accepted=await query();
-  assert.equal(new Date(accepted.submitted_at as string).toISOString(),"2026-10-05T09:30:00.000Z");
-  assert.equal(accepted.applicant_email_snapshot,"robin@example.com");
-  assert.equal(accepted.external_application_id,"APP-9000");
-  assert.equal(accepted.submission_evidence_ids.length,1);
+it("manual confirmation assignment fills missing submission facts and preserves existing snapshots", async () => {
+  const user = await seedUser(db);
+  const invitation = await ingest(user, {
+    from: "Acme Careers <careers@acme.example>",
+    to: "applicant@example.com",
+    subject: "Interview invitation",
+    date: "Mon, 12 Oct 2026 09:30:00 +0000",
+    text: "We would like to invite you to interview for the Backend Engineer role at Acme.",
+  });
+  assert.equal(invitation.status, "REVIEW");
+  if (invitation.status !== "REVIEW") return;
+  const created = await resolveReviewCreate(db, user, invitation.reviewId, {
+    company: "Acme",
+    title: "Backend Engineer",
+  });
+  const query = async () =>
+    (
+      await db.query<{
+        submitted_at: unknown;
+        applicant_email_snapshot: string | null;
+        external_application_id: string | null;
+        submission_evidence_ids: string[];
+      }>(
+        "SELECT submitted_at,applicant_email_snapshot,external_application_id,submission_evidence_ids FROM application_attempts WHERE id=$1",
+        [created.attemptId],
+      )
+    ).rows[0]!;
+  assert.deepEqual((await query()).submission_evidence_ids, []);
+  const receipt = await ingest(user, {
+    from: "Acme Careers <careers@acme.example>",
+    to: "applicant@example.com",
+    subject: "Application received",
+    date: "Mon, 05 Oct 2026 09:30:00 +0000",
+    text: "We received your application.\nCompany: Acme\nApplicant email: robin@example.com\nApplication ID: APP-9000",
+  });
+  assert.equal(receipt.status, "REVIEW");
+  if (receipt.status !== "REVIEW") return;
+  await resolveReviewAssign(db, user, receipt.reviewId, created.attemptId);
+  const accepted = await query();
+  assert.equal(
+    new Date(accepted.submitted_at as string).toISOString(),
+    "2026-10-05T09:30:00.000Z",
+  );
+  assert.equal(accepted.applicant_email_snapshot, "robin@example.com");
+  assert.equal(accepted.external_application_id, "APP-9000");
+  assert.equal(accepted.submission_evidence_ids.length, 1);
 });

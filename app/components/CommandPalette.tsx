@@ -62,11 +62,42 @@ export function CommandPalette({
       fn();
     };
     const all: Item[] = [
-      { id: "s-app", group: "Go to", title: "Applications", icon: <LayoutDashboard size={16} />, run: done(() => go("applications")) },
-      { id: "s-rev", group: "Go to", title: "Needs review", hint: reviews ? `${reviews} waiting` : "All caught up", icon: <Inbox size={16} />, run: done(() => go("review")) },
-      { id: "s-imp", group: "Go to", title: "Import emails", icon: <Upload size={16} />, run: done(() => go("import")) },
-      { id: "s-con", group: "Go to", title: "Connections", icon: <Cloud size={16} />, run: done(() => go("connections")) },
-      { id: "s-set", group: "Go to", title: "Workspace settings", icon: <Settings size={16} />, run: done(() => go("settings")) },
+      {
+        id: "s-app",
+        group: "Go to",
+        title: "Applications",
+        icon: <LayoutDashboard size={16} />,
+        run: done(() => go("applications")),
+      },
+      {
+        id: "s-rev",
+        group: "Go to",
+        title: "Needs review",
+        hint: reviews ? `${reviews} waiting` : "All caught up",
+        icon: <Inbox size={16} />,
+        run: done(() => go("review")),
+      },
+      {
+        id: "s-imp",
+        group: "Go to",
+        title: "Import emails",
+        icon: <Upload size={16} />,
+        run: done(() => go("import")),
+      },
+      {
+        id: "s-con",
+        group: "Go to",
+        title: "Connections",
+        icon: <Cloud size={16} />,
+        run: done(() => go("connections")),
+      },
+      {
+        id: "s-set",
+        group: "Go to",
+        title: "Workspace settings",
+        icon: <Settings size={16} />,
+        run: done(() => go("settings")),
+      },
       ...openings.map<Item>((o) => ({
         id: o.id,
         group: "Applications",
@@ -75,7 +106,14 @@ export function CommandPalette({
         company: o.company,
         run: done(() => openApplication(o.id)),
       })),
-      { id: "a-theme", group: "Actions", title: "Switch appearance", hint: "System · Light · Dark", icon: <Moon size={16} />, run: () => cycleTheme() },
+      {
+        id: "a-theme",
+        group: "Actions",
+        title: "Switch appearance",
+        hint: "System · Light · Dark",
+        icon: <Moon size={16} />,
+        run: () => cycleTheme(),
+      },
     ];
     const q = query.trim().toLowerCase();
     if (!q) return all;
@@ -83,7 +121,9 @@ export function CommandPalette({
     return all.filter((item) =>
       q
         .split(/\s+/)
-        .every((w) => `${item.title} ${item.hint ?? ""}`.toLowerCase().includes(w)),
+        .every((w) =>
+          `${item.title} ${item.hint ?? ""}`.toLowerCase().includes(w),
+        ),
     );
   }, [query, openings, reviews, go, openApplication, onClose, cycleTheme]);
 
@@ -129,7 +169,9 @@ export function CommandPalette({
             role="combobox"
             aria-expanded="true"
             aria-controls="palette-list"
-            aria-activedescendant={items[index] ? `pal-${items[index]!.id}` : undefined}
+            aria-activedescendant={
+              items[index] ? `pal-${items[index]!.id}` : undefined
+            }
             aria-label="Search applications and pages"
             placeholder="Search applications, pages, actions…"
             value={query}
@@ -137,7 +179,12 @@ export function CommandPalette({
           />
           <Kbd>Esc</Kbd>
         </label>
-        <div className="palette-list" id="palette-list" role="listbox" ref={list}>
+        <div
+          className="palette-list"
+          id="palette-list"
+          role="listbox"
+          ref={list}
+        >
           {items.length === 0 && (
             <p className="palette-empty">Nothing matches “{query}”.</p>
           )}
@@ -167,11 +214,21 @@ export function CommandPalette({
                         <span className="palette-icon">{item.icon}</span>
                       )}
                       <span className="palette-title">{item.title}</span>
-                      {item.hint && <span className="palette-hint">{item.hint}</span>}
+                      {item.hint && (
+                        <span className="palette-hint">{item.hint}</span>
+                      )}
                       {i === index ? (
-                        <CornerDownLeft size={14} className="palette-enter" aria-hidden />
+                        <CornerDownLeft
+                          size={14}
+                          className="palette-enter"
+                          aria-hidden
+                        />
                       ) : (
-                        <ArrowRight size={14} className="palette-enter faint" aria-hidden />
+                        <ArrowRight
+                          size={14}
+                          className="palette-enter faint"
+                          aria-hidden
+                        />
                       )}
                     </div>
                   );
@@ -181,9 +238,16 @@ export function CommandPalette({
           })}
         </div>
         <div className="palette-foot" aria-hidden>
-          <span><Kbd>↑</Kbd><Kbd>↓</Kbd> to move</span>
-          <span><Kbd>↵</Kbd> to open</span>
-          <span><Kbd>/</Kbd> search the ledger</span>
+          <span>
+            <Kbd>↑</Kbd>
+            <Kbd>↓</Kbd> to move
+          </span>
+          <span>
+            <Kbd>↵</Kbd> to open
+          </span>
+          <span>
+            <Kbd>/</Kbd> search the ledger
+          </span>
         </div>
       </div>
     </div>

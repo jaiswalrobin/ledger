@@ -46,7 +46,13 @@ type Dashboard = {
 type Notice = { text: string; tone: "info" | "error" } | null;
 
 const EMPTY: Dashboard = { openings: [], reviews: [], mailboxes: [] };
-const SCREENS: Screen[] = ["applications", "review", "connections", "import", "settings"];
+const SCREENS: Screen[] = [
+  "applications",
+  "review",
+  "connections",
+  "import",
+  "settings",
+];
 const TITLES: Record<Screen, string> = {
   applications: "Applications",
   review: "Needs review",
@@ -61,7 +67,9 @@ function readHash(): { screen: Screen; openingId: string | null } {
   const opening = /^application\/([0-9a-f-]{36})$/i.exec(raw)?.[1] ?? null;
   if (opening) return { screen: "applications", openingId: opening };
   return {
-    screen: (SCREENS as string[]).includes(raw) ? (raw as Screen) : "applications",
+    screen: (SCREENS as string[]).includes(raw)
+      ? (raw as Screen)
+      : "applications",
     openingId: null,
   };
 }
@@ -141,7 +149,10 @@ export default function Home() {
     setThemeState(storedTheme());
     void boot();
     if (new URL(window.location.href).searchParams.has("authError"))
-      setNotice({ text: "Google sign-in could not be completed. Please try again.", tone: "error" });
+      setNotice({
+        text: "Google sign-in could not be completed. Please try again.",
+        tone: "error",
+      });
     const onPop = () => {
       const route = readHash();
       setScreen(route.screen);
@@ -170,7 +181,10 @@ export default function Home() {
     }
   }, [theme]);
   const cycleTheme = useCallback(
-    () => setThemeState((t) => (t === "system" ? "light" : t === "light" ? "dark" : "system")),
+    () =>
+      setThemeState((t) =>
+        t === "system" ? "light" : t === "light" ? "dark" : "system",
+      ),
     [],
   );
 
@@ -228,7 +242,9 @@ export default function Home() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable;
+      const typing =
+        /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) ||
+        target.isContentEditable;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPalette((p) => !p);
@@ -273,17 +289,28 @@ export default function Home() {
     });
 
   const nav = [
-    { id: "applications", title: "Applications", short: "Ledger", icon: LayoutDashboard },
+    {
+      id: "applications",
+      title: "Applications",
+      short: "Ledger",
+      icon: LayoutDashboard,
+    },
     { id: "review", title: "Needs review", short: "Review", icon: Inbox },
     { id: "connections", title: "Connections", short: "Accounts", icon: Cloud },
     { id: "import", title: "Import emails", short: "Import", icon: Upload },
   ] as const;
   const reviews = data.reviews.length;
-  const isMac = typeof navigator !== "undefined" && /Mac|iP(hone|ad)/.test(navigator.platform);
+  const isMac =
+    typeof navigator !== "undefined" &&
+    /Mac|iP(hone|ad)/.test(navigator.platform);
 
   if (!ready)
     return (
-      <div className="loading" aria-busy="true" aria-label="Opening your ledger">
+      <div
+        className="loading"
+        aria-busy="true"
+        aria-label="Opening your ledger"
+      >
         <Brand />
         <div className="skeleton">
           <span className="sk sk-title" />
@@ -335,7 +362,10 @@ export default function Home() {
         onClick={() => setDrawer(false)}
         aria-hidden
       />
-      <aside className={`sidebar ${drawer ? "show" : ""}`} aria-label="Workspace">
+      <aside
+        className={`sidebar ${drawer ? "show" : ""}`}
+        aria-label="Workspace"
+      >
         <div className="sidebar-top">
           <Brand />
           <button
@@ -359,7 +389,13 @@ export default function Home() {
           {nav.map((item) => (
             <button
               key={item.id}
-              className={screen === item.id && !detail ? "selected" : screen === item.id ? "within" : ""}
+              className={
+                screen === item.id && !detail
+                  ? "selected"
+                  : screen === item.id
+                    ? "within"
+                    : ""
+              }
               aria-current={screen === item.id ? "page" : undefined}
               onClick={() => go(item.id)}
             >
@@ -390,8 +426,12 @@ export default function Home() {
               {session.isDemo ? "D" : session.email?.slice(0, 1).toUpperCase()}
             </span>
             <div>
-              <strong>{session.isDemo ? "Demo workspace" : session.email}</strong>
-              <small>{session.isDemo ? "Your own sample data" : "Private workspace"}</small>
+              <strong>
+                {session.isDemo ? "Demo workspace" : session.email}
+              </strong>
+              <small>
+                {session.isDemo ? "Your own sample data" : "Private workspace"}
+              </small>
             </div>
             <button
               aria-label={`Appearance: ${theme}`}
@@ -399,9 +439,20 @@ export default function Home() {
               className="icon-button"
               onClick={cycleTheme}
             >
-              {theme === "dark" ? <Moon size={16} /> : theme === "light" ? <Sun size={16} /> : <Monitor size={16} />}
+              {theme === "dark" ? (
+                <Moon size={16} />
+              ) : theme === "light" ? (
+                <Sun size={16} />
+              ) : (
+                <Monitor size={16} />
+              )}
             </button>
-            <button aria-label="Sign out" className="icon-button" disabled={busy} onClick={signOut}>
+            <button
+              aria-label="Sign out"
+              className="icon-button"
+              disabled={busy}
+              onClick={signOut}
+            >
               <LogOut size={16} />
             </button>
           </div>
@@ -423,7 +474,9 @@ export default function Home() {
             <ChevronRight size={13} aria-hidden />
             {detail ? (
               <>
-                <button className="crumb-link" onClick={closeDetail}>Applications</button>
+                <button className="crumb-link" onClick={closeDetail}>
+                  Applications
+                </button>
                 <ChevronRight size={13} aria-hidden />
               </>
             ) : null}
@@ -431,10 +484,20 @@ export default function Home() {
           </span>
           <div className="topbar-right">
             {session.isDemo && <span className="demo-tag">SAMPLE</span>}
-            <span className={`top-status ${busy ? "busy" : ""}`} aria-live="polite">
-              <i aria-hidden /> <span className="status-text">{busy ? "Saving…" : "All changes saved"}</span>
+            <span
+              className={`top-status ${busy ? "busy" : ""}`}
+              aria-live="polite"
+            >
+              <i aria-hidden />{" "}
+              <span className="status-text">
+                {busy ? "Saving…" : "All changes saved"}
+              </span>
             </span>
-            <button className="icon-button top-search" aria-label="Open command menu" onClick={() => setPalette(true)}>
+            <button
+              className="icon-button top-search"
+              aria-label="Open command menu"
+              onClick={() => setPalette(true)}
+            >
               <Search size={18} />
             </button>
           </div>
@@ -450,7 +513,11 @@ export default function Home() {
                 void work(async () => {
                   await api("event", { eventId, state });
                   await refresh();
-                  info(state === "REJECTED" ? "Update rejected. The timeline was recalculated — you can restore it any time." : "Update restored to the timeline.");
+                  info(
+                    state === "REJECTED"
+                      ? "Update rejected. The timeline was recalculated — you can restore it any time."
+                      : "Update restored to the timeline.",
+                  );
                 })
               }
               saveDate={(attemptId, occurredAt) =>
@@ -507,14 +574,18 @@ export default function Home() {
               busy={busy}
               sync={(mailboxId) =>
                 void work(async () => {
-                  const result = await api<{ runs: SyncResult[] }>("sync", { mailboxId });
+                  const result = await api<{ runs: SyncResult[] }>("sync", {
+                    mailboxId,
+                  });
                   await refresh();
                   info(syncNotice(result.runs));
                 })
               }
               recheck={(mailboxId) =>
                 void work(async () => {
-                  const result = await api<{ runs: SyncResult[] }>("recheck", { mailboxId });
+                  const result = await api<{ runs: SyncResult[] }>("recheck", {
+                    mailboxId,
+                  });
                   await refresh();
                   info(syncNotice(result.runs, true));
                 })
@@ -527,15 +598,21 @@ export default function Home() {
               }
               disconnect={(mailboxId) =>
                 void work(async () => {
-                  const result = await api<{ revoked: boolean }>("disconnect", { mailboxId });
+                  const result = await api<{ revoked: boolean }>("disconnect", {
+                    mailboxId,
+                  });
                   await refresh();
                   if (!result.revoked)
-                    info("Disconnected here. Google could not confirm revocation; remove Ledger’s access in your Google account settings.");
+                    info(
+                      "Disconnected here. Google could not confirm revocation; remove Ledger’s access in your Google account settings.",
+                    );
                 })
               }
               connect={() =>
                 void work(async () => {
-                  const result = await api<{ url: string }>("connect", { dedicated: true });
+                  const result = await api<{ url: string }>("connect", {
+                    dedicated: true,
+                  });
                   window.location.assign(result.url);
                 })
               }
@@ -577,11 +654,15 @@ export default function Home() {
             key={item.id}
             className={screen === item.id ? "on" : ""}
             aria-current={screen === item.id ? "page" : undefined}
-            onClick={() => (screen === item.id && detail ? closeDetail() : go(item.id))}
+            onClick={() =>
+              screen === item.id && detail ? closeDetail() : go(item.id)
+            }
           >
             <span className="tab-icon">
               <item.icon size={20} aria-hidden />
-              {item.id === "review" && reviews > 0 && <b aria-hidden>{reviews}</b>}
+              {item.id === "review" && reviews > 0 && (
+                <b aria-hidden>{reviews}</b>
+              )}
             </span>
             <span>{item.short}</span>
           </button>
@@ -592,7 +673,11 @@ export default function Home() {
         <div className="toast-region">
           <div role="alert" className={`notice ${notice.tone}`}>
             <span>{notice.text}</span>
-            <button className="icon-button" aria-label="Dismiss notification" onClick={() => setNotice(null)}>
+            <button
+              className="icon-button"
+              aria-label="Dismiss notification"
+              onClick={() => setNotice(null)}
+            >
               <X size={16} />
             </button>
           </div>

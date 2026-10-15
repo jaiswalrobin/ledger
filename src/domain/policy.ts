@@ -10,7 +10,11 @@
  *   3. calendarIdentityHolds / judgeCalendarRevision: may a calendar invitation link or revise?
  *   4. mayApplyAutomatically: is the match strong enough for this kind of event?
  */
-import type { ApplicationEventKind, CalendarFacts, Sensitivity } from "./types.ts";
+import type {
+  ApplicationEventKind,
+  CalendarFacts,
+  Sensitivity,
+} from "./types.ts";
 
 export type ReviewReason =
   | "NO_DATE"
@@ -52,7 +56,10 @@ export const screenSensitive = (facts: {
  * Extractor reasons that always send an email to a person, highest precedence first. Each means
  * the extractor saw contradictory or unusable evidence, so no match is attempted.
  */
-export const GATED_REASONS: ReadonlyMap<string, ReviewReason> = new Map<string, ReviewReason>([
+export const GATED_REASONS: ReadonlyMap<string, ReviewReason> = new Map<
+  string,
+  ReviewReason
+>([
   ["conflicting-alternatives", "CONFLICTING_ALTERNATIVES"],
   ["conflicting-fields", "CONFLICTING_FIELDS"],
   ["ambiguous-kind", "UNRECOGNIZED"],
@@ -88,21 +95,31 @@ export type Gate<Kind extends string> =
   | { action: "DISMISS" }
   | { action: "PROCEED"; kind: Kind; occurredAt: string };
 
-export function gateSignal<Kind extends string>(signal: GateInput<Kind>, facts: GateFacts): Gate<Kind> {
+export function gateSignal<Kind extends string>(
+  signal: GateInput<Kind>,
+  facts: GateFacts,
+): Gate<Kind> {
   for (const [code, reason] of GATED_REASONS)
     if (signal.reasons.includes(code)) return { action: "REVIEW", reason };
   if (!signal.kind) {
     // A synced message is dismissed only when nothing suggests it is hiring mail. Anything
     // unrecognised from a hiring platform goes to a person instead of disappearing. A file the
     // user forwarded on purpose is never silently dropped.
-    const worthReview = facts.recruitingSender && !JOB_ALERT.test(facts.subject);
-    return facts.synced && !worthReview ? { action: "DISMISS" } : { action: "REVIEW", reason: "UNRECOGNIZED" };
+    const worthReview =
+      facts.recruitingSender && !JOB_ALERT.test(facts.subject);
+    return facts.synced && !worthReview
+      ? { action: "DISMISS" }
+      : { action: "REVIEW", reason: "UNRECOGNIZED" };
   }
   if (!signal.occurredAt) return { action: "REVIEW", reason: "NO_DATE" };
   const decisions = Object.values(signal.fields.fieldDecisions ?? {});
   if (decisions.some((decision) => decision.state === "AMBIGUOUS"))
     return { action: "REVIEW", reason: "CONFLICTING_FIELDS" };
-  return { action: "PROCEED", kind: signal.kind, occurredAt: signal.occurredAt };
+  return {
+    action: "PROCEED",
+    kind: signal.kind,
+    occurredAt: signal.occurredAt,
+  };
 }
 
 // 3. Calendar invitations --------------------------------------------------------------------
@@ -122,11 +139,20 @@ export const calendarIdentityHolds = (
   !!accepted?.organizerDomain &&
   incoming.organizerDomain === accepted.organizerDomain;
 
-const CALENDAR_IDENTITY = ["uidKey", "sequence", "method", "status", "scheduledFor", "organizerDomain"] as const;
+const CALENDAR_IDENTITY = [
+  "uidKey",
+  "sequence",
+  "method",
+  "status",
+  "scheduledFor",
+  "organizerDomain",
+] as const;
 
 /** Two observations of one invitation revision: every safe calendar fact agrees. */
-export const sameCalendarRevision = (a: CalendarFacts, b: CalendarFacts): boolean =>
-  CALENDAR_IDENTITY.every((key) => a[key] === b[key]);
+export const sameCalendarRevision = (
+  a: CalendarFacts,
+  b: CalendarFacts,
+): boolean => CALENDAR_IDENTITY.every((key) => a[key] === b[key]);
 
 export interface AcceptedRevision {
   attemptId: string;
@@ -160,19 +186,23 @@ export function judgeCalendarRevision(
     (accepted.senderDomain && accepted.senderDomain !== senderDomain)
   )
     return "OTHER_SENDER";
-  if (accepted.attemptId !== attemptId || incoming.sequence < accepted.calendar.sequence) return "OUT_OF_ORDER";
+  if (
+    accepted.attemptId !== attemptId ||
+    incoming.sequence < accepted.calendar.sequence
+  )
+    return "OUT_OF_ORDER";
   if (incoming.sequence === accepted.calendar.sequence)
-    return sameCalendarRevision(incoming, accepted.calendar) ? "REPEAT" : "CHANGED_WITHOUT_SEQUENCE";
+    return sameCalendarRevision(incoming, accepted.calendar)
+      ? "REPEAT"
+      : "CHANGED_WITHOUT_SEQUENCE";
   return "NEW";
 }
 
 // 4. Authority to apply ----------------------------------------------------------------------
 
 /** Rejections and offers: the events a person would most regret seeing applied wrongly. */
-export const TERMINAL_KINDS: ReadonlySet<ApplicationEventKind> = new Set<ApplicationEventKind>([
-  "REJECTION_RECEIVED",
-  "OFFER_RECEIVED",
-]);
+export const TERMINAL_KINDS: ReadonlySet<ApplicationEventKind> =
+  new Set<ApplicationEventKind>(["REJECTION_RECEIVED", "OFFER_RECEIVED"]);
 
 /** How an update was tied to one application attempt. */
 export type MatchBasis =
@@ -202,7 +232,8 @@ export interface AuthorityFacts {
 }
 
 /** Whether the event's kind requires AuthorityFacts at all; others apply once matched. */
-export const needsAuthority = (kind: ApplicationEventKind): boolean => TERMINAL_KINDS.has(kind);
+export const needsAuthority = (kind: ApplicationEventKind): boolean =>
+  TERMINAL_KINDS.has(kind);
 
 /**
  * Rejections and offers apply without a person only when three things hold:
@@ -213,11 +244,19 @@ export const needsAuthority = (kind: ApplicationEventKind): boolean => TERMINAL_
  * - the extractor is confident.
  * An invitation's UID alone never authorizes one.
  */
-export function mayApplyAutomatically(kind: ApplicationEventKind, facts: AuthorityFacts): boolean {
+export function mayApplyAutomatically(
+  kind: ApplicationEventKind,
+  facts: AuthorityFacts,
+): boolean {
   if (!needsAuthority(kind)) return true;
   const strongAttempt =
     facts.basis === "APPLICATION_ID" ||
     (facts.basis === "SUBMITTED_EMAIL" && facts.strongOpening) ||
-    ((facts.basis === "SOLE_ATTEMPT" || facts.basis === "CONVERSATION") && facts.confirmedInSameMailbox);
-  return strongAttempt && (facts.trustedSender || facts.verifiedEmployer) && facts.confidence === "HIGH";
+    ((facts.basis === "SOLE_ATTEMPT" || facts.basis === "CONVERSATION") &&
+      facts.confirmedInSameMailbox);
+  return (
+    strongAttempt &&
+    (facts.trustedSender || facts.verifiedEmployer) &&
+    facts.confidence === "HIGH"
+  );
 }

@@ -269,7 +269,14 @@ export async function resolveReviewAssign(
     const { openingId } = await ownedAttempt(tx, userId, attemptId);
     const { kind, occurredAt } = resolveKindAndTime(ctx, overrides);
     if (kind === "CONFIRMATION_RECEIVED")
-      await acceptSubmissionEvidence(tx,userId,attemptId,ctx.evidenceKey,occurredAt,ctx.fields);
+      await acceptSubmissionEvidence(
+        tx,
+        userId,
+        attemptId,
+        ctx.evidenceKey,
+        occurredAt,
+        ctx.fields,
+      );
     await recordEvent(
       tx,
       {
@@ -281,12 +288,18 @@ export async function resolveReviewAssign(
         origin: "MANUAL",
         dedupeKey: `${attemptId}:${kind}:${ctx.evidenceKey}`,
         signalId: ctx.signalId,
-        ...(kind === "INTERVIEW_SCHEDULED" && ctx.fields.calendar ? {calendar:ctx.fields.calendar,senderDomain:ctx.senderDomain ?? ""}:{}),
+        ...(kind === "INTERVIEW_SCHEDULED" && ctx.fields.calendar
+          ? {
+              calendar: ctx.fields.calendar,
+              senderDomain: ctx.senderDomain ?? "",
+            }
+          : {}),
       },
       ctx.artifactId,
     );
     await closeReview(tx, userId, reviewId, ctx, "RESOLVED", "ASSIGNED");
-    if (kind === "CONFIRMATION_RECEIVED") await reconcileWaitingUpdates(tx,userId,new Date(),openingId);
+    if (kind === "CONFIRMATION_RECEIVED")
+      await reconcileWaitingUpdates(tx, userId, new Date(), openingId);
   });
 }
 
@@ -356,7 +369,12 @@ export async function resolveReviewCreate(
         origin: "MANUAL",
         dedupeKey: `${attemptId}:${kind}:${ctx.evidenceKey}`,
         signalId: ctx.signalId,
-        ...(kind === "INTERVIEW_SCHEDULED" && ctx.fields.calendar ? {calendar:ctx.fields.calendar,senderDomain:ctx.senderDomain ?? ""}:{}),
+        ...(kind === "INTERVIEW_SCHEDULED" && ctx.fields.calendar
+          ? {
+              calendar: ctx.fields.calendar,
+              senderDomain: ctx.senderDomain ?? "",
+            }
+          : {}),
       },
       ctx.artifactId,
     );

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {randomUUID} from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { ingestOriginal } from "../src/server/pipeline.ts";
 import { OAuthError } from "../src/server/security/oauth.ts";
@@ -111,29 +111,69 @@ const lastRun = async (id: string) =>
     )
   ).rows[0]!;
 
-it("reclaimed leases close orphaned runs while retaining checkpointed counters",async()=>{
-  const user=await seedUser(db),mailbox=await seedMailbox(db,user),orphan=randomUUID();
-  await db.query("INSERT INTO sync_runs(id,mailbox_id,kind,started_at,headers_inspected)VALUES($1,$2,'BACKFILL','2026-10-01T00:00:00Z',5)",[orphan,mailbox]);
-  const fake=new FakeGmail();
-  await syncMailbox({db,clientFor:async()=>fake,now:()=>new Date('2026-10-20T00:00:00Z')},mailbox,{userId:user});
-  const run=(await db.query<{state:string;safe_error_code:string;headers_inspected:number;finished_at:unknown}>("SELECT state,safe_error_code,headers_inspected,finished_at FROM sync_runs WHERE id=$1",[orphan])).rows[0]!;
-  assert.equal(run.state,"FAILED");assert.equal(run.safe_error_code,"WORKER_LEASE_EXPIRED");assert.equal(run.headers_inspected,5);assert.ok(run.finished_at);
+it("reclaimed leases close orphaned runs while retaining checkpointed counters", async () => {
+  const user = await seedUser(db),
+    mailbox = await seedMailbox(db, user),
+    orphan = randomUUID();
+  await db.query(
+    "INSERT INTO sync_runs(id,mailbox_id,kind,started_at,headers_inspected)VALUES($1,$2,'BACKFILL','2026-10-01T00:00:00Z',5)",
+    [orphan, mailbox],
+  );
+  const fake = new FakeGmail();
+  await syncMailbox(
+    {
+      db,
+      clientFor: async () => fake,
+      now: () => new Date("2026-10-20T00:00:00Z"),
+    },
+    mailbox,
+    { userId: user },
+  );
+  const run = (
+    await db.query<{
+      state: string;
+      safe_error_code: string;
+      headers_inspected: number;
+      finished_at: unknown;
+    }>(
+      "SELECT state,safe_error_code,headers_inspected,finished_at FROM sync_runs WHERE id=$1",
+      [orphan],
+    )
+  ).rows[0]!;
+  assert.equal(run.state, "FAILED");
+  assert.equal(run.safe_error_code, "WORKER_LEASE_EXPIRED");
+  assert.equal(run.headers_inspected, 5);
+  assert.ok(run.finished_at);
 });
 
 it("workers leave unstarted batch tasks durable when the run budget expires", async () => {
-  const user = await seedUser(db), mailbox = await seedMailbox(db, user), fake = new FakeGmail();
+  const user = await seedUser(db),
+    mailbox = await seedMailbox(db, user),
+    fake = new FakeGmail();
   for (let i = 0; i < 4; i++) fake.add(`budget-${i}`, greenhouseConfirmation());
   let time = new Date("2026-10-20T00:00:00Z");
   const raw = fake.getRaw.bind(fake);
-  fake.getRaw = async id => {
+  fake.getRaw = async (id) => {
     time = new Date(time.getTime() + 1000);
     return raw(id);
   };
-  const result = await syncMailbox({ db, clientFor: async () => fake,
-    now: () => time, budgetMs: 500, concurrency: 1 }, mailbox, { userId: user });
+  const result = await syncMailbox(
+    {
+      db,
+      clientFor: async () => fake,
+      now: () => time,
+      budgetMs: 500,
+      concurrency: 1,
+    },
+    mailbox,
+    { userId: user },
+  );
   assert.equal(result.status, "PARTIAL");
   assert.equal(fake.calls.raw.length, 1);
-  const pending = await db.query<{ n: string }>("SELECT count(*) AS n FROM processing_tasks WHERE mailbox_id=$1 AND state='PENDING'", [mailbox]);
+  const pending = await db.query<{ n: string }>(
+    "SELECT count(*) AS n FROM processing_tasks WHERE mailbox_id=$1 AND state='PENDING'",
+    [mailbox],
+  );
   assert.equal(Number(pending.rows[0]!.n), 3);
 });
 

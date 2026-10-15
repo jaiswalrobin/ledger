@@ -19,17 +19,36 @@ import {
   type ReviewReason,
 } from "../domain/policy.ts";
 import type { CalendarFacts } from "../domain/types.ts";
-import { atsKeyId, companyKey, normalizedText } from "../domain/normalization.ts";
+import {
+  atsKeyId,
+  companyKey,
+  normalizedText,
+} from "../domain/normalization.ts";
 import { redactSubject } from "../ingestion/eml.ts";
-import { EXTRACTOR_VERSION, extractSignal, isHiringSignal } from "../ingestion/extract.ts";
+import {
+  EXTRACTOR_VERSION,
+  extractSignal,
+  isHiringSignal,
+} from "../ingestion/extract.ts";
 import { classifyHeaders } from "../ingestion/header-gate.ts";
 import { messageSensitivity } from "../ingestion/privacy.ts";
 import { usableEventDate } from "../ingestion/dates.ts";
-import { isRecruitingSenderDomain, isTrustedAtsDomain } from "../ingestion/ats.ts";
-import type { ExtractedSignal, ParsedOriginal, SignalKind } from "../ingestion/source.ts";
+import {
+  isRecruitingSenderDomain,
+  isTrustedAtsDomain,
+} from "../ingestion/ats.ts";
+import type {
+  ExtractedSignal,
+  ParsedOriginal,
+  SignalKind,
+} from "../ingestion/source.ts";
 import { employerDomain } from "../ingestion/fields.ts";
 import type { Db } from "./db.ts";
-import { conversationAttempts, employerOpenings, messageIdKey } from "./conversation.ts";
+import {
+  conversationAttempts,
+  employerOpenings,
+  messageIdKey,
+} from "./conversation.ts";
 import {
   acceptSubmissionEvidence,
   attemptConfirmedInMailbox,
@@ -115,7 +134,13 @@ export function originalKeyOf(original: ParsedOriginal): string | null {
       normalized(m.subject),
       normalized(m.text),
       [...new Set((m.alternativeTexts ?? []).map(normalized))].sort(),
-      ...(m.calendarParts?.length ? [m.calendarParts.map(part => [part.method, normalized(part.content)]).sort()] : []),
+      ...(m.calendarParts?.length
+        ? [
+            m.calendarParts
+              .map((part) => [part.method, normalized(part.content)])
+              .sort(),
+          ]
+        : []),
     ]),
   );
 }
@@ -154,7 +179,13 @@ export async function ingestOriginal(
 
 async function run(
   tx: Db,
-  { userId, source, original, observedAt = new Date(), reprocessUnapplied = false }: IngestInput,
+  {
+    userId,
+    source,
+    original,
+    observedAt = new Date(),
+    reprocessUnapplied = false,
+  }: IngestInput,
 ): Promise<IngestOutcome> {
   // Serialise ingestion per user so concurrent runs cannot create the same opening twice.
   const owner = await tx.query(
@@ -172,11 +203,19 @@ async function run(
 
   const seen =
     source.kind === "GMAIL"
-      ? await tx.query<{ id: string; source_fingerprint: string; body_access_decision: string }>(
+      ? await tx.query<{
+          id: string;
+          source_fingerprint: string;
+          body_access_decision: string;
+        }>(
           "SELECT id, source_fingerprint, body_access_decision FROM source_artifacts WHERE user_id=$3 AND mailbox_id = $1 AND provider_message_id = $2 AND source_kind = 'GMAIL'",
           [source.mailboxId, source.providerMessageId, userId],
         )
-      : await tx.query<{ id: string; source_fingerprint: string; body_access_decision: string }>(
+      : await tx.query<{
+          id: string;
+          source_fingerprint: string;
+          body_access_decision: string;
+        }>(
           "SELECT id, source_fingerprint, body_access_decision FROM source_artifacts WHERE user_id = $1 AND source_fingerprint = $2 AND source_kind = 'FORWARDED_EML'",
           [userId, original.fingerprint],
         );
@@ -193,15 +232,25 @@ async function run(
     if (protectedResult.rows.length) return { status: "DUPLICATE" };
     // A crash after ingest commits but before the task finishes must retain the
     // original exclusion, rather than turning that exclusion into "processed".
-    if (!reprocessUnapplied) return {
-      status: existing.body_access_decision === "SKIPPED_SENSITIVE" ? "SKIPPED_SENSITIVE" : "NO_SIGNAL",
-    };
-    if (existing.source_fingerprint !== original.fingerprint) throw new Error("SOURCE_CHANGED");
+    if (!reprocessUnapplied)
+      return {
+        status:
+          existing.body_access_decision === "SKIPPED_SENSITIVE"
+            ? "SKIPPED_SENSITIVE"
+            : "NO_SIGNAL",
+      };
+    if (existing.source_fingerprint !== original.fingerprint)
+      throw new Error("SOURCE_CHANGED");
   }
 
   const m = original.message;
-  const replyMessageKeys=(m.replyMessageIds??[]).map(messageIdKey).filter((key):key is string=>key!==null);
-  const providerThreadId=source.kind==="GMAIL"&&!m.threadContextUncertain?source.providerThreadId??null:null;
+  const replyMessageKeys = (m.replyMessageIds ?? [])
+    .map(messageIdKey)
+    .filter((key): key is string => key !== null);
+  const providerThreadId =
+    source.kind === "GMAIL" && !m.threadContextUncertain
+      ? (source.providerThreadId ?? null)
+      : null;
   const usableDate = usableEventDate(m.date, observedAt);
   const artifactId = existing?.id ?? randomUUID();
   const originalKey = originalKeyOf(original);
@@ -215,41 +264,55 @@ async function run(
     subject: string | null,
     key: string | null,
     extractorVersion: string | null,
-  ) => existing
-    ? tx.query(
-        `UPDATE source_artifacts SET body_access_decision=$3, subject_redacted=$4, original_key=$5,
+  ) =>
+    existing
+      ? tx.query(
+          `UPDATE source_artifacts SET body_access_decision=$3, subject_redacted=$4, original_key=$5,
           extractor_version=$6, original_message_at=$7, sender_authenticated=$8,sender_domain=$9,sender_verified=$10,
           provider_thread_id=$11,message_id_key=$12,reply_message_keys=$13 WHERE id=$1 AND user_id=$2`,
-        [artifactId, userId, decision, subject, key, extractorVersion, usableDate, trustedSender, decision === "SKIPPED_SENSITIVE" ? null : fromDomain.toLowerCase(), source.kind === "GMAIL" && source.senderAuthenticated === true,
-         decision==="SKIPPED_SENSITIVE"?null:providerThreadId,decision==="SKIPPED_SENSITIVE"?null:messageIdKey(m.messageId),decision==="SKIPPED_SENSITIVE"?[]:replyMessageKeys],
-      )
-    : tx.query(
-      `INSERT INTO source_artifacts (id, user_id, source_kind, mailbox_id, provider_message_id, original_rfc_message_id,
+          [
+            artifactId,
+            userId,
+            decision,
+            subject,
+            key,
+            extractorVersion,
+            usableDate,
+            trustedSender,
+            decision === "SKIPPED_SENSITIVE" ? null : fromDomain.toLowerCase(),
+            source.kind === "GMAIL" && source.senderAuthenticated === true,
+            decision === "SKIPPED_SENSITIVE" ? null : providerThreadId,
+            decision === "SKIPPED_SENSITIVE" ? null : messageIdKey(m.messageId),
+            decision === "SKIPPED_SENSITIVE" ? [] : replyMessageKeys,
+          ],
+        )
+      : tx.query(
+          `INSERT INTO source_artifacts (id, user_id, source_kind, mailbox_id, provider_message_id, original_rfc_message_id,
          source_fingerprint, original_message_at, envelope_message_at, body_access_decision, extractor_version, original_key, subject_redacted,sender_authenticated,sender_domain,sender_verified,
          provider_thread_id,message_id_key,reply_message_keys)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
-      [
-        artifactId,
-        userId,
-        source.kind,
-        source.kind === "GMAIL" ? source.mailboxId : null,
-        source.kind === "GMAIL" ? source.providerMessageId : null,
-        null,
-        original.fingerprint,
-        usableDate,
-        original.envelopeDate,
-        decision,
-        extractorVersion,
-        key,
-        subject,
-        trustedSender,
-        decision === "SKIPPED_SENSITIVE" ? null : fromDomain.toLowerCase(),
-        source.kind === "GMAIL" && source.senderAuthenticated === true,
-        decision==="SKIPPED_SENSITIVE"?null:providerThreadId,
-        decision==="SKIPPED_SENSITIVE"?null:messageIdKey(m.messageId),
-        decision==="SKIPPED_SENSITIVE"?[]:replyMessageKeys,
-      ],
-    );
+          [
+            artifactId,
+            userId,
+            source.kind,
+            source.kind === "GMAIL" ? source.mailboxId : null,
+            source.kind === "GMAIL" ? source.providerMessageId : null,
+            null,
+            original.fingerprint,
+            usableDate,
+            original.envelopeDate,
+            decision,
+            extractorVersion,
+            key,
+            subject,
+            trustedSender,
+            decision === "SKIPPED_SENSITIVE" ? null : fromDomain.toLowerCase(),
+            source.kind === "GMAIL" && source.senderAuthenticated === true,
+            decision === "SKIPPED_SENSITIVE" ? null : providerThreadId,
+            decision === "SKIPPED_SENSITIVE" ? null : messageIdKey(m.messageId),
+            decision === "SKIPPED_SENSITIVE" ? [] : replyMessageKeys,
+          ],
+        );
   const decision =
     source.kind === "GMAIL" ? "FETCHED_CANDIDATE" : "MANUAL_IMPORT";
 
@@ -268,7 +331,11 @@ async function run(
   ) {
     // Nothing derived from a credential-like message is kept, including its subject.
     await insertArtifact("SKIPPED_SENSITIVE", null, null, null);
-    if (existing) await tx.query("DELETE FROM extracted_signals WHERE user_id=$1 AND source_artifact_id=$2", [userId, artifactId]);
+    if (existing)
+      await tx.query(
+        "DELETE FROM extracted_signals WHERE user_id=$1 AND source_artifact_id=$2",
+        [userId, artifactId],
+      );
     return { status: "SKIPPED_SENSITIVE" };
   }
 
@@ -318,8 +385,10 @@ async function run(
     trustedSender,
     mailboxId: source.kind === "GMAIL" ? source.mailboxId : null,
     senderDomain: fromDomain.toLowerCase(),
-    senderVerified: source.kind === "FORWARDED_EML" || source.senderAuthenticated === true,
-    replyMessageKeys,providerThreadId,
+    senderVerified:
+      source.kind === "FORWARDED_EML" || source.senderAuthenticated === true,
+    replyMessageKeys,
+    providerThreadId,
   };
 
   const gate = gateSignal(signal, {
@@ -328,12 +397,18 @@ async function run(
     subject: m.subject,
   });
   if (gate.action === "DISMISS") {
-    await tx.query("UPDATE extracted_signals SET processing_state = 'DISMISSED' WHERE id = $1", [signalId]);
+    await tx.query(
+      "UPDATE extracted_signals SET processing_state = 'DISMISSED' WHERE id = $1",
+      [signalId],
+    );
     return { status: "NO_SIGNAL" };
   }
   if (gate.action === "REVIEW") return review(base, gate.reason, [], []);
 
-  const outcome = await apply({ ...base, kind: gate.kind, occurredAt: gate.occurredAt }, true);
+  const outcome = await apply(
+    { ...base, kind: gate.kind, occurredAt: gate.occurredAt },
+    true,
+  );
   if (outcome.status === "APPLIED") {
     await tx.query(
       "UPDATE extracted_signals SET processing_state = 'APPLIED' WHERE id = $1",
@@ -342,7 +417,12 @@ async function run(
     if (outcome.kind === "CONFIRMATION_RECEIVED")
       return {
         ...outcome,
-        reconciled: await reconcileWaitingUpdates(tx, userId, observedAt, outcome.openingId),
+        reconciled: await reconcileWaitingUpdates(
+          tx,
+          userId,
+          observedAt,
+          outcome.openingId,
+        ),
       };
   }
   return outcome;
@@ -444,13 +524,22 @@ const UPDATE_BASIS: Readonly<Record<string, MatchBasis>> = {
  * `createReviews` is false while re-evaluating an existing review item: it must stay open
  * (unchanged) rather than spawn a second item for the same signal.
  */
-async function apply(c: GatedContext, createReviews: boolean): Promise<IngestOutcome> {
+async function apply(
+  c: GatedContext,
+  createReviews: boolean,
+): Promise<IngestOutcome> {
   const fail = (step: Stop): Promise<IngestOutcome> =>
     createReviews
       ? review(c, step.reason, step.attemptIds, step.openingIds)
-      : Promise.resolve({ status: "REVIEW", reviewId: "", reason: step.reason });
+      : Promise.resolve({
+          status: "REVIEW",
+          reviewId: "",
+          reason: step.reason,
+        });
   const calendar = c.signal.fields.calendar;
-  const accepted = calendar ? await latestCalendarRevision(c.tx, c.userId, c.signalId, calendar.uidKey) : null;
+  const accepted = calendar
+    ? await latestCalendarRevision(c.tx, c.userId, c.signalId, calendar.uidKey)
+    : null;
 
   const located = await locateOpening(c, accepted);
   if (!located.ok) return fail(located);
@@ -462,16 +551,30 @@ async function apply(c: GatedContext, createReviews: boolean): Promise<IngestOut
 }
 
 /** Finds the opening: from the email's own identifiers first, then by company and title. */
-async function locateOpening(c: GatedContext, accepted: AcceptedCalendar): Promise<Step<Located>> {
+async function locateOpening(
+  c: GatedContext,
+  accepted: AcceptedCalendar,
+): Promise<Step<Located>> {
   // Confirmations always resolve (or create) their opening by its description.
   if (c.kind !== "CONFIRMATION_RECEIVED") {
     const direct = await locateAttempt(c, accepted);
     if (!direct.ok) return direct;
     if (direct.value)
-      return next({ openingId: direct.value.openingId, strongOpening: true, createdOpening: false, direct: direct.value });
+      return next({
+        openingId: direct.value.openingId,
+        strongOpening: true,
+        createdOpening: false,
+        direct: direct.value,
+      });
     const context = await employerContextOpening(c);
     if (!context.ok) return context;
-    if (context.value) return next({ openingId: context.value, strongOpening: false, createdOpening: false, direct: null });
+    if (context.value)
+      return next({
+        openingId: context.value,
+        strongOpening: false,
+        createdOpening: false,
+        direct: null,
+      });
   }
   return describedOpening(c);
 }
@@ -480,9 +583,13 @@ async function locateOpening(c: GatedContext, accepted: AcceptedCalendar): Promi
  * An update that names its attempt. An application ID is the strongest link and, when present,
  * the only one tried: conflicting identities never fall back to a UID or a thread.
  */
-async function locateAttempt(c: GatedContext, accepted: AcceptedCalendar): Promise<Step<DirectMatch | null>> {
+async function locateAttempt(
+  c: GatedContext,
+  accepted: AcceptedCalendar,
+): Promise<Step<DirectMatch | null>> {
   const f = c.signal.fields;
-  if (f.externalApplicationId) return byApplicationId(c, f.externalApplicationId);
+  if (f.externalApplicationId)
+    return byApplicationId(c, f.externalApplicationId);
   if (f.calendar) {
     const linked = await byCalendarUid(c, f.calendar, accepted);
     if (!linked.ok || linked.value) return linked;
@@ -498,29 +605,57 @@ async function byCalendarUid(
 ): Promise<Step<DirectMatch | null>> {
   const { tx, userId } = c;
   const f = c.signal.fields;
-  const known = await attemptsForCalendarUid(tx, userId, c.signalId, calendar.uidKey);
-  const candidates = () => [known.map((k) => k.attemptId), known.map((k) => k.openingId)] as const;
+  const known = await attemptsForCalendarUid(
+    tx,
+    userId,
+    c.signalId,
+    calendar.uidKey,
+  );
+  const candidates = () =>
+    [known.map((k) => k.attemptId), known.map((k) => k.openingId)] as const;
   if (known.length > 1) return stop("CALENDAR_REVISION", ...candidates());
   if (!known[0]) return next(null);
-  if (!calendarIdentityHolds(calendar, accepted?.calendar ?? null, c.senderVerified))
+  if (
+    !calendarIdentityHolds(
+      calendar,
+      accepted?.calendar ?? null,
+      c.senderVerified,
+    )
+  )
     return stop("CALENDAR_REVISION", ...candidates());
   const { attemptId, openingId } = known[0];
   const opening = (await loadOpenings(tx, userId, { id: openingId }))[0]!;
   // A revision may omit the company or title, but must not name a different one.
-  const differentCompany = f.company && companyKey(f.company) !== companyKey(opening.company);
-  const differentTitle = f.title && normalizedText(f.title) !== normalizedText(opening.title);
-  const differentAts = f.atsKey && (!opening.atsKey || atsKeyId(f.atsKey) !== atsKeyId(opening.atsKey));
-  if (differentCompany || differentTitle || differentAts) return stop("CALENDAR_REVISION", [attemptId], [opening.id]);
+  const differentCompany =
+    f.company && companyKey(f.company) !== companyKey(opening.company);
+  const differentTitle =
+    f.title && normalizedText(f.title) !== normalizedText(opening.title);
+  const differentAts =
+    f.atsKey &&
+    (!opening.atsKey || atsKeyId(f.atsKey) !== atsKeyId(opening.atsKey));
+  if (differentCompany || differentTitle || differentAts)
+    return stop("CALENDAR_REVISION", [attemptId], [opening.id]);
   return next({ openingId: opening.id, attemptId, basis: "CALENDAR_IDENTITY" });
 }
 
 /** IDs are scoped to employers and openings: a bare reused ID cannot cross that boundary. */
-async function byApplicationId(c: GatedContext, externalApplicationId: string): Promise<Step<DirectMatch | null>> {
+async function byApplicationId(
+  c: GatedContext,
+  externalApplicationId: string,
+): Promise<Step<DirectMatch | null>> {
   const { tx, userId } = c;
   const f = c.signal.fields;
-  const hits = await findAttemptsByExternalId(tx, userId, externalApplicationId);
+  const hits = await findAttemptsByExternalId(
+    tx,
+    userId,
+    externalApplicationId,
+  );
   if (hits.length > 1)
-    return stop("AMBIGUOUS_APPLICATION_ID", hits.map((h) => h.id), [...new Set(hits.map((h) => h.openingId))]);
+    return stop(
+      "AMBIGUOUS_APPLICATION_ID",
+      hits.map((h) => h.id),
+      [...new Set(hits.map((h) => h.openingId))],
+    );
   const hit = hits[0];
   if (!hit) return next(null);
   const known = (await loadOpenings(tx, userId, { id: hit.openingId }))[0];
@@ -528,20 +663,35 @@ async function byApplicationId(c: GatedContext, externalApplicationId: string): 
   const matching =
     f.company &&
     f.title &&
-    weakOpeningCandidates({ company: f.company, title: f.title, location: f.location }, [known]).length === 1;
-  const stable = f.atsKey && known.atsKey && atsKeyId(f.atsKey) === atsKeyId(known.atsKey);
+    weakOpeningCandidates(
+      { company: f.company, title: f.title, location: f.location },
+      [known],
+    ).length === 1;
+  const stable =
+    f.atsKey && known.atsKey && atsKeyId(f.atsKey) === atsKeyId(known.atsKey);
   if (!stable && !(matching && !f.atsKey)) return next(null);
   if (
     (f.company && companyKey(f.company) !== companyKey(known.company)) ||
     (f.title && normalizedText(f.title) !== normalizedText(known.title))
   )
     return stop("AMBIGUOUS_OPENING", [hit.id], [known.id]);
-  return next({ openingId: hit.openingId, attemptId: hit.id, basis: "APPLICATION_ID" });
+  return next({
+    openingId: hit.openingId,
+    attemptId: hit.id,
+    basis: "APPLICATION_ID",
+  });
 }
 
 /** A reply to, or a message in the same thread as, accepted mail from the same sender domain. */
-async function byConversation(c: GatedContext): Promise<Step<DirectMatch | null>> {
-  if (!c.mailboxId || !c.senderVerified || (!c.replyMessageKeys.length && !c.providerThreadId)) return next(null);
+async function byConversation(
+  c: GatedContext,
+): Promise<Step<DirectMatch | null>> {
+  if (
+    !c.mailboxId ||
+    !c.senderVerified ||
+    (!c.replyMessageKeys.length && !c.providerThreadId)
+  )
+    return next(null);
   const linked = await conversationAttempts(
     c.tx,
     c.userId,
@@ -553,28 +703,55 @@ async function byConversation(c: GatedContext): Promise<Step<DirectMatch | null>
   );
   const attemptIds = linked.map((row) => row.attemptId);
   const openingIds = linked.map((row) => row.openingId);
-  if (linked.some((row) => row.conflicting)) return stop("AMBIGUOUS_OPENING", attemptIds, openingIds);
-  if (linked.length > 1) return stop("AMBIGUOUS_ATTEMPT", attemptIds, openingIds);
+  if (linked.some((row) => row.conflicting))
+    return stop("AMBIGUOUS_OPENING", attemptIds, openingIds);
+  if (linked.length > 1)
+    return stop("AMBIGUOUS_ATTEMPT", attemptIds, openingIds);
   const only = linked[0];
   if (!only) return next(null);
   // The thread only counts when it is with the employer itself or an authenticated hiring platform.
-  if (!isTrustedAtsDomain(c.senderDomain) && !employerDomain(c.senderDomain, only.company))
+  if (
+    !isTrustedAtsDomain(c.senderDomain) &&
+    !employerDomain(c.senderDomain, only.company)
+  )
     return stop("MISSING_JOB_DETAILS", [only.attemptId], [only.openingId]);
-  return next({ openingId: only.openingId, attemptId: only.attemptId, basis: "CONVERSATION" });
+  return next({
+    openingId: only.openingId,
+    attemptId: only.attemptId,
+    basis: "CONVERSATION",
+  });
 }
 
 /** An update missing its company or title, from a verified employer domain with one known opening. */
-async function employerContextOpening(c: GatedContext): Promise<Step<string | null>> {
+async function employerContextOpening(
+  c: GatedContext,
+): Promise<Step<string | null>> {
   const f = c.signal.fields;
-  if ((f.company && f.title) || !c.mailboxId || !c.senderVerified || f.externalApplicationId) return next(null);
+  if (
+    (f.company && f.title) ||
+    !c.mailboxId ||
+    !c.senderVerified ||
+    f.externalApplicationId
+  )
+    return next(null);
   const context = await employerOpenings(c.tx, c.userId, c.senderDomain);
-  if (context.overflow) return stop("AMBIGUOUS_OPENING", [], context.openings.map((o) => o.id));
+  if (context.overflow)
+    return stop(
+      "AMBIGUOUS_OPENING",
+      [],
+      context.openings.map((o) => o.id),
+    );
   const known = context.openings.filter(
     (o) =>
       (!f.company || companyKey(f.company) === companyKey(o.company)) &&
       (!f.title || normalizedText(f.title) === normalizedText(o.title)),
   );
-  if (known.length > 1) return stop("AMBIGUOUS_OPENING", [], known.map((o) => o.id));
+  if (known.length > 1)
+    return stop(
+      "AMBIGUOUS_OPENING",
+      [],
+      known.map((o) => o.id),
+    );
   return next(known[0]?.id ?? null);
 }
 
@@ -592,19 +769,35 @@ async function describedOpening(c: GatedContext): Promise<Step<Located>> {
     atsKey: f.atsKey,
     canonicalUrl: f.canonicalUrl,
   };
-  const openings = await loadOpenings(c.tx, c.userId, { title: f.title, atsKey: f.atsKey, canonicalUrl: f.canonicalUrl });
+  const openings = await loadOpenings(c.tx, c.userId, {
+    title: f.title,
+    atsKey: f.atsKey,
+    canonicalUrl: f.canonicalUrl,
+  });
   const resolved = resolveOpening(description, openings);
-  const found = (openingId: string, strongOpening: boolean, createdOpening = false) =>
-    next({ openingId, strongOpening, createdOpening, direct: null });
+  const found = (
+    openingId: string,
+    strongOpening: boolean,
+    createdOpening = false,
+  ) => next({ openingId, strongOpening, createdOpening, direct: null });
   if (resolved.kind === "MATCH") return found(resolved.id, true);
   if (c.kind === "CONFIRMATION_RECEIVED") {
-    if (resolved.kind === "REVIEW") return stop("AMBIGUOUS_OPENING", [], resolved.candidateIds);
+    if (resolved.kind === "REVIEW")
+      return stop("AMBIGUOUS_OPENING", [], resolved.candidateIds);
     return found(await insertOpening(c.tx, c.userId, description), false, true);
   }
   if (f.atsKey) return stop("NO_KNOWN_SUBMISSION");
-  const candidates = weakOpeningCandidates({ company: f.company, title: f.title, location: f.location }, openings);
+  const candidates = weakOpeningCandidates(
+    { company: f.company, title: f.title, location: f.location },
+    openings,
+  );
   if (candidates.length === 0) return stop("NO_KNOWN_SUBMISSION");
-  if (candidates.length > 1) return stop("AMBIGUOUS_OPENING", [], candidates.map((o) => o.id));
+  if (candidates.length > 1)
+    return stop(
+      "AMBIGUOUS_OPENING",
+      [],
+      candidates.map((o) => o.id),
+    );
   return found(candidates[0]!.id, false);
 }
 
@@ -619,7 +812,9 @@ function eventFor(c: GatedContext, attemptId: string) {
     origin: "AUTO" as const,
     dedupeKey: `${attemptId}:${c.kind}:${c.evidenceKey}`,
     signalId: c.signalId,
-    ...(c.kind === "INTERVIEW_SCHEDULED" && f.calendar ? { calendar: f.calendar, senderDomain: c.senderDomain } : {}),
+    ...(c.kind === "INTERVIEW_SCHEDULED" && f.calendar
+      ? { calendar: f.calendar, senderDomain: c.senderDomain }
+      : {}),
   };
 }
 
@@ -639,7 +834,10 @@ const applied = (
 });
 
 /** A confirmation is submission proof: it matches its attempt, or creates one. */
-async function applyConfirmation(c: GatedContext, located: Located): Promise<Step<IngestOutcome>> {
+async function applyConfirmation(
+  c: GatedContext,
+  located: Located,
+): Promise<Step<IngestOutcome>> {
   const { tx, userId } = c;
   const f = c.signal.fields;
   const { openingId, createdOpening } = located;
@@ -656,7 +854,10 @@ async function applyConfirmation(c: GatedContext, located: Located): Promise<Ste
         },
         attempts,
       );
-  if (decision.kind === "REVIEW") return stop("POSSIBLE_RESENT_CONFIRMATION", decision.candidateIds, [openingId]);
+  if (decision.kind === "REVIEW")
+    return stop("POSSIBLE_RESENT_CONFIRMATION", decision.candidateIds, [
+      openingId,
+    ]);
   const createdAttempt = decision.kind === "CREATE";
   const attemptId =
     decision.kind === "MATCH"
@@ -667,7 +868,14 @@ async function applyConfirmation(c: GatedContext, located: Located): Promise<Ste
           submittedAt: c.occurredAt,
           evidenceKey: c.evidenceKey,
         });
-  await acceptSubmissionEvidence(tx, userId, attemptId, c.evidenceKey, c.occurredAt, f);
+  await acceptSubmissionEvidence(
+    tx,
+    userId,
+    attemptId,
+    c.evidenceKey,
+    c.occurredAt,
+    f,
+  );
   // A resent confirmation is more evidence for the first one, not a second event.
   const prior = createdAttempt
     ? null
@@ -680,7 +888,12 @@ async function applyConfirmation(c: GatedContext, located: Located): Promise<Ste
     await linkEvidence(tx, userId, prior.rows[0].id, c.artifactId, c.signalId);
     await reproject(tx, userId, attemptId);
   } else await recordEvent(tx, eventFor(c, attemptId), c.artifactId);
-  return next(applied(c, attemptId, openingId, { attempt: createdAttempt, opening: createdOpening }));
+  return next(
+    applied(c, attemptId, openingId, {
+      attempt: createdAttempt,
+      opening: createdOpening,
+    }),
+  );
 }
 
 /** Which attempt an update belongs to. A direct match must agree with any identity the email names. */
@@ -700,7 +913,11 @@ function matchAttempt(
     if (f.externalApplicationId || f.applicantEmail) {
       const identity = resolveUpdate(openingId, update, attempts);
       if (identity.kind !== "MATCH" || identity.id !== direct.attemptId)
-        return stop(f.calendar ? "CALENDAR_REVISION" : "AMBIGUOUS_ATTEMPT", attempts.map((a) => a.id), [openingId]);
+        return stop(
+          f.calendar ? "CALENDAR_REVISION" : "AMBIGUOUS_ATTEMPT",
+          attempts.map((a) => a.id),
+          [openingId],
+        );
     }
     return next({ attemptId: direct.attemptId, basis: direct.basis });
   }
@@ -711,7 +928,10 @@ function matchAttempt(
       decision.kind === "REVIEW" ? decision.candidateIds : [],
       [openingId],
     );
-  return next({ attemptId: decision.id, basis: UPDATE_BASIS[decision.reason] ?? null });
+  return next({
+    attemptId: decision.id,
+    basis: UPDATE_BASIS[decision.reason] ?? null,
+  });
 }
 
 async function authorityFacts(
@@ -719,39 +939,76 @@ async function authorityFacts(
   located: Located,
   match: { attemptId: string; basis: MatchBasis | null },
 ): Promise<AuthorityFacts> {
-  const opening = (await loadOpenings(c.tx, c.userId, { id: located.openingId }))[0]!;
+  const opening = (
+    await loadOpenings(c.tx, c.userId, { id: located.openingId })
+  )[0]!;
   return {
     basis: match.basis,
     strongOpening: located.strongOpening,
     confirmedInSameMailbox:
-      c.mailboxId !== null && (await attemptConfirmedInMailbox(c.tx, c.userId, match.attemptId, c.mailboxId)),
+      c.mailboxId !== null &&
+      (await attemptConfirmedInMailbox(
+        c.tx,
+        c.userId,
+        match.attemptId,
+        c.mailboxId,
+      )),
     trustedSender: c.trustedSender,
-    verifiedEmployer: !!c.mailboxId && c.senderVerified && !!employerDomain(c.senderDomain, opening.company),
+    verifiedEmployer:
+      !!c.mailboxId &&
+      c.senderVerified &&
+      !!employerDomain(c.senderDomain, opening.company),
     confidence: c.signal.confidence,
   };
 }
 
 /** A status update: match its attempt, check the policy, then record it. */
-async function applyUpdate(c: GatedContext, located: Located, accepted: AcceptedCalendar): Promise<Step<IngestOutcome>> {
+async function applyUpdate(
+  c: GatedContext,
+  located: Located,
+  accepted: AcceptedCalendar,
+): Promise<Step<IngestOutcome>> {
   const { tx, userId } = c;
   const { openingId } = located;
   const attempts = await loadAttempts(tx, userId, openingId);
   const matched = matchAttempt(c, located, attempts);
   if (!matched.ok) return matched;
   const { attemptId } = matched.value;
-  if (needsAuthority(c.kind) && !mayApplyAutomatically(c.kind, await authorityFacts(c, located, matched.value)))
+  if (
+    needsAuthority(c.kind) &&
+    !mayApplyAutomatically(
+      c.kind,
+      await authorityFacts(c, located, matched.value),
+    )
+  )
     return stop("TERMINAL_NEEDS_REVIEW", [attemptId], [openingId]);
 
   const calendar = c.signal.fields.calendar;
   if (calendar) {
-    const verdict = judgeCalendarRevision(calendar, accepted, attemptId, c.senderDomain);
+    const verdict = judgeCalendarRevision(
+      calendar,
+      accepted,
+      attemptId,
+      c.senderDomain,
+    );
     if (verdict === "REPEAT" && accepted) {
-      await linkEvidence(tx, userId, accepted.eventId, c.artifactId, c.signalId);
+      await linkEvidence(
+        tx,
+        userId,
+        accepted.eventId,
+        c.artifactId,
+        c.signalId,
+      );
       return next(applied(c, attemptId, openingId));
     }
     if (verdict === "OUT_OF_ORDER" && accepted)
-      return stop("CALENDAR_REVISION", [attemptId, accepted.attemptId], [openingId]);
-    if (verdict !== "NEW") return stop("CALENDAR_REVISION", [attemptId], [openingId]);
+      return stop(
+        "CALENDAR_REVISION",
+        [attemptId, accepted.attemptId],
+        [openingId],
+      );
+    if (verdict !== "NEW")
+      return stop("CALENDAR_REVISION", [attemptId], [openingId]);
   }
 
   const event = eventFor(c, attemptId);
@@ -773,17 +1030,29 @@ export async function reconcileWaitingUpdates(
   observedAt: Date,
   openingId: string,
 ): Promise<number> {
-  await tx.query(`INSERT INTO review_reconciliation_jobs(user_id,job_opening_id) VALUES($1,$2)
+  await tx.query(
+    `INSERT INTO review_reconciliation_jobs(user_id,job_opening_id) VALUES($1,$2)
     ON CONFLICT(user_id,job_opening_id) DO UPDATE SET requested_at=now(),through_created_at=now(),
-      last_created_at=NULL,last_review_id=NULL`, [userId, openingId]);
+      last_created_at=NULL,last_review_id=NULL`,
+    [userId, openingId],
+  );
   return reconcileReviewBatch(tx, userId, observedAt, openingId);
 }
 
 const RECONCILIATION_BATCH_SIZE = 25;
 
 /** Called while holding the owner's domain lock; the job cursor advances with domain writes. */
-async function reconcileReviewBatch(tx: Db, userId: string, observedAt: Date, openingId: string): Promise<number> {
-  const jobs = await tx.query<{ through_created_at: unknown; last_created_at: unknown; last_review_id: string | null }>(
+async function reconcileReviewBatch(
+  tx: Db,
+  userId: string,
+  observedAt: Date,
+  openingId: string,
+): Promise<number> {
+  const jobs = await tx.query<{
+    through_created_at: unknown;
+    last_created_at: unknown;
+    last_review_id: string | null;
+  }>(
     "SELECT through_created_at,last_created_at,last_review_id FROM review_reconciliation_jobs WHERE user_id=$1 AND job_opening_id=$2 FOR UPDATE",
     [userId, openingId],
   );
@@ -835,9 +1104,19 @@ async function reconcileReviewBatch(tx: Db, userId: string, observedAt: Date, op
                 OR (a.provider_thread_id IS NOT NULL AND prior.provider_thread_id=a.provider_thread_id)
                 OR (s.fields->>'title' IS NULL AND a.sender_verified))))
       ORDER BY r.created_at,r.id LIMIT $11`,
-    [userId, openingId, job.through_created_at, job.last_created_at, job.last_review_id,
-      normalizedText(opening.title), opening.canonicalUrl, opening.atsKey?.provider ?? null,
-      opening.atsKey?.tenant ?? null, opening.atsKey?.requisitionId ?? null, RECONCILIATION_BATCH_SIZE],
+    [
+      userId,
+      openingId,
+      job.through_created_at,
+      job.last_created_at,
+      job.last_review_id,
+      normalizedText(opening.title),
+      opening.canonicalUrl,
+      opening.atsKey?.provider ?? null,
+      opening.atsKey?.tenant ?? null,
+      opening.atsKey?.requisitionId ?? null,
+      RECONCILIATION_BATCH_SIZE,
+    ],
   );
   let applied = 0;
   for (const row of rows) {
@@ -859,13 +1138,20 @@ async function reconcileReviewBatch(tx: Db, userId: string, observedAt: Date, op
         signalId: row.signal_id,
         evidenceKey: row.original_key ?? row.source_fingerprint,
         sourceType: row.source_kind,
-        signal: { kind: row.event_kind, confidence: row.confidence, fields: row.fields, occurredAt, reasons: [] },
+        signal: {
+          kind: row.event_kind,
+          confidence: row.confidence,
+          fields: row.fields,
+          occurredAt,
+          reasons: [],
+        },
         kind: row.event_kind,
         occurredAt,
         trustedSender: row.sender_authenticated,
         mailboxId: row.mailbox_id,
         senderDomain: row.sender_domain ?? "",
-        senderVerified: row.source_kind === "FORWARDED_EML" || row.sender_verified,
+        senderVerified:
+          row.source_kind === "FORWARDED_EML" || row.sender_verified,
         replyMessageKeys: row.reply_message_keys,
         providerThreadId: row.provider_thread_id,
       },
@@ -883,34 +1169,57 @@ async function reconcileReviewBatch(tx: Db, userId: string, observedAt: Date, op
     applied += 1;
   }
   if (rows.length < RECONCILIATION_BATCH_SIZE) {
-    await tx.query("DELETE FROM review_reconciliation_jobs WHERE user_id=$1 AND job_opening_id=$2", [userId, openingId]);
+    await tx.query(
+      "DELETE FROM review_reconciliation_jobs WHERE user_id=$1 AND job_opening_id=$2",
+      [userId, openingId],
+    );
   } else {
     const last = rows.at(-1)!;
-    await tx.query(`UPDATE review_reconciliation_jobs SET last_created_at=$3,last_review_id=$4,requested_at=now()
-      WHERE user_id=$1 AND job_opening_id=$2`, [userId, openingId, last.review_created_at, last.review_id]);
+    await tx.query(
+      `UPDATE review_reconciliation_jobs SET last_created_at=$3,last_review_id=$4,requested_at=now()
+      WHERE user_id=$1 AND job_opening_id=$2`,
+      [userId, openingId, last.review_created_at, last.review_id],
+    );
   }
   return applied;
 }
 
 /** Scheduled continuation runs even without Gmail credentials. Each opening is isolated. */
-export async function drainReviewReconciliations(db: Db, observedAt = new Date(), maxJobs = 4): Promise<{ applied: number; failed: number }> {
+export async function drainReviewReconciliations(
+  db: Db,
+  observedAt = new Date(),
+  maxJobs = 4,
+): Promise<{ applied: number; failed: number }> {
   const jobs = await db.query<{ user_id: string; job_opening_id: string }>(
     "SELECT user_id,job_opening_id FROM review_reconciliation_jobs ORDER BY requested_at,user_id,job_opening_id LIMIT $1",
     [Math.max(1, Math.min(20, Math.floor(maxJobs)))],
   );
-  let applied = 0, failed = 0;
+  let applied = 0,
+    failed = 0;
   for (const job of jobs.rows) {
     try {
-      applied += await db.transaction(async tx => {
-        const owner = await tx.query("SELECT id FROM ledger_users WHERE id=$1 FOR UPDATE", [job.user_id]);
+      applied += await db.transaction(async (tx) => {
+        const owner = await tx.query(
+          "SELECT id FROM ledger_users WHERE id=$1 FOR UPDATE",
+          [job.user_id],
+        );
         if (!owner.rows.length) return 0;
-        return reconcileReviewBatch(tx, job.user_id, observedAt, job.job_opening_id);
+        return reconcileReviewBatch(
+          tx,
+          job.user_id,
+          observedAt,
+          job.job_opening_id,
+        );
       });
     } catch {
       failed++;
       // Keep the failed sweep durable, but let other openings run before retrying it.
-      await db.query("UPDATE review_reconciliation_jobs SET requested_at=now() WHERE user_id=$1 AND job_opening_id=$2",
-        [job.user_id, job.job_opening_id]).catch(() => undefined);
+      await db
+        .query(
+          "UPDATE review_reconciliation_jobs SET requested_at=now() WHERE user_id=$1 AND job_opening_id=$2",
+          [job.user_id, job.job_opening_id],
+        )
+        .catch(() => undefined);
     }
   }
   return { applied, failed };

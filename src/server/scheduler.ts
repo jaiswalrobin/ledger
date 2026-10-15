@@ -41,8 +41,13 @@ const emptyStatuses = (): Record<SyncStatus, number> => ({
 
 export function summarize(
   runs: readonly SyncResult[],
-  extra: { gmailConfigured: boolean; demosPruned: number; pruneFailed: boolean;
-    reviewUpdatesApplied?: number; reconciliationFailed?: boolean },
+  extra: {
+    gmailConfigured: boolean;
+    demosPruned: number;
+    pruneFailed: boolean;
+    reviewUpdatesApplied?: number;
+    reconciliationFailed?: boolean;
+  },
 ): SchedulerReport {
   const statuses = emptyStatuses();
   for (const run of runs) statuses[run.status] += 1;
@@ -52,7 +57,14 @@ export function summarize(
       : statuses.DEGRADED > 0 || extra.pruneFailed || extra.reconciliationFailed
         ? "attention"
         : "healthy";
-  return { reviewUpdatesApplied: 0, reconciliationFailed: false, ...extra, mailboxes: runs.length, statuses, outcome };
+  return {
+    reviewUpdatesApplied: 0,
+    reconciliationFailed: false,
+    ...extra,
+    mailboxes: runs.length,
+    statuses,
+    outcome,
+  };
 }
 
 /**
@@ -73,15 +85,25 @@ export async function runScheduledSync(input: {
   } catch {
     pruneFailed = true;
   }
-  let reviewUpdatesApplied = 0, reconciliationFailed = false;
+  let reviewUpdatesApplied = 0,
+    reconciliationFailed = false;
   try {
-    const result = await drainReviewReconciliations(input.db, input.sync?.now?.() ?? new Date());
+    const result = await drainReviewReconciliations(
+      input.db,
+      input.sync?.now?.() ?? new Date(),
+    );
     reviewUpdatesApplied = result.applied;
     reconciliationFailed = result.failed > 0;
-  } catch { reconciliationFailed = true; }
-  const extra = { demosPruned, pruneFailed, reviewUpdatesApplied, reconciliationFailed };
-  if (!input.sync)
-    return summarize([], { gmailConfigured: false, ...extra });
+  } catch {
+    reconciliationFailed = true;
+  }
+  const extra = {
+    demosPruned,
+    pruneFailed,
+    reviewUpdatesApplied,
+    reconciliationFailed,
+  };
+  if (!input.sync) return summarize([], { gmailConfigured: false, ...extra });
   const runs = await syncAllMailboxes(
     { ...input.sync, db: input.db },
     { system: true },

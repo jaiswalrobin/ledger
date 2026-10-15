@@ -10,14 +10,25 @@ export type Field = "kind" | "company" | "title";
 export type Verdict = "correct" | "missed" | "wrong" | "spurious";
 
 const norm = (v: string | null | undefined) =>
-  v == null ? null : v.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim().replace(/[.,;:!]+$/, "");
+  v == null
+    ? null
+    : v
+        .normalize("NFKC")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/[.,;:!]+$/, "");
 
 /**
  * correct: matches the label (including both empty). missed: label has a value, extractor none.
  * wrong: both have values and they differ. spurious: label empty, extractor invented a value.
  */
-export function verdict(expected: string | null, actual: string | null): Verdict {
-  const e = norm(expected), a = norm(actual);
+export function verdict(
+  expected: string | null,
+  actual: string | null,
+): Verdict {
+  const e = norm(expected),
+    a = norm(actual);
   if (e === a) return "correct";
   if (a == null) return "missed";
   if (e == null) return "spurious";
@@ -57,9 +68,16 @@ function traceRules(
   expected: string | null,
 ): RuleTrace {
   const same = (a: string, b: string | null) =>
-    b != null && (field === "company" ? companyKey(a) === companyKey(b) : norm(a) === norm(b));
+    b != null &&
+    (field === "company"
+      ? companyKey(a) === companyKey(b)
+      : norm(a) === norm(b));
   const rulesOf = (keep: (value: string) => boolean) =>
-    [...new Set(candidates.filter((c) => keep(c.value)).flatMap((c) => c.rules ?? []))].sort() as FieldRule[];
+    [
+      ...new Set(
+        candidates.filter((c) => keep(c.value)).flatMap((c) => c.rules ?? []),
+      ),
+    ].sort() as FieldRule[];
   return {
     fired: rulesOf(() => true),
     emitted: rulesOf((value) => same(value, emitted)),
@@ -68,14 +86,28 @@ function traceRules(
 }
 
 export function scoreSignal(expect: Expected, signal: ExtractedSignal): Scored {
-  const actual = { kind: signal.kind, company: signal.fields.company, title: signal.fields.title };
+  const actual = {
+    kind: signal.kind,
+    company: signal.fields.company,
+    title: signal.fields.title,
+  };
   const decisions = signal.fields.fieldDecisions;
   return {
     expect,
     actual,
     rules: {
-      company: traceRules("company", decisions?.company.candidates ?? [], actual.company, expect.company),
-      title: traceRules("title", decisions?.title.candidates ?? [], actual.title, expect.title),
+      company: traceRules(
+        "company",
+        decisions?.company.candidates ?? [],
+        actual.company,
+        expect.company,
+      ),
+      title: traceRules(
+        "title",
+        decisions?.title.candidates ?? [],
+        actual.title,
+        expect.title,
+      ),
     },
     verdicts: {
       kind: verdict(expect.kind, actual.kind),
@@ -85,7 +117,9 @@ export function scoreSignal(expect: Expected, signal: ExtractedSignal): Scored {
   };
 }
 
-export async function scoreCorpus(emails: readonly CorpusEmail[] = CORPUS): Promise<CaseResult[]> {
+export async function scoreCorpus(
+  emails: readonly CorpusEmail[] = CORPUS,
+): Promise<CaseResult[]> {
   const results: CaseResult[] = [];
   for (const email of emails) {
     const raw = buildEml({
@@ -98,29 +132,57 @@ export async function scoreCorpus(emails: readonly CorpusEmail[] = CORPUS): Prom
       ...(email.html !== undefined ? { html: email.html } : {}),
     });
     const [original] = await parseEml(new TextEncoder().encode(raw));
-    results.push({ email, ...scoreSignal(email.expect, extractSignal(original!.message)) });
+    results.push({
+      email,
+      ...scoreSignal(email.expect, extractSignal(original!.message)),
+    });
   }
   return results;
 }
 
-export function summarize(results: readonly Pick<Scored, "expect" | "actual" | "verdicts">[]) {
+export function summarize(
+  results: readonly Pick<Scored, "expect" | "actual" | "verdicts">[],
+) {
   const fields: Field[] = ["kind", "company", "title"];
   return Object.fromEntries(
     fields.map((f) => {
       const counts = { correct: 0, missed: 0, wrong: 0, spurious: 0 };
       for (const r of results) counts[r.verdicts[f]] += 1;
-      const support = results.filter(r => r.expect[f] != null).length;
-      const emitted = results.filter(r => r.actual[f] != null).length;
-      const recovered = results.filter(r => r.expect[f] != null && r.verdicts[f] === "correct").length;
-      return [f, { ...counts, support, emitted, recovered,
-        accuracy: results.length ? counts.correct / results.length : 0,
-        precision: emitted ? recovered / emitted : null,
-        recall: support ? recovered / support : null,
-        coverage: results.length ? emitted / results.length : 0,
-      }];
+      const support = results.filter((r) => r.expect[f] != null).length;
+      const emitted = results.filter((r) => r.actual[f] != null).length;
+      const recovered = results.filter(
+        (r) => r.expect[f] != null && r.verdicts[f] === "correct",
+      ).length;
+      return [
+        f,
+        {
+          ...counts,
+          support,
+          emitted,
+          recovered,
+          accuracy: results.length ? counts.correct / results.length : 0,
+          precision: emitted ? recovered / emitted : null,
+          recall: support ? recovered / support : null,
+          coverage: results.length ? emitted / results.length : 0,
+        },
+      ];
     }),
-  ) as Record<Field, { correct: number; missed: number; wrong: number; spurious: number; accuracy: number;
-    support: number; emitted: number; recovered: number; precision: number | null; recall: number | null; coverage: number }>;
+  ) as Record<
+    Field,
+    {
+      correct: number;
+      missed: number;
+      wrong: number;
+      spurious: number;
+      accuracy: number;
+      support: number;
+      emitted: number;
+      recovered: number;
+      precision: number | null;
+      recall: number | null;
+      coverage: number;
+    }
+  >;
 }
 
 export interface RuleStats {
@@ -135,16 +197,28 @@ export interface RuleStats {
 }
 
 /** Per-rule attribution over both fields: which rules earn their place, and which never fire. */
-export function ruleReport(results: readonly Scored[]): { stats: Map<FieldRule, RuleStats>; unfired: FieldRule[] } {
-  const stats = new Map<FieldRule, RuleStats>(FIELD_RULES.map((rule) => [rule, { fired: 0, correct: 0, wrong: 0, lost: 0 }]));
+export function ruleReport(results: readonly Scored[]): {
+  stats: Map<FieldRule, RuleStats>;
+  unfired: FieldRule[];
+} {
+  const stats = new Map<FieldRule, RuleStats>(
+    FIELD_RULES.map((rule) => [
+      rule,
+      { fired: 0, correct: 0, wrong: 0, lost: 0 },
+    ]),
+  );
   for (const result of results)
     for (const field of ["company", "title"] as const) {
       const trace = result.rules[field];
       const verdict = result.verdicts[field];
       for (const rule of trace.fired) stats.get(rule)!.fired++;
-      for (const rule of trace.emitted) stats.get(rule)![verdict === "correct" ? "correct" : "wrong"]++;
+      for (const rule of trace.emitted)
+        stats.get(rule)![verdict === "correct" ? "correct" : "wrong"]++;
       if (verdict === "missed" || verdict === "wrong")
         for (const rule of trace.expected) stats.get(rule)!.lost++;
     }
-  return { stats, unfired: FIELD_RULES.filter((rule) => stats.get(rule)!.fired === 0) };
+  return {
+    stats,
+    unfired: FIELD_RULES.filter((rule) => stats.get(rule)!.fired === 0),
+  };
 }

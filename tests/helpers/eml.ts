@@ -28,15 +28,26 @@ export function buildEml(spec: EmlSpec): string {
     "To: " + (Array.isArray(spec.to) ? spec.to.join(", ") : spec.to),
     "Subject: " + spec.subject,
   ];
-  if (spec.date !== null) headers.push("Date: " + (spec.date ?? "Mon, 05 Oct 2026 09:30:00 +0000"));
-  if (spec.messageId !== null) headers.push("Message-ID: " + (spec.messageId ?? "<" + Math.random().toString(36).slice(2) + "@mail.example.com>"));
+  if (spec.date !== null)
+    headers.push("Date: " + (spec.date ?? "Mon, 05 Oct 2026 09:30:00 +0000"));
+  if (spec.messageId !== null)
+    headers.push(
+      "Message-ID: " +
+        (spec.messageId ??
+          "<" + Math.random().toString(36).slice(2) + "@mail.example.com>"),
+    );
   headers.push("MIME-Version: 1.0");
 
   const text = spec.text ?? "";
   if (spec.attachments?.length) {
     const boundary = "mix-" + Math.random().toString(36).slice(2);
     headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
-    const parts = [`--${boundary}`, "Content-Type: text/plain; charset=utf-8", "", text];
+    const parts = [
+      `--${boundary}`,
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      text,
+    ];
     for (const a of spec.attachments) {
       parts.push(
         `--${boundary}`,
@@ -54,9 +65,16 @@ export function buildEml(spec: EmlSpec): string {
     const boundary = "alt-" + Math.random().toString(36).slice(2);
     headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
     const parts = [
-      `--${boundary}`, "Content-Type: text/plain; charset=utf-8", "", text,
-      `--${boundary}`, "Content-Type: text/html; charset=utf-8", "", spec.html,
-      `--${boundary}--`, "",
+      `--${boundary}`,
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      text,
+      `--${boundary}`,
+      "Content-Type: text/html; charset=utf-8",
+      "",
+      spec.html,
+      `--${boundary}--`,
+      "",
     ];
     return headers.join(CRLF) + CRLF + CRLF + parts.join(CRLF);
   }
@@ -65,13 +83,20 @@ export function buildEml(spec: EmlSpec): string {
 }
 
 /** A "Forward as attachment" envelope: the original is carried as message/rfc822. */
-export function forwardAsAttachment(originals: string[], opts: { from?: string; to?: string; date?: string; subject?: string } = {}): string {
+export function forwardAsAttachment(
+  originals: string[],
+  opts: { from?: string; to?: string; date?: string; subject?: string } = {},
+): string {
   return buildEml({
     from: opts.from ?? "Me <me@personal.example.com>",
     to: opts.to ?? "Jobs <jobs@example.org>",
     subject: opts.subject ?? "Fwd: job emails",
     date: opts.date ?? "Fri, 09 Oct 2026 18:00:00 +0000",
     text: "Forwarding for tracking.",
-    attachments: originals.map((content, i) => ({ filename: `original-${i + 1}.eml`, mime: "message/rfc822", content })),
+    attachments: originals.map((content, i) => ({
+      filename: `original-${i + 1}.eml`,
+      mime: "message/rfc822",
+      content,
+    })),
   });
 }

@@ -91,7 +91,10 @@ const RESULT: Record<string, { text: string; tone: ResultTone }> = {
   APPLIED: { text: "Added to your timeline", tone: "ok" },
   REVIEW: { text: "Saved for review", tone: "review" },
   DUPLICATE: { text: "Already recorded — no duplicate created", tone: "same" },
-  SKIPPED_SENSITIVE: { text: "Excluded: potentially sensitive message", tone: "skip" },
+  SKIPPED_SENSITIVE: {
+    text: "Excluded: potentially sensitive message",
+    tone: "skip",
+  },
   ERROR: { text: "The file could not be parsed safely", tone: "error" },
 };
 const resultOf = (status: string) =>
@@ -114,13 +117,17 @@ export function ImportScreen({
   goReview: () => void;
 }) {
   const [files, setFiles] = useState<File[]>([]);
-  const [results, setResults] = useState<{ text: string; tone: ResultTone }[]>([]);
+  const [results, setResults] = useState<{ text: string; tone: ResultTone }[]>(
+    [],
+  );
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const total = files.reduce((n, f) => n + f.size, 0);
   const tooMany = files.length > LIMIT_FILES;
   const tooBig = total > LIMIT_BYTES;
-  const odd = files.filter((f) => !/\.eml$/i.test(f.name) && f.type !== "message/rfc822");
+  const odd = files.filter(
+    (f) => !/\.eml$/i.test(f.name) && f.type !== "message/rfc822",
+  );
   const add = (list: FileList | null) => {
     if (!list) return;
     // Copy now: the input is cleared right after, which empties its live FileList.
@@ -156,7 +163,8 @@ export function ImportScreen({
             }}
             onDragOver={(e) => e.preventDefault()}
             onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false);
+              if (!e.currentTarget.contains(e.relatedTarget as Node))
+                setDragging(false);
             }}
             onDrop={(e) => {
               e.preventDefault();
@@ -167,9 +175,16 @@ export function ImportScreen({
             <span className="upload-icon" aria-hidden>
               <Upload size={24} />
             </span>
-            <h2>{dragging ? "Release to add these emails" : "Drop your email files here"}</h2>
+            <h2>
+              {dragging
+                ? "Release to add these emails"
+                : "Drop your email files here"}
+            </h2>
             <p>Up to {LIMIT_FILES} .eml files · 3 MB total</p>
-            <button className="secondary" onClick={() => input.current?.click()}>
+            <button
+              className="secondary"
+              onClick={() => input.current?.click()}
+            >
               Choose email files
             </button>
             <input
@@ -192,16 +207,22 @@ export function ImportScreen({
                 <div className="capacity-bar">
                   <span
                     className={tooBig ? "over" : ""}
-                    style={{ width: `${Math.min(100, (total / LIMIT_BYTES) * 100)}%` }}
+                    style={{
+                      width: `${Math.min(100, (total / LIMIT_BYTES) * 100)}%`,
+                    }}
                   />
                 </div>
                 <small className={tooBig || tooMany ? "warn" : ""}>
-                  {files.length} of {LIMIT_FILES} files · {(total / 1024 / 1024).toFixed(2)} of 3 MB
+                  {files.length} of {LIMIT_FILES} files ·{" "}
+                  {(total / 1024 / 1024).toFixed(2)} of 3 MB
                 </small>
               </div>
               <ul>
                 {files.map((file, i) => (
-                  <li key={`${file.name}-${i}`} className={odd.includes(file) ? "odd" : ""}>
+                  <li
+                    key={`${file.name}-${i}`}
+                    className={odd.includes(file) ? "odd" : ""}
+                  >
                     <FileText size={16} aria-hidden />
                     <span className="file-name">{file.name}</span>
                     <small>{Math.ceil(file.size / 1024)} KB</small>
@@ -217,8 +238,8 @@ export function ImportScreen({
               </ul>
               {odd.length > 0 && (
                 <p className="file-warning">
-                  <AlertTriangle size={14} aria-hidden /> Files that are not .eml will
-                  likely be rejected by the parser.
+                  <AlertTriangle size={14} aria-hidden /> Files that are not
+                  .eml will likely be rejected by the parser.
                 </p>
               )}
               <button
@@ -228,11 +249,21 @@ export function ImportScreen({
                   work(async () => {
                     const form = new FormData();
                     files.forEach((f) => form.append("files", f));
-                    const res = await fetch("/api/import", { method: "POST", body: form });
+                    const res = await fetch("/api/import", {
+                      method: "POST",
+                      body: form,
+                    });
                     const result = await res.json();
                     if (!res.ok)
-                      throw new Error(errorText[result.error] ?? "Import could not be completed.");
-                    setResults(result.results.map((r: { status: string }) => resultOf(r.status)));
+                      throw new Error(
+                        errorText[result.error] ??
+                          "Import could not be completed.",
+                      );
+                    setResults(
+                      result.results.map((r: { status: string }) =>
+                        resultOf(r.status),
+                      ),
+                    );
                     setFiles([]);
                     await refresh();
                   })
@@ -249,14 +280,32 @@ export function ImportScreen({
               <h3>Import results</h3>
               <div className="result-summary">
                 {counts.ok > 0 && <span className="ok">{counts.ok} added</span>}
-                {counts.review > 0 && <span className="review">{counts.review} for review</span>}
-                {counts.same > 0 && <span className="same">{counts.same} already known</span>}
-                {counts.skip + counts.error > 0 && <span className="skip">{counts.skip + counts.error} not used</span>}
+                {counts.review > 0 && (
+                  <span className="review">{counts.review} for review</span>
+                )}
+                {counts.same > 0 && (
+                  <span className="same">{counts.same} already known</span>
+                )}
+                {counts.skip + counts.error > 0 && (
+                  <span className="skip">
+                    {counts.skip + counts.error} not used
+                  </span>
+                )}
               </div>
               <ul>
                 {results.map((r, i) => (
                   <li key={i} className={r.tone}>
-                    {r.tone === "ok" ? <CheckCircle2 size={16} aria-hidden /> : r.tone === "review" ? <Inbox size={16} aria-hidden /> : r.tone === "same" ? <Copy size={16} aria-hidden /> : r.tone === "error" ? <AlertTriangle size={16} aria-hidden /> : <ShieldOff size={16} aria-hidden />}
+                    {r.tone === "ok" ? (
+                      <CheckCircle2 size={16} aria-hidden />
+                    ) : r.tone === "review" ? (
+                      <Inbox size={16} aria-hidden />
+                    ) : r.tone === "same" ? (
+                      <Copy size={16} aria-hidden />
+                    ) : r.tone === "error" ? (
+                      <AlertTriangle size={16} aria-hidden />
+                    ) : (
+                      <ShieldOff size={16} aria-hidden />
+                    )}
                     <span>{r.text}</span>
                   </li>
                 ))}
@@ -288,7 +337,10 @@ export function ImportScreen({
             </li>
             <li>
               <b>2</b>
-              <span>Choose <em>⋮ → Download message</em>, or “Forward as attachment.”</span>
+              <span>
+                Choose <em>⋮ → Download message</em>, or “Forward as
+                attachment.”
+              </span>
             </li>
             <li>
               <b>3</b>
@@ -314,13 +366,14 @@ export function ImportScreen({
 
 // ---- connections ------------------------------------------------------------------------
 
-const HEALTH: Record<MailboxView["syncState"], { tone: string; text: string }> = {
-  HEALTHY: { tone: "green", text: "Healthy" },
-  INITIALIZING: { tone: "amber", text: "Initial search running" },
-  DEGRADED: { tone: "amber", text: "Needs attention" },
-  RESYNC_REQUIRED: { tone: "amber", text: "Catching up" },
-  DISCONNECTED: { tone: "quiet", text: "Disconnected" },
-};
+const HEALTH: Record<MailboxView["syncState"], { tone: string; text: string }> =
+  {
+    HEALTHY: { tone: "green", text: "Healthy" },
+    INITIALIZING: { tone: "amber", text: "Initial search running" },
+    DEGRADED: { tone: "amber", text: "Needs attention" },
+    RESYNC_REQUIRED: { tone: "amber", text: "Catching up" },
+    DISCONNECTED: { tone: "quiet", text: "Disconnected" },
+  };
 
 export function ConnectionsScreen({
   session,
@@ -362,7 +415,13 @@ export function ConnectionsScreen({
       {mailboxes.map((mailbox) => {
         const health = HEALTH[mailbox.syncState];
         const s = mailbox.processingSummary;
-        const totalSeen = s.processed + s.partiallyProcessed + s.unrecognized + s.skippedSensitive + s.quarantined + s.skippedOther;
+        const totalSeen =
+          s.processed +
+          s.partiallyProcessed +
+          s.unrecognized +
+          s.skippedSensitive +
+          s.quarantined +
+          s.skippedOther;
         const bar = [
           { key: "used", n: s.processed, name: "Used" },
           { key: "partial", n: s.partiallyProcessed, name: "Partly used" },
@@ -382,7 +441,10 @@ export function ConnectionsScreen({
                 <p className={`health ${health.tone}`}>
                   <i aria-hidden /> {health.text}
                   {mailbox.lastSuccessAt && (
-                    <span className="muted"> · synced {relative(mailbox.lastSuccessAt)}</span>
+                    <span className="muted">
+                      {" "}
+                      · synced {relative(mailbox.lastSuccessAt)}
+                    </span>
                   )}
                 </p>
               </div>
@@ -401,45 +463,86 @@ export function ConnectionsScreen({
               <div>
                 <dt>Work queue</dt>
                 <dd>
-                  {mailbox.pendingTasks} pending tasks · {mailbox.failedTasks} failed tasks
-                  {mailbox.lastErrorCode ? ` · ${label(mailbox.lastErrorCode)}` : ""}
+                  {mailbox.pendingTasks} pending tasks · {mailbox.failedTasks}{" "}
+                  failed tasks
+                  {mailbox.lastErrorCode
+                    ? ` · ${label(mailbox.lastErrorCode)}`
+                    : ""}
                 </dd>
               </div>
             </dl>
             <p className="connection-scope">
-              Initial search: {date(mailbox.backfillStart)} to {date(mailbox.backfillEnd)}.{" "}
-              Searches recruiting subjects and known hiring platforms. A completed sync does not guarantee every application was recognized.
+              Initial search: {date(mailbox.backfillStart)} to{" "}
+              {date(mailbox.backfillEnd)}. Searches recruiting subjects and
+              known hiring platforms. A completed sync does not guarantee every
+              application was recognized.
             </p>
 
             {totalSeen > 0 && (
               <div className="mail-bar" aria-hidden>
-                {bar.filter((b) => b.n > 0).map((b) => (
-                  <span key={b.key} className={b.key} style={{ flexGrow: b.n }} title={`${b.name}: ${b.n}`} />
-                ))}
+                {bar
+                  .filter((b) => b.n > 0)
+                  .map((b) => (
+                    <span
+                      key={b.key}
+                      className={b.key}
+                      style={{ flexGrow: b.n }}
+                      title={`${b.name}: ${b.n}`}
+                    />
+                  ))}
               </div>
             )}
             <div className="sync-summary" aria-label="Email processing totals">
-              <p>Across all syncs: {s.processed} emails used for timelines or review · {s.unrecognized} with no recognized application event.</p>
-              <p>{s.skippedSensitive} excluded by privacy checks · {s.quarantined} could not be safely parsed · {s.skippedOther} other excluded emails.</p>
-              {s.partiallyProcessed > 0 && <p>{s.partiallyProcessed} emails had valid originals imported, but some attachments could not be parsed. See recent excluded emails.</p>}
-              <p className="muted">These are email counts. Several emails can belong to one application.</p>
+              <p>
+                Across all syncs: {s.processed} emails used for timelines or
+                review · {s.unrecognized} with no recognized application event.
+              </p>
+              <p>
+                {s.skippedSensitive} excluded by privacy checks ·{" "}
+                {s.quarantined} could not be safely parsed · {s.skippedOther}{" "}
+                other excluded emails.
+              </p>
+              {s.partiallyProcessed > 0 && (
+                <p>
+                  {s.partiallyProcessed} emails had valid originals imported,
+                  but some attachments could not be parsed. See recent excluded
+                  emails.
+                </p>
+              )}
+              <p className="muted">
+                These are email counts. Several emails can belong to one
+                application.
+              </p>
             </div>
             {mailbox.excludedMessages.length > 0 && (
               <details className="sync-exclusions">
                 <summary>See recent excluded emails</summary>
-                <p>Up to 20 recent exclusions. Open the original in your connected Gmail account to inspect it. Ledger does not retain these email bodies.</p>
+                <p>
+                  Up to 20 recent exclusions. Open the original in your
+                  connected Gmail account to inspect it. Ledger does not retain
+                  these email bodies.
+                </p>
                 <ul>
                   {mailbox.excludedMessages.map((message) => (
                     <li key={message.messageId}>
                       <span>
-                        {message.reason === "PRIVACY_CHECK" ? "Excluded by privacy checks"
-                          : message.reason === "PARSE_LIMIT" ? "Could not safely parse"
-                          : message.reason === "UNCERTAIN_HEADERS" ? "Unclear recruiting subject"
-                          : "No recognized application event"}
-                        {message.originalMessageAt ? ` · ${date(message.originalMessageAt)}` : ""}
+                        {message.reason === "PRIVACY_CHECK"
+                          ? "Excluded by privacy checks"
+                          : message.reason === "PARSE_LIMIT"
+                            ? "Could not safely parse"
+                            : message.reason === "UNCERTAIN_HEADERS"
+                              ? "Unclear recruiting subject"
+                              : "No recognized application event"}
+                        {message.originalMessageAt
+                          ? ` · ${date(message.originalMessageAt)}`
+                          : ""}
                       </span>
-                      <a className="text-link" target="_blank" rel="noopener noreferrer"
-                        href={`https://mail.google.com/mail/?authuser=${encodeURIComponent(mailbox.address)}#all/${encodeURIComponent(message.messageId)}`}>
+                      <a
+                        className="text-link"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        href={`https://mail.google.com/mail/?authuser=${encodeURIComponent(mailbox.address)}#all/${encodeURIComponent(message.messageId)}`}
+                      >
                         Open in Gmail
                       </a>
                     </li>
@@ -448,19 +551,35 @@ export function ConnectionsScreen({
               </details>
             )}
             <div className="connection-actions">
-              <button className="secondary" disabled={busy || mailbox.syncState === "DISCONNECTED"} onClick={() => sync(mailbox.id)}>
-                <RefreshCw size={15} aria-hidden className={busy ? "spin" : ""} />
+              <button
+                className="secondary"
+                disabled={busy || mailbox.syncState === "DISCONNECTED"}
+                onClick={() => sync(mailbox.id)}
+              >
+                <RefreshCw
+                  size={15}
+                  aria-hidden
+                  className={busy ? "spin" : ""}
+                />
                 Sync now
               </button>
               <button
                 className="secondary"
-                disabled={busy || mailbox.syncState === "DISCONNECTED" || mailbox.recheckInProgress}
+                disabled={
+                  busy ||
+                  mailbox.syncState === "DISCONNECTED" ||
+                  mailbox.recheckInProgress
+                }
                 onClick={() => recheck(mailbox.id)}
               >
                 Recheck last 60 days
               </button>
               {mailbox.failedTasks > 0 && (
-                <button className="secondary" disabled={busy} onClick={() => retry(mailbox.id)}>
+                <button
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() => retry(mailbox.id)}
+                >
                   Retry failed work
                 </button>
               )}
@@ -492,7 +611,9 @@ export function ConnectionsScreen({
               )}
             </div>
             <p className="footnote">
-              <Info size={13} aria-hidden /> Recheck repeats the recent search and retries skipped emails using the current parser. Privacy checks still apply. Use Import emails for older history.
+              <Info size={13} aria-hidden /> Recheck repeats the recent search
+              and retries skipped emails using the current parser. Privacy
+              checks still apply. Use Import emails for older history.
             </p>
           </section>
         );
@@ -509,11 +630,19 @@ export function ConnectionsScreen({
         </p>
         {!session.isDemo && (
           <label className="checkbox">
-            <input type="checkbox" checked={dedicated} onChange={(e) => setDedicated(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={dedicated}
+              onChange={(e) => setDedicated(e.target.checked)}
+            />
             I will choose a dedicated job-search account.
           </label>
         )}
-        <button className="primary" disabled={busy || session.isDemo || !google || !dedicated} onClick={connect}>
+        <button
+          className="primary"
+          disabled={busy || session.isDemo || !google || !dedicated}
+          onClick={connect}
+        >
           Connect Gmail
           <ArrowUpRight size={16} aria-hidden />
         </button>
@@ -546,7 +675,9 @@ export function SettingsScreen({
         subtitle="Your application history belongs to you."
       />
       <section className="settings-card">
-        <h2>{session.isDemo ? "Your demo workspace" : "Your private workspace"}</h2>
+        <h2>
+          {session.isDemo ? "Your demo workspace" : "Your private workspace"}
+        </h2>
         <p>
           {session.isDemo
             ? "This workspace contains synthetic examples and is isolated from every other visitor. Your browser session lasts up to seven days; expired demo history is then deleted."
@@ -559,13 +690,18 @@ export function SettingsScreen({
       </section>
       <section className="settings-card">
         <h2>Appearance</h2>
-        <p>Ledger follows your device by default. Choose a fixed look if you prefer.</p>
+        <p>
+          Ledger follows your device by default. Choose a fixed look if you
+          prefer.
+        </p>
         <div className="segmented" role="radiogroup" aria-label="Appearance">
-          {([
-            ["system", "System", <Monitor size={15} key="m" />],
-            ["light", "Light", <Sun size={15} key="s" />],
-            ["dark", "Dark", <Moon size={15} key="d" />],
-          ] as const).map(([value, name, icon]) => (
+          {(
+            [
+              ["system", "System", <Monitor size={15} key="m" />],
+              ["light", "Light", <Sun size={15} key="s" />],
+              ["dark", "Dark", <Moon size={15} key="d" />],
+            ] as const
+          ).map(([value, name, icon]) => (
             <button
               key={value}
               role="radio"
@@ -582,9 +718,25 @@ export function SettingsScreen({
       <section className="settings-card">
         <h2>Keyboard shortcuts</h2>
         <dl className="shortcuts">
-          <div><dt><kbd className="kbd">⌘</kbd><kbd className="kbd">K</kbd></dt><dd>Open the command menu (Ctrl K on Windows and Linux)</dd></div>
-          <div><dt><kbd className="kbd">/</kbd></dt><dd>Search your applications</dd></div>
-          <div><dt><kbd className="kbd">Esc</kbd></dt><dd>Close menus, clear search, or go back</dd></div>
+          <div>
+            <dt>
+              <kbd className="kbd">⌘</kbd>
+              <kbd className="kbd">K</kbd>
+            </dt>
+            <dd>Open the command menu (Ctrl K on Windows and Linux)</dd>
+          </div>
+          <div>
+            <dt>
+              <kbd className="kbd">/</kbd>
+            </dt>
+            <dd>Search your applications</dd>
+          </div>
+          <div>
+            <dt>
+              <kbd className="kbd">Esc</kbd>
+            </dt>
+            <dd>Close menus, clear search, or go back</dd>
+          </div>
         </dl>
       </section>
       <section className="settings-card danger-zone">

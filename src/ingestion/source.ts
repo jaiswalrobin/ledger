@@ -1,4 +1,8 @@
-import type { ApplicationEventKind, AtsKey, CalendarFacts } from "../domain/types.ts";
+import type {
+  ApplicationEventKind,
+  AtsKey,
+  CalendarFacts,
+} from "../domain/types.ts";
 
 export type { CalendarFacts };
 
@@ -54,7 +58,12 @@ export interface FieldDecision {
   state: "SUPPORTED" | "AMBIGUOUS" | "MISSING";
   value: string | null;
   /** `rules` names the extraction rules that proposed a value; absent in decisions stored earlier. */
-  candidates: readonly { value: string; score: number; sources: readonly string[]; rules?: readonly string[] }[];
+  candidates: readonly {
+    value: string;
+    score: number;
+    sources: readonly string[];
+    rules?: readonly string[];
+  }[];
 }
 
 /** Structured, redacted facts lifted from a message. Safe to persist. */
