@@ -10,7 +10,12 @@ import type { ApplicationEventKind, Outcome, Stage } from "../domain/types.ts";
 import type { ExtractedFields, SignalKind } from "../ingestion/source.ts";
 import type { Db } from "./db.ts";
 import type { ReviewReason } from "./pipeline.ts";
-import { iso, CALENDAR_REVISION_ORDER } from "./store.ts";
+import {
+  interviewRounds,
+  type Round,
+  type RoundKind,
+} from "../domain/rounds.ts";
+import { iso, CALENDAR_REVISION_ORDER, stepEventsByAttempt } from "./store.ts";
 
 export interface AttemptView {
   id: string;
@@ -20,6 +25,8 @@ export interface AttemptView {
   submittedAt: string | null;
   lastActivityAt: string | null;
   nextInterviewAt: string | null;
+  /** The latest assessment or interview round, for "Interview · Round 2". */
+  round: { number: number; kind: RoundKind } | null;
   conflicts: string[];
   coverage: Coverage;
   coverageLabel: string;
@@ -88,6 +95,7 @@ async function attemptViews(
   const upcoming = new Map(
     schedules.rows.map((r) => [r.attempt_id, iso(r.scheduled_for)]),
   );
+  const steps = await stepEventsByAttempt(db, userId, attemptIds);
   const byAttempt = new Map<
     string,
     { syncState: SyncState; backfillComplete: boolean }[]
@@ -117,6 +125,7 @@ async function attemptViews(
       outcome: r.outcome,
       submittedAt: r.submitted_at ? iso(r.submitted_at) : null,
       lastActivityAt,
+      round: latestRound(steps.get(r.id) ?? []),
       nextInterviewAt:
         r.outcome === "PENDING" ? (upcoming.get(r.id) ?? null) : null,
       conflicts: r.projection_conflicts,
@@ -190,6 +199,8 @@ export interface EvidenceView {
 
 export interface EventView {
   id: string;
+  /** The assessment or interview round this event belongs to. */
+  round: number | null;
   kind: ApplicationEventKind;
   occurredAt: string;
   reviewState: "PROPOSED" | "ACCEPTED" | "REJECTED" | "SUPERSEDED";
@@ -200,8 +211,21 @@ export interface EventView {
   currentSchedule: boolean;
 }
 
+export interface RoundView {
+  number: number;
+  kind: RoundKind;
+  startedAt: string;
+  /** The latest time of the round's calendar invitation, if one was received. */
+  meetingAt: string | null;
+  reschedules: number;
+  scheduled: boolean;
+  /** Emails supporting the round's events. */
+  emails: number;
+}
+
 export interface OpeningDetail extends Omit<OpeningView, "attempts"> {
   attempts: (AttemptView & {
+    rounds: RoundView[];
     events: EventView[];
     submissionDateCorrections: {
       previousAt: string | null;
@@ -287,11 +311,20 @@ export async function getOpening(
     });
     evidenceByEvent.set(e.event_id, list);
   }
+  const steps = await stepEventsByAttempt(db, userId, ids);
+  const roundsByAttempt = new Map<string, Round[]>(
+    ids.map((id) => [id, interviewRounds(steps.get(id) ?? [])]),
+  );
+  const roundOfEvent = new Map<string, number>();
+  for (const rounds of roundsByAttempt.values())
+    for (const round of rounds)
+      for (const id of round.eventIds) roundOfEvent.set(id, round.number);
   const eventViews = new Map<string, EventView[]>();
   for (const e of events.rows) {
     const list = eventViews.get(e.attempt_id) ?? [];
     list.push({
       id: e.id,
+      round: roundOfEvent.get(e.id) ?? null,
       kind: e.event_kind,
       occurredAt: iso(e.occurred_at),
       reviewState: e.review_state,
@@ -315,6 +348,18 @@ export async function getOpening(
   );
   const withEvents = views.map((v) => ({
     ...v,
+    rounds: (roundsByAttempt.get(v.id) ?? []).map((round): RoundView => ({
+      number: round.number,
+      kind: round.kind,
+      startedAt: round.startedAt,
+      meetingAt: round.meeting?.scheduledFor ?? null,
+      reschedules: round.reschedules,
+      scheduled: round.scheduled,
+      emails: round.eventIds.reduce(
+        (sum, id) => sum + (evidenceByEvent.get(id)?.length ?? 0),
+        0,
+      ),
+    })),
     events: eventViews.get(v.id) ?? [],
     submissionDateCorrections: corrections.rows
       .filter((c) => c.attempt_id === v.id)
@@ -363,6 +408,8 @@ export interface ReviewView {
   candidateOpenings: { openingId: string; title: string; company: string }[];
   mailboxAddress: string | null;
   providerMessageId: string | null;
+  /** The sender's domain (no address), for grouping emails about one job. */
+  senderDomain: string | null;
 }
 
 export async function listReviews(
@@ -382,9 +429,11 @@ export async function listReviews(
     original_message_at: unknown;
     mailbox_address: string | null;
     provider_message_id: string | null;
+    sender_domain: string | null;
   }>(
     `SELECT r.id, r.reason_code, r.created_at, r.candidate_attempt_ids, r.candidate_opening_ids, s.event_kind, s.fields,
-            a.subject_redacted, a.source_kind, a.original_message_at,m.address AS mailbox_address,a.provider_message_id
+            a.subject_redacted, a.source_kind, a.original_message_at,m.address AS mailbox_address,a.provider_message_id,
+            a.sender_domain
        FROM review_items r
        JOIN extracted_signals s ON s.id = r.signal_id AND s.user_id = r.user_id
        JOIN source_artifacts a ON a.id = r.source_artifact_id AND a.user_id = r.user_id
@@ -453,6 +502,7 @@ export async function listReviews(
     ),
     mailboxAddress: r.mailbox_address,
     providerMessageId: r.provider_message_id,
+    senderDomain: r.sender_domain,
   }));
 }
 
@@ -672,4 +722,11 @@ export async function listMailboxes(
     });
   }
   return result;
+}
+
+function latestRound(
+  events: Parameters<typeof interviewRounds>[0],
+): AttemptView["round"] {
+  const round = interviewRounds(events).at(-1);
+  return round ? { number: round.number, kind: round.kind } : null;
 }

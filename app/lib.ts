@@ -93,6 +93,12 @@ export function initials(name: string): string {
 export const statusOf = (a: Pick<AttemptView, "stage" | "outcome">) =>
   a.outcome === "PENDING" ? a.stage : a.outcome;
 
+/** "Round 2" while an application is past its first assessment or interview round. */
+export const roundOf = (a: Pick<AttemptView, "outcome" | "round">) =>
+  a.outcome === "PENDING" && a.round && a.round.number > 1
+    ? `Round ${a.round.number}`
+    : null;
+
 export const JOURNEY: { key: Stage; name: string }[] = [
   { key: "APPLIED", name: "Applied" },
   { key: "ASSESSMENT", name: "Assessment" },

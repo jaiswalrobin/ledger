@@ -17,7 +17,39 @@ import type { Stage, Outcome } from "../../src/domain/types.ts";
 import type { OpeningDetail } from "../../src/server/queries.ts";
 import { CompanyMark, Pill, StageTrack } from "./ui.tsx";
 import { StatusForm, SubmissionDateForm } from "./Forms.tsx";
-import { date, daysSince, fullDate, label, plural, relative } from "../lib.ts";
+import {
+  date,
+  daysSince,
+  fullDate,
+  label,
+  plural,
+  relative,
+  roundOf,
+} from "../lib.ts";
+
+type Attempt = OpeningDetail["attempts"][number];
+
+/** "Round 2 · Interview · Fri 16 Oct, 16:00 · rescheduled twice · 8 emails" */
+function RoundHeading({ round }: { round: Attempt["rounds"][number] }) {
+  return (
+    <li className="round-divider">
+      <strong>
+        Round {round.number} ·{" "}
+        {round.kind === "ASSESSMENT" ? "Assessment" : "Interview"}
+      </strong>
+      <span>
+        {round.meetingAt
+          ? fullDate(round.meetingAt)
+          : round.scheduled
+            ? "Scheduled"
+            : "Invited"}
+        {round.reschedules > 0 &&
+          ` · rescheduled ${round.reschedules === 1 ? "once" : `${round.reschedules} times`}`}
+        {` · ${plural(round.emails, "email")}`}
+      </span>
+    </li>
+  );
+}
 
 const EVENT_ICON: Record<string, React.ReactNode> = {
   SUBMITTED: <Mail size={14} />,
@@ -118,6 +150,9 @@ export function DetailScreen({
                 <div className="status-pair">
                   <Pill value={attempt.stage} />
                   <Pill value={attempt.outcome} />
+                  {roundOf(attempt) && (
+                    <em className="attempt-chip">{roundOf(attempt)}</em>
+                  )}
                 </div>
               </div>
               <StageTrack attempt={attempt} />
@@ -135,9 +170,21 @@ export function DetailScreen({
                 <span>{plural(accepted, "accepted update")}</span>
               </div>
               <ol className="timeline">
-                {attempt.events.map((event) => {
+                {attempt.events.map((event, i) => {
                   const inactive = event.reviewState !== "ACCEPTED";
-                  return (
+                  const round =
+                    event.round !== null &&
+                    attempt.events.findIndex((e) => e.round === event.round) ===
+                      i
+                      ? attempt.rounds.find((r) => r.number === event.round)
+                      : undefined;
+                  return [
+                    round && (
+                      <RoundHeading
+                        key={`round-${round.number}`}
+                        round={round}
+                      />
+                    ),
                     <li
                       className={`timeline-event ${eventTone(event.kind)} ${inactive ? "inactive" : ""}`}
                       key={event.id}
@@ -164,6 +211,18 @@ export function DetailScreen({
                             ? "Confirmed by you"
                             : (event.evidence[0]?.subject ??
                               "Supported by email evidence")}
+                          {event.evidence.length > 1 && (
+                            <span
+                              className="small muted"
+                              title={event.evidence
+                                .map((e) => e.subject ?? "Email")
+                                .join("\n")}
+                            >
+                              {" "}
+                              · +
+                              {plural(event.evidence.length - 1, "more email")}
+                            </span>
+                          )}
                         </p>
                         {event.scheduledFor && (
                           <p
@@ -207,8 +266,8 @@ export function DetailScreen({
                         )}
                         {inactive ? "Restore" : "Reject update"}
                       </button>
-                    </li>
-                  );
+                    </li>,
+                  ];
                 })}
               </ol>
               <div className="attempt-tools">

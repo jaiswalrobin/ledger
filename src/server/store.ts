@@ -371,14 +371,17 @@ export async function insertEvent(
   return { id: existing.rows[0]!.id, created: false };
 }
 
-/** The attempt's accepted assessment and interview events, as the round rules read them. */
-export async function stepEvents(
+/** Each attempt's accepted assessment and interview events, as the round rules read them. */
+export async function stepEventsByAttempt(
   db: Db,
   userId: string,
-  attemptId: string,
-): Promise<StepEvent[]> {
+  attemptIds: readonly string[],
+): Promise<Map<string, StepEvent[]>> {
+  const byAttempt = new Map<string, StepEvent[]>();
+  if (!attemptIds.length) return byAttempt;
   const { rows } = await db.query<{
     id: string;
+    attempt_id: string;
     event_kind: ApplicationEventKind;
     occurred_at: unknown;
     calendar_uid_key: string | null;
@@ -386,26 +389,38 @@ export async function stepEvents(
     scheduled_for: unknown;
     starts_round: boolean;
   }>(
-    `SELECT id,event_kind,occurred_at,calendar_uid_key,calendar_sequence,scheduled_for,starts_round
+    `SELECT id,attempt_id,event_kind,occurred_at,calendar_uid_key,calendar_sequence,scheduled_for,starts_round
        FROM application_events
-      WHERE user_id=$1 AND attempt_id=$2 AND review_state='ACCEPTED'
+      WHERE user_id=$1 AND attempt_id=ANY($2::uuid[]) AND review_state='ACCEPTED'
         AND event_kind IN ('ASSESSMENT_INVITED','INTERVIEW_INVITED','INTERVIEW_SCHEDULED')`,
-    [userId, attemptId],
+    [userId, [...attemptIds]],
   );
-  return rows.map((r) => ({
-    id: r.id,
-    kind: r.event_kind,
-    occurredAt: iso(r.occurred_at),
-    calendar: r.calendar_uid_key
-      ? {
-          uidKey: r.calendar_uid_key,
-          sequence: Number(r.calendar_sequence),
-          scheduledFor: r.scheduled_for ? iso(r.scheduled_for) : null,
-        }
-      : null,
-    startsRound: r.starts_round,
-  }));
+  for (const r of rows) {
+    const list = byAttempt.get(r.attempt_id) ?? [];
+    list.push({
+      id: r.id,
+      kind: r.event_kind,
+      occurredAt: iso(r.occurred_at),
+      calendar: r.calendar_uid_key
+        ? {
+            uidKey: r.calendar_uid_key,
+            sequence: Number(r.calendar_sequence),
+            scheduledFor: r.scheduled_for ? iso(r.scheduled_for) : null,
+          }
+        : null,
+      startsRound: r.starts_round,
+    });
+    byAttempt.set(r.attempt_id, list);
+  }
+  return byAttempt;
 }
+
+export const stepEvents = async (
+  db: Db,
+  userId: string,
+  attemptId: string,
+): Promise<StepEvent[]> =>
+  (await stepEventsByAttempt(db, userId, [attemptId])).get(attemptId) ?? [];
 
 export async function linkEvidence(
   db: Db,

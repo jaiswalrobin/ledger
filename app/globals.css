@@ -626,6 +626,14 @@ ol, ul { margin: 0; padding: 0; list-style: none; }
 .timeline-head { display: flex; justify-content: space-between; align-items: baseline; margin: 24px 0 8px; padding-top: 18px; border-top: 1px solid var(--line); }
 .timeline-head span { font-size: 12.5px; color: var(--muted); }
 .timeline { position: relative; display: grid; }
+.round-divider { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 10px 0 2px; padding: 8px 12px; border-radius: 10px; background: var(--interview-bg); color: var(--ink); font-size: 13px; }
+.round-divider span { color: var(--muted); }
+.status-with-round { display: inline-flex; align-items: center; gap: 6px; }
+.review-group { display: grid; gap: 12px; padding: 14px; border: 1px dashed var(--line); border-radius: 16px; }
+.review-group-head { margin: 0; color: var(--muted); font-size: 14px; }
+.review-group-head strong { color: var(--ink); }
+.review-group > details > summary { cursor: pointer; color: var(--muted); font-size: 14px; padding: 4px 0; }
+.review-group > details[open] { display: grid; gap: 12px; }
 .timeline-event { --tone: var(--applied); --tone-bg: var(--applied-bg); position: relative; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 14px; padding: 12px 0; }
 .timeline-event::before { content: ""; position: absolute; left: 15px; top: 0; bottom: 0; width: 2px; background: var(--line); }
 .timeline-event:first-child::before { top: 24px; }

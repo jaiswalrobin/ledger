@@ -298,8 +298,9 @@ export async function resolveReviewAssign(
       ctx.artifactId,
     );
     await closeReview(tx, userId, reviewId, ctx, "RESOLVED", "ASSIGNED");
-    if (kind === "CONFIRMATION_RECEIVED")
-      await reconcileWaitingUpdates(tx, userId, new Date(), openingId);
+    // Any accepted email can be what waiting ones were missing: a reply's thread, or the
+    // employer's domain on an application that had no evidence from it yet.
+    await reconcileWaitingUpdates(tx, userId, new Date(), openingId);
   });
 }
 
