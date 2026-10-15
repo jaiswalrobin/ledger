@@ -80,6 +80,11 @@ export interface ExtractedFields {
   canonicalUrl: string | null;
   applicantEmail: string | null;
   externalApplicationId: string | null;
+  /**
+   * An assessment or interview email that says it follows an earlier round ("positive feedback
+   * from your previous interview", "invite you to the next round"). Starts a new round.
+   */
+  nextRound?: boolean;
 }
 
 export interface ExtractedSignal {

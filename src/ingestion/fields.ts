@@ -54,6 +54,7 @@ export const FIELD_RULES = [
   "subject:title-at",
   "subject:application-to",
   "subject:update-on",
+  "subject:trailing-name",
   "subject:invite-name",
   "subject:domain-phrase",
   "calendar:event-line",
@@ -933,6 +934,17 @@ export function extractCompanyAndTitle(input: FieldInput): {
     /\b(?:[Uu]pdate|[Nn]ews)\s+on\s+your\s+([A-Z0-9][\w&' .-]{1,40}?)\s+application\b/g,
   ))
     add(companies, cleanCompany(m[1]), 2, "subject", "subject:update-on");
+  // "Interview Confirmation and Details- Weave", "Next steps | Acme": a trailing name after a dash
+  // or bar, spaced or not, counts only when it is the sender's own organisation.
+  const trailing = /[-–|]\s*([\p{L}\p{N}][^-–|:!?]{1,60}?)\s*$/u.exec(subject);
+  if (trailing && matchesDomain(trailing[1]!))
+    add(
+      companies,
+      cleanCompany(trailing[1]),
+      2.5,
+      "subject",
+      "subject:trailing-name",
+    );
 
   // Calendar invites: "Invitation: Robin / Hooli - Technical Interview @ ..." and an event line
   // "Technical Interview - Senior Backend Engineer".
