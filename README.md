@@ -78,12 +78,13 @@ Requires **Node.js 24.x**, matching the Vercel runtime and CI. The domain module
 
 ```bash
 npm ci
-npm test
-npm run typecheck
+npm run check   # formatting, types and tests
 npm run demo
 ```
 
 The domain-only commands above exercise deterministic **job and application-attempt resolution**, header/body privacy screening, and **pure event-state projection** with conflict detection. `npm run demo` uses synthetic employer/identity data and needs no service or credential.
+
+Before contributing, read [CONTRIBUTING.md](CONTRIBUTING.md); `npm run check:full` runs every CI check locally.
 
 For the browser version, follow [deployment and development](docs/deployment.md): configure PostgreSQL, run `npm run migrate`, set `APP_URL` and `DEMO_MODE=true`, then build and start the Next.js app. The demo is isolated per visitor and persisted in PostgreSQL. `.eml` uploads feed the actual ingestion pipeline; uncertain or unverified terminal events go to review. Full email bodies are discarded.
 
