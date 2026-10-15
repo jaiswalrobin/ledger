@@ -220,3 +220,16 @@ it("a role 'at our company' or 'at our Berlin office' stays with the sender's em
     assert.equal(result.title, "Data Engineer", place);
   }
 });
+
+it("a product-style domain corroborates its organisation, never another one", async () => {
+  const { employerDomain, organisationNames } =
+    await import("../src/ingestion/fields.ts");
+  assert.deepEqual(organisationNames("getweave"), ["getweave", "weave"]);
+  assert.deepEqual(organisationNames("acmehq"), ["acmehq", "acme"]);
+  assert.deepEqual(organisationNames("google"), ["google"]);
+  assert.equal(employerDomain("getweave.com", "Weave"), "getweave.com");
+  assert.equal(employerDomain("joinacme.io", "Acme"), "joinacme.io");
+  assert.equal(employerDomain("getweave.com", "Globex"), null);
+  // Too short to be a name once the affix is gone.
+  assert.equal(employerDomain("getit.com", "It"), null);
+});

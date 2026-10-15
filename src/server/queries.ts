@@ -202,6 +202,8 @@ export interface EventView {
   id: string;
   /** The assessment or interview round this event belongs to. */
   round: number | null;
+  /** Marked as starting a new round, by its email's wording or by the owner. */
+  startsRound: boolean;
   kind: ApplicationEventKind;
   occurredAt: string;
   reviewState: "PROPOSED" | "ACCEPTED" | "REJECTED" | "SUPERSEDED";
@@ -220,6 +222,8 @@ export interface RoundView {
   meetingAt: string | null;
   reschedules: number;
   scheduled: boolean;
+  /** An earlier round never reached Ledger; numbering starts at 2. */
+  followsUnseenRound: boolean;
   /** Emails supporting the round's events. */
   emails: number;
 }
@@ -275,8 +279,9 @@ export async function getOpening(
     calendar_sequence: number | null;
     scheduled_for: unknown;
     current_schedule: boolean;
+    starts_round: boolean;
   }>(
-    `SELECT id, attempt_id, event_kind, occurred_at, review_state, origin,calendar_uid_key,calendar_sequence,scheduled_for,
+    `SELECT id, attempt_id, event_kind, occurred_at, review_state, origin,calendar_uid_key,calendar_sequence,scheduled_for,starts_round,
        calendar_uid_key IS NOT NULL AND review_state='ACCEPTED' AND id=first_value(id) OVER (
          PARTITION BY attempt_id,calendar_uid_key ORDER BY CASE WHEN review_state='ACCEPTED' THEN 0 ELSE 1 END,${CALENDAR_REVISION_ORDER}
        ) AS current_schedule FROM application_events
@@ -326,6 +331,7 @@ export async function getOpening(
     list.push({
       id: e.id,
       round: roundOfEvent.get(e.id) ?? null,
+      startsRound: e.starts_round,
       kind: e.event_kind,
       occurredAt: iso(e.occurred_at),
       reviewState: e.review_state,
@@ -356,6 +362,7 @@ export async function getOpening(
       meetingAt: round.meeting?.scheduledFor ?? null,
       reschedules: round.reschedules,
       scheduled: round.scheduled,
+      followsUnseenRound: round.followsUnseenRound,
       emails: round.eventIds.reduce(
         (sum, id) => sum + (evidenceByEvent.get(id)?.length ?? 0),
         0,

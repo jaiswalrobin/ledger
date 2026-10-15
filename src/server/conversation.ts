@@ -4,7 +4,7 @@ import { companyKey, normalizedText } from "../domain/normalization.ts";
 import type { ExtractedFields } from "../ingestion/source.ts";
 import { atsKeyId } from "../domain/normalization.ts";
 import { parse as parseDomain } from "tldts";
-import { employerDomain } from "../ingestion/fields.ts";
+import { employerDomain, organisationNames } from "../ingestion/fields.ts";
 
 export function messageIdKey(value: string | null): string | null {
   return value && /^<[^\s<>]{1,512}>$/.test(value.trim())
@@ -112,9 +112,9 @@ export async function employerOpenings(
   }>(
     `SELECT DISTINCT o.id,c.canonical_name AS company,o.title FROM companies c JOIN job_openings o ON o.company_id=c.id AND o.user_id=c.user_id
      JOIN application_attempts a ON a.job_opening_id=o.id AND a.user_id=o.user_id
-     WHERE c.user_id=$1 AND a.outcome='PENDING' AND (c.normalized_domain=$2 OR regexp_replace(lower(c.canonical_name),'[^[:alnum:]]','','g')=$3)
+     WHERE c.user_id=$1 AND a.outcome='PENDING' AND (c.normalized_domain=$2 OR regexp_replace(lower(c.canonical_name),'[^[:alnum:]]','','g')=ANY($3::text[]))
      LIMIT 33`,
-    [userId, domain.domain, domain.domainWithoutSuffix],
+    [userId, domain.domain, organisationNames(domain.domainWithoutSuffix)],
   );
   // Filtering a truncated candidate set can manufacture a unique result while an omitted
   // candidate also matches. Report overflow before any compatibility filter is applied.

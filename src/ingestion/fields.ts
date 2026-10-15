@@ -275,6 +275,21 @@ const compact = (value: string) =>
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]/gu, "");
 
+/**
+ * The organisation names a domain label can spell: the label itself, and the label without a
+ * common product-domain prefix or suffix ("getweave" → "weave", "acmehq" → "acme"). Used only to
+ * corroborate a name the message or a stored opening already gives, never to invent one.
+ */
+export function organisationNames(label: string): string[] {
+  const name = compact(label);
+  const names = new Set([name]);
+  const prefix = /^(?:get|join|try|hey|meet)(.{3,})$/.exec(name);
+  if (prefix) names.add(prefix[1]!);
+  const suffix = /^(.{3,}?)(?:hq|app|inc|team|careers|jobs)$/.exec(name);
+  if (suffix) names.add(suffix[1]!);
+  return [...names];
+}
+
 /** Corroborates an existing employer, never derives one from a domain. Private tenant suffixes
  * remain boundaries and recruiting/freemail domains do not assert an employer's identity. */
 export function employerDomain(domain: string, company: string): string | null {
@@ -286,7 +301,9 @@ export function employerDomain(domain: string, company: string): string | null {
   const label = parsed.domainWithoutSuffix;
   if (!label || parsed.isIp || FREEMAIL.test(label) || PLATFORMS.test(label))
     return null;
-  return compact(companyKey(company)) === compact(label) ? parsed.domain : null;
+  return organisationNames(label).includes(compact(companyKey(company)))
+    ? parsed.domain
+    : null;
 }
 
 // ---- the sender's organisation, as evidence -----------------------------------------------
@@ -310,7 +327,7 @@ function domainHints(input: FieldInput): string[] {
       !PLATFORMS.test(label) &&
       label.length >= 2
     )
-      labels.push(label.toLowerCase());
+      labels.push(...organisationNames(label));
   };
   add(input.fromAddress?.split("@")[1] ?? "");
   for (const m of input.body.matchAll(

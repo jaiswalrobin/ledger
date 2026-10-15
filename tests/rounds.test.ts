@@ -82,6 +82,7 @@ describe("interviewRounds", () => {
       reschedules: 2,
       invited: true,
       scheduled: true,
+      followsUnseenRound: false,
     });
   });
 
@@ -226,7 +227,7 @@ describe("placeStep", () => {
     );
   });
 
-  it("records a next-round email as starting a round, except as the very first step", () => {
+  it("records a next-round email as starting a round, also as the very first step", () => {
     assert.deepEqual(
       placeStep(upTo("next"), {
         kind: "INTERVIEW_INVITED",
@@ -241,7 +242,8 @@ describe("placeStep", () => {
         occurredAt: at(7),
         startsRound: true,
       }),
-      { action: "RECORD", startsRound: false },
+      // Kept: it records a round that never reached Ledger.
+      { action: "RECORD", startsRound: true },
     );
   });
 
@@ -373,5 +375,47 @@ describe("review fixes", () => {
       },
     ]);
     assert.equal(rounds.length, 1);
+  });
+});
+
+describe("an earlier round that never reached Ledger", () => {
+  it("numbers rounds from 2 when the first step on record follows an earlier interview", () => {
+    const rounds = interviewRounds([
+      {
+        id: "next",
+        kind: "INTERVIEW_INVITED",
+        occurredAt: at(7),
+        startsRound: true,
+      },
+      {
+        id: "cal",
+        kind: "INTERVIEW_SCHEDULED",
+        occurredAt: at(9),
+        calendar: invite("u", 0, 15),
+      },
+      {
+        id: "final",
+        kind: "INTERVIEW_INVITED",
+        occurredAt: at(20),
+        startsRound: true,
+      },
+    ]);
+    assert.deepEqual(
+      rounds.map((r) => [r.number, r.followsUnseenRound, r.eventIds]),
+      [
+        [2, true, ["next", "cal"]],
+        [3, false, ["final"]],
+      ],
+    );
+  });
+
+  it("numbers from 1 when nothing suggests an earlier round", () => {
+    const rounds = interviewRounds([
+      { id: "a", kind: "INTERVIEW_INVITED", occurredAt: at(7) },
+    ]);
+    assert.deepEqual(
+      rounds.map((r) => [r.number, r.followsUnseenRound]),
+      [[1, false]],
+    );
   });
 });

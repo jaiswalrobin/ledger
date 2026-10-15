@@ -118,6 +118,8 @@ const PHRASES: Record<SignalKind, RegExp> = {
         String.raw`invite(?:d)? you to (?:complete|take|schedule|record|attend) (?:an? |your |the )?(?:one-way |recorded |video |virtual |online |phone |first |initial )*interview`,
         String.raw`would (?:like|love) to (?:interview|speak with|talk with|talk to|chat|meet|set up)`,
         String.raw`phone screen`,
+        // "Please submit your availability for the technical round": a request to book an interview.
+        String.raw`(?:submit|share|send|provide|confirm|let us know) (?:us |me )?your availability`,
         String.raw`(?:move|moving|advance|advancing|progress) (?:you )?(?:forward )?to (?:the )?(?:next|interview|first|second|final) (?:round|stage|step)`,
         String.raw`(?:share|send|provide|let us know)(?: us| me)? (?:your|some) (?:availability|available times)`,
         String.raw`(?:your|some) availability for (?:an? )?(?:interview|call|chat|conversation)`,

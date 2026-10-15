@@ -1095,4 +1095,16 @@ export const CORPUS: CorpusEmail[] = [
       title: "Senior Frontend Engineer",
     },
   },
+  {
+    id: "r11-availability-next-step",
+    note: "A next-round email from a get-prefixed domain that only asks for availability",
+    from: '"Nikita Rathi" <nikita.rathi@getweave.com>',
+    subject: "Robin, Weave Next Steps!",
+    text: "Hi Robin,\n\nGood news! We received positive feedback from your previous interview for the Senior Frontend Engineer position. As a next step, please submit your availability for the technical round.\n\nNikita",
+    expect: {
+      kind: "INTERVIEW_INVITED",
+      company: "Weave",
+      title: "Senior Frontend Engineer",
+    },
+  },
 ];

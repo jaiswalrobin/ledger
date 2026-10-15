@@ -46,6 +46,11 @@ export interface Round {
   reschedules: number;
   invited: boolean;
   scheduled: boolean;
+  /**
+   * The first round on record said it follows an earlier interview ("positive feedback from
+   * your previous interview") that never reached Ledger. Rounds are numbered from 2.
+   */
+  followsUnseenRound: boolean;
 }
 
 const STEP_KINDS: ReadonlySet<ApplicationEventKind> = new Set([
@@ -117,8 +122,12 @@ function build(events: readonly StepEvent[]): Open[] {
     let current: Open;
     if (previous && !startsNewRound(previous, event)) current = previous;
     else {
+      // An earlier round that never reached Ledger still counts towards the numbering.
+      const unseen = rounds.length === 0 && !!event.startsRound;
+      const offset = rounds[0]?.followsUnseenRound || unseen ? 1 : 0;
       current = {
-        number: rounds.length + 1,
+        number: rounds.length + 1 + offset,
+        followsUnseenRound: unseen,
         kind: roundKind(event.kind),
         startedAt: event.occurredAt,
         eventIds: [],
@@ -183,10 +192,8 @@ export function placeStep(
   const rounds = build(steps);
   const current = rounds.at(-1) ?? null;
   if (startsNewRound(current, candidate))
-    return {
-      action: "RECORD",
-      startsRound: !!candidate.startsRound && !!current,
-    };
+    // Kept on the very first step too: it records a round that never reached Ledger.
+    return { action: "RECORD", startsRound: !!candidate.startsRound };
   if (candidate.calendar) return { action: "RECORD", startsRound: false };
   const inRound = steps
     .filter((e) => current!.eventIds.includes(e.id))

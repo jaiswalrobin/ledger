@@ -121,6 +121,31 @@ export async function setEventState(
   });
 }
 
+/**
+ * The owner marks an assessment or interview event as starting a new round, or not. Wording
+ * cannot always tell ("next steps" after an earlier round that never reached Ledger), and emails
+ * are not kept to re-read, so this is the correction. Rounds are recomputed on read.
+ */
+export async function setRoundStart(
+  db: Db,
+  userId: string,
+  eventId: string,
+  startsRound: boolean,
+): Promise<void> {
+  if (typeof startsRound !== "boolean") throw new ActionError("INVALID_INPUT");
+  await db.transaction(async (tx) => {
+    await serializeOwner(tx, userId);
+    const { rows } = await tx.query(
+      `UPDATE application_events SET starts_round = $3
+        WHERE id = $1 AND user_id = $2
+          AND event_kind IN ('ASSESSMENT_INVITED','INTERVIEW_INVITED','INTERVIEW_SCHEDULED')
+        RETURNING id`,
+      [eventId, userId, startsRound],
+    );
+    if (!rows[0]) throw new ActionError("NOT_FOUND");
+  });
+}
+
 interface ReviewContext {
   signalId: string;
   artifactId: string;
