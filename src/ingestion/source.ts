@@ -64,6 +64,8 @@ export interface FieldDecision {
     sources: readonly string[];
     rules?: readonly string[];
   }[];
+  /** Every rule that proposed any candidate, including those beyond the eight kept above. */
+  firedRules?: readonly string[];
 }
 
 /** Structured, redacted facts lifted from a message. Safe to persist. */

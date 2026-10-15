@@ -94,6 +94,10 @@ if (!existsSync(dir)) {
     console.log(
       `  APPLIED WRONGLY    ${String(count("applied-wrongly", outcomes)).padStart(5)}   must be 0`,
     );
+    if (count("applied-unverified", outcomes))
+      console.log(
+        `  applied, unchecked ${String(count("applied-unverified", outcomes)).padStart(5)}   add "job" to these labels`,
+      );
     console.log(
       `  waiting in review  ${String(count("review", outcomes)).padStart(5)}${share(count("review", outcomes))}`,
     );
@@ -113,6 +117,10 @@ if (!existsSync(dir)) {
       console.log(
         `  errors             ${String(count("error", outcomes)).padStart(5)}`,
       );
+    if (report.reconciliationFailures)
+      console.log(
+        `\nRECONCILIATION FAILED for ${report.reconciliationFailures} job(s): emails it would have resolved still show as review.`,
+      );
 
     const reasons = new Map<string, number>();
     for (const o of outcomes)
@@ -127,11 +135,14 @@ if (!existsSync(dir)) {
       );
 
     const problems = outcomes.filter((o) =>
-      ["applied-wrongly", "lost", "error"].includes(o.judgement),
+      ["applied-wrongly", "applied-unverified", "lost", "error"].includes(
+        o.judgement,
+      ),
     );
     if (problems.length) console.log("\nProblems:");
     for (const o of problems) {
-      const label = `${o.label.kind ?? "not hiring"} ${o.label.company ?? "?"} / ${o.label.title ?? "?"}`;
+      const job = o.label.job ?? o.label;
+      const label = `${o.label.kind ?? "not hiring"} ${job.company ?? "?"} / ${job.title ?? "?"}`;
       const got =
         o.state.status === "APPLIED"
           ? o.state.events
@@ -139,10 +150,11 @@ if (!existsSync(dir)) {
               .join("; ")
           : o.state.status;
       console.log(
-        `  ${o.judgement.padEnd(15)} ${o.file}: label ${label}; got ${got}`,
+        `  ${o.judgement.padEnd(18)} ${o.file}: label ${label}; got ${got}`,
       );
     }
-    if (count("applied-wrongly", outcomes)) process.exitCode = 1;
+    if (count("applied-wrongly", outcomes) || report.reconciliationFailures)
+      process.exitCode = 1;
   }
 } else {
   console.error("Usage: npm run eval:real -- [label|score] [--dir eval/real]");

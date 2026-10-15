@@ -63,7 +63,12 @@ export interface CaseResult extends Scored {
 
 function traceRules(
   field: RuleField,
-  candidates: readonly { value: string; rules?: readonly string[] }[],
+  decision:
+    | {
+        candidates: readonly { value: string; rules?: readonly string[] }[];
+        firedRules?: readonly string[];
+      }
+    | undefined,
   emitted: string | null,
   expected: string | null,
 ): RuleTrace {
@@ -72,6 +77,7 @@ function traceRules(
     (field === "company"
       ? companyKey(a) === companyKey(b)
       : norm(a) === norm(b));
+  const candidates = decision?.candidates ?? [];
   const rulesOf = (keep: (value: string) => boolean) =>
     [
       ...new Set(
@@ -79,7 +85,10 @@ function traceRules(
       ),
     ].sort() as FieldRule[];
   return {
-    fired: rulesOf(() => true),
+    // The candidate list keeps eight values; firedRules covers the ones cut.
+    fired: decision?.firedRules
+      ? ([...decision.firedRules].sort() as FieldRule[])
+      : rulesOf(() => true),
     emitted: rulesOf((value) => same(value, emitted)),
     expected: rulesOf((value) => same(value, expected)),
   };
@@ -98,16 +107,11 @@ export function scoreSignal(expect: Expected, signal: ExtractedSignal): Scored {
     rules: {
       company: traceRules(
         "company",
-        decisions?.company.candidates ?? [],
+        decisions?.company,
         actual.company,
         expect.company,
       ),
-      title: traceRules(
-        "title",
-        decisions?.title.candidates ?? [],
-        actual.title,
-        expect.title,
-      ),
+      title: traceRules("title", decisions?.title, actual.title, expect.title),
     },
     verdicts: {
       kind: verdict(expect.kind, actual.kind),

@@ -93,12 +93,14 @@ it("label pre-fills new emails from the extractor, unverified, and never overwri
       kind: "CONFIRMATION_RECEIVED",
       company: "Acme",
       title: "Backend Engineer",
+      job: null,
     });
     assert.deepEqual(labels["2-news.eml"], {
       verified: true,
       kind: null,
       company: null,
       title: null,
+      job: null,
       note: "mine",
     });
     assert.ok(
@@ -119,14 +121,22 @@ it("scores verified labels through the real pipeline in date order, using Gmail'
       kind: "REJECTION_RECEIVED",
       company: "Acme",
       title: "Backend Engineer",
+      job: null,
     },
     "b-confirm.eml": {
       verified: true,
       kind: "CONFIRMATION_RECEIVED",
       company: "Acme",
       title: "Backend Engineer",
+      job: null,
     },
-    "c-news.eml": { verified: true, kind: null, company: null, title: null },
+    "c-news.eml": {
+      verified: true,
+      kind: null,
+      company: null,
+      title: null,
+      job: null,
+    },
   };
   const run = async (rejectionHeaders: string) => {
     const dir = await folder({
@@ -179,6 +189,7 @@ it("judges any automatic change that contradicts the label as wrong", () => {
     kind: "REJECTION_RECEIVED" as const,
     company: "Acme",
     title: "Backend Engineer",
+    job: null,
   };
   const applied = (kind: string, company: string, title: string) => ({
     status: "APPLIED" as const,
@@ -203,12 +214,30 @@ it("judges any automatic change that contradicts the label as wrong", () => {
     judge(label, applied("REJECTION_RECEIVED", "Acme", "Data Engineer")),
     "applied-wrongly",
   );
+  // A rejection that names no role: landing on any Acme job must not count as correct.
+  const untitled = { ...label, title: null };
+  assert.equal(
+    judge(untitled, applied("REJECTION_RECEIVED", "Acme", "Data Engineer")),
+    "applied-unverified",
+  );
+  const job = { company: "Acme", title: "Backend Engineer" };
   assert.equal(
     judge(
-      { ...label, title: null },
+      { ...untitled, job },
       applied("REJECTION_RECEIVED", "Acme", "Data Engineer"),
     ),
+    "applied-wrongly",
+  );
+  assert.equal(
+    judge(
+      { ...untitled, job },
+      applied("REJECTION_RECEIVED", "Acme", "Backend Engineer"),
+    ),
     "applied-correctly",
+  );
+  assert.equal(
+    judge(untitled, applied("OFFER_RECEIVED", "Acme", "Data Engineer")),
+    "applied-wrongly",
   );
   assert.equal(
     judge(
@@ -226,4 +255,17 @@ it("judges any automatic change that contradicts the label as wrong", () => {
     ),
     "review-noise",
   );
+});
+
+it("rejects a label whose job is incomplete", async () => {
+  const dir = await folder({
+    "labels.json": JSON.stringify({
+      "x.eml": { verified: true, kind: null, job: { company: "Acme" } },
+    }),
+  });
+  try {
+    await assert.rejects(readLabels(dir), /needs both company and title/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

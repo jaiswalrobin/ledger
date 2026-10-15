@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { extractSignal } from "../src/ingestion/extract.ts";
-import { FIELD_RULES, type FieldRule } from "../src/ingestion/fields.ts";
+import {
+  extractCompanyAndTitle,
+  FIELD_RULES,
+  type FieldRule,
+} from "../src/ingestion/fields.ts";
 import type { ParsedMessage } from "../src/ingestion/source.ts";
 import { CORPUS } from "./corpus/emails.ts";
 import { HOLDOUT } from "./corpus/holdout.ts";
@@ -122,4 +126,42 @@ it("every company/title rule fires on the labelled sets or on a named example, a
     [...stats].filter(([, s]) => s.wrong > 0).map(([rule]) => rule),
     [],
   );
+});
+
+it("records every fired rule even when candidates beyond the eighth are dropped", () => {
+  const titles = [
+    "Backend Engineer",
+    "Frontend Engineer",
+    "Data Engineer",
+    "Platform Engineer",
+    "Security Engineer",
+    "Mobile Engineer",
+    "Site Reliability Engineer",
+    "Machine Learning Engineer",
+    "Product Designer",
+  ];
+  const { decisions } = extractCompanyAndTitle({
+    subject: "",
+    fromName: "",
+    fromAddress: null,
+    body: "",
+    titleHints: [
+      ...titles.map((value) => ({
+        value,
+        weight: 3,
+        rule: "hint:calendar" as const,
+      })),
+      { value: "Data Analyst", weight: 1, rule: "hint:workday-slug" as const },
+    ],
+  });
+  assert.equal(decisions.title.candidates.length, 8);
+  assert.ok(
+    !decisions.title.candidates.some((c) =>
+      c.rules?.includes("hint:workday-slug"),
+    ),
+  );
+  assert.deepEqual(decisions.title.firedRules, [
+    "hint:calendar",
+    "hint:workday-slug",
+  ]);
 });

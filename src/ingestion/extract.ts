@@ -712,6 +712,9 @@ export function extractSignal(message: ParsedMessage): ExtractedSignal {
       candidates: [...candidates.values()]
         .sort((a, b) => b.score - a.score || a.value.localeCompare(b.value))
         .slice(0, 8),
+      firedRules: [
+        ...new Set(decisions.flatMap((d) => d.firedRules ?? [])),
+      ].sort(),
     };
     if (ambiguous) reasons.add("conflicting-fields");
     if (supported.size > 1) reasons.add("conflicting-alternatives");

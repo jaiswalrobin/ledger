@@ -39,8 +39,14 @@ export interface Label {
   verified: boolean;
   /** The event the email reports; null for mail that is not about an application. */
   kind: SignalKind | null;
+  /** What the email itself states; null when it does not say. Scores extraction. */
   company: string | null;
   title: string | null;
+  /**
+   * The application the email belongs to, when the email does not name both company and title
+   * (most rejections). Scores the pipeline: an applied event is checked against this job.
+   */
+  job: { company: string; title: string } | null;
   note?: string;
 }
 
@@ -112,18 +118,29 @@ export async function readLabels(dir: string): Promise<Labels> {
   } catch {
     return {};
   }
-  const parsed = JSON.parse(text) as Record<string, Partial<Label>>;
+  const parsed = JSON.parse(text) as Record<
+    string,
+    Partial<Omit<Label, "job">> & { job?: Partial<Label["job"]> | null }
+  >;
   const labels: Labels = {};
   for (const [file, label] of Object.entries(parsed)) {
     const text = (value: unknown) =>
       typeof value === "string" && value.trim() ? value.trim() : null;
     if (label.kind != null && !KINDS.includes(label.kind))
       throw new Error(`${file}: unknown kind ${label.kind}`);
+    const jobCompany = text(label.job?.company);
+    const jobTitle = text(label.job?.title);
+    if (label.job && (!jobCompany || !jobTitle))
+      throw new Error(`${file}: "job" needs both company and title`);
     labels[file] = {
       verified: label.verified === true,
       kind: label.kind ?? null,
       company: text(label.company),
       title: text(label.title),
+      job:
+        jobCompany && jobTitle
+          ? { company: jobCompany, title: jobTitle }
+          : null,
       ...(label.note ? { note: label.note } : {}),
     };
   }
@@ -145,6 +162,7 @@ export async function labelEmails(
       kind: signal.kind,
       company: signal.fields.company,
       title: signal.fields.title,
+      job: null,
       note: "",
     };
     added.push(file);
@@ -174,6 +192,8 @@ export type Judgement =
   | "applied-correctly"
   /** Any automatic change that does not match the label: the error Ledger must not make. */
   | "applied-wrongly"
+  /** Applied with the right kind, but the label names no job to check it against. */
+  | "applied-unverified"
   /** Hiring mail waiting for a person. */
   | "review"
   /** Not hiring mail, but a person is asked about it. */
@@ -197,13 +217,17 @@ export function judge(label: Label, state: FinalState): Judgement {
         : "ignored";
   if (state.status === "REVIEW") return "review";
   if (state.status !== "APPLIED") return "lost";
-  // Only fields the label names are compared: an update may not repeat the job title.
-  const right = state.events.some(
+  const events = state.events.filter((event) => event.kind === label.kind);
+  if (!events.length) return "applied-wrongly";
+  // An update that names no job must not pass as correct on whichever job it landed: it is
+  // checked against the labelled job, and is unverifiable without one.
+  const company = label.job?.company ?? label.company;
+  const title = label.job?.title ?? label.title;
+  if (!company || !title) return "applied-unverified";
+  const right = events.some(
     (event) =>
-      event.kind === label.kind &&
-      (!label.company ||
-        companyKey(event.company) === companyKey(label.company)) &&
-      (!label.title || verdict(label.title, event.title) === "correct"),
+      companyKey(event.company) === companyKey(company) &&
+      verdict(title, event.title) === "correct",
   );
   return right ? "applied-correctly" : "applied-wrongly";
 }
@@ -212,6 +236,8 @@ export interface RealReport {
   emails: number;
   verified: number;
   unreadable: string[];
+  /** Reconciliation jobs that threw. Emails they would have resolved still show as review. */
+  reconciliationFailures: number;
   extraction: (Scored & { file: string })[];
   outcomes: {
     file: string;
@@ -260,13 +286,19 @@ export async function evaluateReal(
         states.set(email.file, { status: "ERROR" });
       }
     }
-    // Reconciliation continues in bounded batches, as the scheduler would run it.
+    // Reconciliation continues in bounded batches, as the scheduler would run it. A failed job
+    // is a pipeline error: report it rather than retry it, since retrying cannot change it here.
+    let reconciliationFailures = 0;
     for (let round = 0; round < 1000; round++) {
       const pending = await t.db.query(
         "SELECT 1 FROM review_reconciliation_jobs LIMIT 1",
       );
       if (!pending.rows.length) break;
-      await drainReviewReconciliations(t.db, observedAt, 20);
+      const { failed } = await drainReviewReconciliations(t.db, observedAt, 20);
+      if (failed) {
+        reconciliationFailures = failed;
+        break;
+      }
     }
 
     const artifacts = await t.db.query<{
@@ -340,6 +372,7 @@ export async function evaluateReal(
       emails: emails.length,
       verified: verified.length,
       unreadable,
+      reconciliationFailures,
       extraction,
       outcomes,
     };

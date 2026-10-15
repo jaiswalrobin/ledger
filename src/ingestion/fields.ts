@@ -601,6 +601,8 @@ function decide(map: Candidates): FieldDecision {
         ? "SUPPORTED"
         : "MISSING",
     value: !ambiguous && best && best.score >= 1 ? best.value : null,
+    // Bounded by FIELD_RULES, so attribution survives the cut to eight candidates below.
+    firedRules: [...new Set(candidates.flatMap((c) => c.rules))].sort(),
     // Bounded, safe facts only. Never persist matching sentences, addresses, or snippets.
     candidates: candidates
       .slice(0, 8)

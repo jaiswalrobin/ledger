@@ -10,6 +10,11 @@ In Gmail, open a message, choose **⋮ → Download message**, and save the `.em
 `eval/real/` at the repository root. That folder is git-ignored; the tool refuses to write labels
 anywhere git would track them.
 
+**One Gmail account per folder.** The evaluation treats a folder as one connected mailbox, and
+some rules depend on it (a rejection's confirmation must have reached the same mailbox; threads
+never cross mailboxes). For several accounts, use one folder each, such as `eval/real/work/`,
+and pass `--dir eval/real/work`. Mail forwarded into one account belongs to that account.
+
 Take a cross-section, not just mail you expect to work:
 
 - confirmations, assessments, interview invitations and calendar invites, rejections, offers;
@@ -34,6 +39,7 @@ This adds an entry to `eval/real/labels.json` for each new file, pre-filled from
   "kind": "REJECTION_RECEIVED",
   "company": "Acme",
   "title": "Backend Engineer",
+  "job": null,
   "note": ""
 }
 ```
@@ -43,7 +49,11 @@ Open each email and correct the fields against the message itself, not against t
 - `kind`: one of `CONFIRMATION_RECEIVED`, `ASSESSMENT_INVITED`, `INTERVIEW_INVITED`,
   `INTERVIEW_SCHEDULED`, `REJECTION_RECEIVED`, `OFFER_RECEIVED`, or `null` for mail that is not
   about one of your applications;
-- `company` and `title`: as the email states them, or `null` when it does not say.
+- `company` and `title`: as the email states them, or `null` when it does not say;
+- `job`: the application the email belongs to, as `{ "company": "Acme", "title": "Backend
+  Engineer" }`, whenever the email does not name both itself (most rejections). The pipeline
+  score checks an applied event against this job. Without it, an applied update that names no
+  job is reported as *applied, unchecked*, never as correct.
 
 Then set `"verified": true`. Only verified labels are scored. Running `label` again adds new files
 and never changes existing entries.
@@ -67,13 +77,15 @@ state is then compared with its label:
 | --- | --- |
 | applied correctly | the right event, on the job the label names |
 | **APPLIED WRONGLY** | any automatic change that contradicts the label; must be 0 |
+| applied, unchecked | the right kind of event, but the label names no job to check it against |
 | waiting in review | hiring mail left for a person |
 | lost hiring mail | hiring mail dismissed, or skipped as sensitive |
 | review noise | non-hiring mail sent to review |
 | ignored | non-hiring mail, correctly left alone |
 
-Review reasons are counted, and every wrong, lost or failed email is listed by file name. The
-command exits non-zero when anything was applied wrongly.
+Review reasons are counted, and every wrong, unchecked, lost or failed email is listed by file
+name. A reconciliation job that fails is reported as a failure. The command exits non-zero when
+anything was applied wrongly or reconciliation failed.
 
 ## What it does not cover
 
