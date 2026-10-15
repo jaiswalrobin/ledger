@@ -90,6 +90,10 @@ export function resolveSubmission(
   return { kind: "CREATE", reason: "New observed submission with no competing attempt identity" };
 }
 
+/** Reasons resolveUpdate gives for a match; the pipeline maps them to a policy MatchBasis. */
+export const EXACT_APPLICATION_ID = "Exact application ID";
+export const UNIQUE_SUBMITTED_EMAIL = "Unique matching submitted email";
+
 /** Reason for matching the only attempt on an opening without an identifier. Callers treat it as
  * weaker evidence than an ID or email match (rejections and offers need more; see pipeline). */
 export const SOLE_ATTEMPT = "Sole attempt on the opening";
@@ -120,7 +124,7 @@ export function resolveUpdate(
   if (update.externalApplicationId) {
     const strong = scoped.filter(a => a.externalApplicationId === update.externalApplicationId);
     if (strong.some(contradicts))return {kind:"REVIEW",candidateIds:strong.map(a=>a.id),reason:"Conflicting identity for an application ID"};
-    if (strong.length) return choose(strong.map(a => a.id), "Exact application ID");
+    if (strong.length) return choose(strong.map(a => a.id), EXACT_APPLICATION_ID);
     return sole() ?? { kind: "REVIEW", candidateIds: scoped.map(a => a.id), reason: "Application ID not recognized" };
   }
   if (email) {
@@ -130,7 +134,7 @@ export function resolveUpdate(
       if (update.phoneLookupKey && selected.phoneLookupKey && update.phoneLookupKey !== selected.phoneLookupKey) {
         return { kind: "REVIEW", candidateIds: [selected.id], reason: "Conflicting submitted phone identity" };
       }
-      return { kind: "MATCH", id: selected.id, reason: "Unique matching submitted email" };
+      return { kind: "MATCH", id: selected.id, reason: UNIQUE_SUBMITTED_EMAIL };
     }
     return (matched.length ? null : sole()) ?? {
       kind: "REVIEW",

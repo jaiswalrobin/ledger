@@ -44,6 +44,19 @@ export interface OpeningSignal {
   canonicalUrl: string | null;
 }
 
+/** How sensitive a message is: whether any of it may be read or kept. See ingestion/privacy.ts. */
+export type Sensitivity = "NONE" | "ACCESS_LINK" | "CREDENTIAL";
+
+export interface CalendarFacts {
+  /** Opaque UID hash; raw calendar identifiers and participant addresses are never retained. */
+  uidKey: string;
+  sequence: number;
+  method: string;
+  status: string;
+  scheduledFor: string | null;
+  organizerDomain: string | null;
+}
+
 export type Resolution =
   | { kind: "MATCH"; id: Id; reason: string }
   | { kind: "CREATE"; reason: string }

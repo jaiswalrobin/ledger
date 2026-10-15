@@ -158,3 +158,26 @@ it("calendar identity cannot override a submitted contact or a changed organizer
     assert.ok((await t.db.query("SELECT signal_id FROM event_evidence WHERE artifact_id=$1",[artifact.id])).rows.every(r=>r.signal_id));
   } finally {await t.close();}
 });
+
+it("a calendar UID links a revision only from an authenticated sender", async () => {
+  const t = await createTestDb();
+  try {
+    const userId = await seedUser(t.db), mailboxId = await seedMailbox(t.db, userId);
+    let n = 0;
+    const ingest = (original: Awaited<ReturnType<typeof parsed>>, senderAuthenticated = true) => ingestOriginal(t.db, {
+      userId, source: { kind: "GMAIL", mailboxId, providerMessageId: `uid-${++n}`, senderAuthenticated }, original,
+      observedAt: new Date("2026-10-20T12:00:00Z"),
+    });
+    const [confirmation] = await parseEml(new TextEncoder().encode(buildEml({
+      from: "Acme Careers <careers@acme.example>", to: "applicant@example.com", subject: "Application received",
+      date: "Mon, 05 Oct 2026 09:30:00 +0000",
+      text: "We received your application for the Backend Engineer role at Acme.\nApplication ID: APP-12345",
+    })));
+    assert.equal((await ingest(confirmation!)).status, "APPLIED");
+    assert.equal((await ingest(await parsed(calendar(1)))).status, "APPLIED");
+    // The revision names no application ID, so only the UID could link it.
+    const unauthenticated = await ingest(await parsed(calendar(2), "REQUEST", "A new interview time."), false);
+    assert.equal(unauthenticated.status === "REVIEW" && unauthenticated.reason, "CALENDAR_REVISION");
+    assert.equal((await ingest(await parsed(calendar(2), "REQUEST", "Your interview has moved."))).status, "APPLIED");
+  } finally { await t.close(); }
+});

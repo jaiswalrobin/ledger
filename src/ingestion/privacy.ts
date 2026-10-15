@@ -1,4 +1,5 @@
 import type { ParsedMessage } from "./source.ts";
+import type { Sensitivity } from "../domain/types.ts";
 
 const URL_PATTERN = /https?:\/\/[^\s<>"')\]]+/gi;
 
@@ -29,7 +30,7 @@ const ASSET_PATH = /\.(?:png|jpe?g|gif|svg|webp|ico|css|woff2?|ttf)$/i;
  * - CREDENTIAL: the message delivers or acts on a credential (codes, password resets, account
  *   verification, magic links, bearer tokens). Nothing derived from it is kept.
  */
-export type Sensitivity = "NONE" | "ACCESS_LINK" | "CREDENTIAL";
+export type { Sensitivity };
 const RANK: Record<Sensitivity, number> = { NONE: 0, ACCESS_LINK: 1, CREDENTIAL: 2 };
 const higher = (a: Sensitivity, b: Sensitivity): Sensitivity => (RANK[b] > RANK[a] ? b : a);
 

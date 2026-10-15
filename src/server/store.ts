@@ -421,12 +421,6 @@ export async function latestCalendarRevision(db: Db,userId: string,_excludeSigna
   return r?{eventId:r.id,attemptId:r.attempt_id,senderDomain:r.calendar_sender_domain,calendar:{uidKey:r.calendar_uid_key,sequence:Number(r.calendar_sequence),method:r.calendar_method,status:r.calendar_status,organizerDomain:r.calendar_organizer_domain,scheduledFor:r.scheduled_for?iso(r.scheduled_for):null}}:null;
 }
 
-const CALENDAR_IDENTITY = ["uidKey", "sequence", "method", "status", "scheduledFor", "organizerDomain"] as const;
-
-/** Two observations of one invitation revision: every safe calendar fact agrees. */
-export const sameCalendarRevision = (a: CalendarFacts, b: CalendarFacts): boolean =>
-  CALENDAR_IDENTITY.every((key) => a[key] === b[key]);
-
 /** Whether one of the attempt's confirmations was received by this Gmail mailbox. */
 export async function attemptConfirmedInMailbox(
   db: Db,

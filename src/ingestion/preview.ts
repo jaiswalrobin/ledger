@@ -1,3 +1,4 @@
+import { GATED_REASONS, screenSensitive } from "../domain/policy.ts";
 import { EXTRACTOR_VERSION, extractSignal, isHiringSignal } from "./extract.ts";
 import { classifyHeaders } from "./header-gate.ts";
 import { messageSensitivity } from "./privacy.ts";
@@ -15,16 +16,6 @@ const COMPARED_FIELDS = [
   "externalApplicationId",
   "calendar",
 ] as const;
-
-/** Extractor reasons the pipeline always sends to a person. */
-const REVIEW_REASONS: ReadonlySet<string> = new Set([
-  "conflicting-fields",
-  "conflicting-alternatives",
-  "interview-cancelled",
-  "not-submitted",
-  "uncertain-calendar",
-  "quoted-history-only",
-]);
 
 /** Key-order-independent JSON, so {a,b} and {b,a} compare equal. */
 const canonical = (value: unknown): string => {
@@ -50,18 +41,18 @@ const needsReview = (signal: ExtractedSignal): boolean =>
   !signal.fields.company ||
   !signal.fields.title ||
   signal.confidence === "LOW" ||
-  signal.reasons.some((reason) => REVIEW_REASONS.has(reason));
+  signal.reasons.some((reason) => GATED_REASONS.has(reason));
 
 /** Pure preview: no database, remote reads, event updates, or source-content output. */
 export function previewExtraction(message: ParsedMessage, baseline?: Extractor) {
   const from = `${message.fromName} <${message.fromAddress ?? ""}>`;
-  const level = messageSensitivity(message);
   const after = extractSignal(message);
-  // The same rule as the pipeline: credential deliveries, and access links outside hiring mail.
   if (
-    classifyHeaders({ from, subject: message.subject }).kind === "SKIP_SENSITIVE" ||
-    level === "CREDENTIAL" ||
-    (level === "ACCESS_LINK" && !isHiringSignal(after))
+    screenSensitive({
+      headerSensitive: classifyHeaders({ from, subject: message.subject }).kind === "SKIP_SENSITIVE",
+      level: messageSensitivity(message),
+      hiringSignal: isHiringSignal(after),
+    })
   )
     return { status: "SKIPPED_SENSITIVE" as const };
   const before = baseline?.extract(message) ?? null;
