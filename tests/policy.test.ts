@@ -7,6 +7,7 @@ import {
   GATED_REASONS,
   judgeCalendarRevision,
   mayApplyAutomatically,
+  mayUseEmployerContext,
   needsAuthority,
   screenSensitive,
   type AcceptedRevision,
@@ -242,6 +243,31 @@ describe("mayApplyAutomatically", () => {
       }
     // Per kind: ID 4 opening/mailbox combos, email 2, sole 2, conversation 2; times 3 senders.
     assert.equal(allowed, 2 * (4 + 2 + 2 + 2) * 3);
+  });
+});
+
+describe("mayUseEmployerContext", () => {
+  it("allows authenticated mailbox mail, and forwarded mail except rejections and offers", () => {
+    for (const kind of KINDS)
+      for (const authenticatedMailbox of BOOLS)
+        for (const forwardedByUser of BOOLS)
+          assert.equal(
+            mayUseEmployerContext({
+              kind,
+              authenticatedMailbox,
+              forwardedByUser,
+            }),
+            authenticatedMailbox || (forwardedByUser && !needsAuthority(kind)),
+            `${kind} ${authenticatedMailbox} ${forwardedByUser}`,
+          );
+    assert.equal(
+      mayUseEmployerContext({
+        kind: "REJECTION_RECEIVED",
+        authenticatedMailbox: false,
+        forwardedByUser: true,
+      }),
+      false,
+    );
   });
 });
 

@@ -180,3 +180,49 @@ it("one interview round is a few facts with its emails as evidence, not one entr
     await t.close();
   }
 });
+
+it("forwarded copies: resolving the first review clears the rest, but never a rejection", async () => {
+  const { resolveReviewCreate } = await import("../src/server/actions.ts");
+  const t = await createTestDb();
+  try {
+    const userId = await seedUser(t.db);
+    const reviews: string[] = [];
+    // No confirmation on record: every email waits for the application to exist.
+    for (const mail of WEAVE.filter((m) => m.id !== "applied")) {
+      const outcome = await ingestOriginal(t.db, {
+        userId,
+        source: { kind: "FORWARDED_EML" },
+        original: await original(mail),
+        observedAt: new Date("2026-10-15T08:00:00Z"),
+      });
+      assert.equal(outcome.status, "REVIEW", mail.id);
+      if (outcome.status === "REVIEW") reviews.push(outcome.reviewId);
+    }
+    await resolveReviewCreate(t.db, userId, reviews[0]!, {
+      company: "Weave",
+      title: "Senior Frontend Engineer",
+    } as never);
+    const open = await t.db.query(
+      "SELECT 1 FROM review_items WHERE user_id = $1 AND state = 'OPEN'",
+      [userId],
+    );
+    assert.equal(open.rows.length, 0);
+
+    // A forwarded rejection that names no role cannot be matched through the sender's domain.
+    const rejection = await ingestOriginal(t.db, {
+      userId,
+      source: { kind: "FORWARDED_EML" },
+      original: await original({
+        id: "rejection",
+        from: swati,
+        subject: "Update from Weave",
+        date: "Mon, 19 Oct 2026 09:00:00 +0000",
+        text: "Hi Robin, thank you for your time. Unfortunately, we have decided to move forward with other candidates.",
+      }),
+      observedAt: new Date("2026-10-20T08:00:00Z"),
+    });
+    assert.equal(rejection.status, "REVIEW");
+  } finally {
+    await t.close();
+  }
+});
