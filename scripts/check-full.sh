@@ -20,7 +20,7 @@ if curl --silent --max-time 2 --output /dev/null http://127.0.0.1:3000/; then
 fi
 
 step() { printf '\n== %s\n' "$1"; }
-step "format, types, unit tests"; npm run -s check
+step "format, types, unit tests, demo"; npm run -s check
 step "migrations"; npm run -s migrate
 step "PostgreSQL tests"; npm run -s test:postgres
 step "production build"; npm run -s build

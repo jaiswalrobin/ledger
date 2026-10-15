@@ -12,7 +12,7 @@
     "build": "next build",
     "start": "next start",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
-    "check": "npm run -s format:check && npm run -s typecheck && npm test",
+    "check": "npm run -s format:check && npm run -s typecheck && npm test && npm run -s demo",
     "check:full": "bash scripts/check-full.sh",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

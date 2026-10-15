@@ -18,7 +18,7 @@ most of these rules exist to keep changes reviewable and measured.
 ## Before you push
 
 ```sh
-npm run check        # formatting, types, unit tests (seconds)
+npm run check        # formatting, types, unit tests, demo (the CI domain job)
 npm run check:full   # everything CI runs: also migrations, PostgreSQL tests, build, browser, smoke
 ```
 
