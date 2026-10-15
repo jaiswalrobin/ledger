@@ -101,6 +101,7 @@ describe("schema", () => {
         "0011_conversation_context.sql",
         "0012_sync_read_indexes.sql",
         "0013_review_reconciliation.sql",
+        "0014_drop_signal_calendar_index.sql",
       ],
     );
   });
