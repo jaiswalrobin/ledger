@@ -520,3 +520,79 @@ test("connections explain email counts and preserve partial recheck progress", a
   ).toBeDisabled();
   await expect(page.getByRole("button", { name: "Sync now" })).toBeEnabled();
 });
+
+test("one employer's interview emails group in review, then show as rounds", async ({
+  page,
+}) => {
+  const weave = "Swati Jain <swati.jain@weave.example>";
+  const file = (id: string, subject: string, date: string, text: string) => ({
+    name: `${id}.eml`,
+    mimeType: "message/rfc822",
+    buffer: Buffer.from(
+      buildEml({
+        from: weave,
+        to: "robin@example.com",
+        subject,
+        date,
+        messageId: `<${id}@weave.example>`,
+        text,
+      }),
+    ),
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Explore the demo" }).click();
+  const importFiles = async (files: ReturnType<typeof file>[]) => {
+    await page
+      .getByRole("button", { name: "Import emails", exact: true })
+      .first()
+      .click();
+    await page.getByLabel("Email files").setInputFiles(files);
+    await page.getByRole("button", { name: "Import selected emails" }).click();
+    await page.getByRole("button", { name: "View your ledger" }).waitFor();
+  };
+  await importFiles([
+    file(
+      "r1",
+      "Interview confirmed - Weave",
+      "Mon, 28 Sep 2026 09:00:00 +0000",
+      "Hi Robin, your interview for the Senior Frontend Engineer role is confirmed for Wednesday, Sep 30.",
+    ),
+    file(
+      "next",
+      "Robin, Weave Next Steps!",
+      "Wed, 07 Oct 2026 09:00:00 +0000",
+      "Hi Robin, Good news! We received positive feedback from your previous interview for the Senior Frontend Engineer role. We would like to invite you to the next round.",
+    ),
+    file(
+      "avail",
+      "Reminder: Submit Your Availability for Weave",
+      "Thu, 08 Oct 2026 09:00:00 +0000",
+      "Hi Robin, Just a quick reminder to share your availability so we can schedule your interview for the Senior Frontend Engineer role.",
+    ),
+    file(
+      "details",
+      "Robin, Interview Confirmation and Details- Weave",
+      "Fri, 09 Oct 2026 08:00:00 +0000",
+      "Hi Robin, Thanks for submitting your availability for the Senior Frontend Engineer role. Your interview is confirmed for Thursday at 9am.",
+    ),
+  ]);
+  // No application on record yet: one group, one decision.
+  await page
+    .getByRole("button", { name: /needs review/i })
+    .first()
+    .click();
+  await expect(page.getByText("4 emails", { exact: true })).toBeVisible();
+
+  await importFiles([
+    file(
+      "applied",
+      "Thank you for applying to Weave",
+      "Mon, 14 Sep 2026 09:00:00 +0000",
+      "Hi Robin, thank you for applying to the Senior Frontend Engineer position at Weave. We have received your application.",
+    ),
+  ]);
+  await page.getByRole("button", { name: "View your ledger" }).click();
+  await page.getByText("Weave", { exact: true }).first().click();
+  await expect(page.getByText("Round 2 · Interview")).toBeVisible();
+  await expect(page.getByText("+1 more email")).toBeVisible();
+});

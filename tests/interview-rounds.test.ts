@@ -176,6 +176,49 @@ it("one interview round is a few facts with its emails as evidence, not one entr
       { kind: "INTERVIEW_SCHEDULED", starts_round: false, evidence: 1 },
       { kind: "INTERVIEW_SCHEDULED", starts_round: false, evidence: 1 },
     ]);
+
+    // The read model shows the same story: two rounds, the latest meeting, every email counted.
+    const { getOpening, listOpenings } =
+      await import("../src/server/queries.ts");
+    const [opening] = await listOpenings(
+      t.db,
+      userId,
+      new Date("2026-10-15T08:00:00Z"),
+    );
+    assert.deepEqual(opening!.attempts[0]!.round, {
+      number: 2,
+      kind: "INTERVIEW",
+    });
+    const detail = await getOpening(
+      t.db,
+      userId,
+      opening!.id,
+      new Date("2026-10-15T08:00:00Z"),
+    );
+    assert.deepEqual(detail!.attempts[0]!.rounds, [
+      {
+        number: 1,
+        kind: "INTERVIEW",
+        startedAt: "2026-09-28T09:00:00.000Z",
+        meetingAt: null,
+        reschedules: 0,
+        scheduled: true,
+        emails: 1,
+      },
+      {
+        number: 2,
+        kind: "INTERVIEW",
+        startedAt: "2026-10-07T09:00:00.000Z",
+        meetingAt: "2026-10-16T10:30:00.000Z",
+        reschedules: 2,
+        scheduled: true,
+        emails: 8,
+      },
+    ]);
+    assert.deepEqual(
+      detail!.attempts[0]!.events.map((e) => e.round),
+      [null, 1, 2, 2, 2, 2, 2],
+    );
   } finally {
     await t.close();
   }
