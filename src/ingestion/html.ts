@@ -30,8 +30,18 @@ export function htmlText(html: string): string {
   const lower = html.toLowerCase();
   const out: string[] = [];
   const links: (string | null)[] = [];
+  // Structure tracking is best-effort: past these depths the scanner stops tracking instead of
+  // rejecting the message, because real templates nest deeply and leave tags unclosed.
+  const MAX_CONTAINERS = 40, MAX_ROWS = 20;
   const containers: { kind: string; quoted: boolean }[] = [];
-  const rows: { start: number; cells: string[]; cellStart: number | null }[] = [];
+  /** Untracked (over-limit) open containers by kind, so their end tags pair up correctly. */
+  const untracked: Record<string, number> = {};
+  const rows: { start: number; cells: string[]; cellStart: number | null; table: number }[] = [];
+  let tableDepth = 0;
+  const finishRow = (row: (typeof rows)[number]) => {
+    if (row.cells.length === 2 && /^(?:company|employer|job\s*title|role|position|location|application\s*(?:id|number|reference)|submitted email|applicant email)\s*:?$/i.test(row.cells[0]!))
+      out.splice(row.start, out.length - row.start, `${row.cells[0]!.replace(/:$/, "")}: ${row.cells[1]}`);
+  };
   let i = 0;
   while (i < html.length) {
     const open = html.indexOf("<", i);
@@ -60,14 +70,19 @@ export function htmlText(html: string): string {
     const kind = name[2]!.toLowerCase();
     if (kind === "blockquote" || kind === "div") {
       if (!closing) {
-        if (containers.length >= 40) throw new HtmlInspectionError();
         const classes = /\bclass\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
         const id = /\bid\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
         const quoted = kind === "blockquote" ||
           /(?:^|\s)(?:gmail_quote|yahoo_quoted)(?:\s|$)/i.test(classes?.[1] ?? classes?.[2] ?? "") ||
           /^appendonsend$/i.test(id?.[1] ?? id?.[2] ?? "");
-        containers.push({ kind, quoted });
-        if (quoted) out.push(`\n${QUOTE_START}\n`);
+        // A quote boundary is always tracked; an ordinary container past the limit is counted.
+        if (containers.length >= MAX_CONTAINERS && !quoted) untracked[kind] = (untracked[kind] ?? 0) + 1;
+        else {
+          containers.push({ kind, quoted });
+          if (quoted) out.push(`\n${QUOTE_START}\n`);
+        }
+      } else if (untracked[kind]) {
+        untracked[kind]! -= 1;
       } else {
         let match = containers.length - 1;
         while (match >= 0 && containers[match]!.kind !== kind) match--;
@@ -75,15 +90,27 @@ export function htmlText(html: string): string {
           if (container.quoted) out.push(`\n${QUOTE_END}\n`);
       }
     }
+    if (kind === "table") {
+      if (!closing) tableDepth += 1;
+      else {
+        // Leaving a table ends any of its rows whose </tr> was omitted.
+        while (rows.length && rows.at(-1)!.table >= tableDepth) {
+          finishRow(rows.pop()!);
+          out.push("\n");
+        }
+        tableDepth = Math.max(0, tableDepth - 1);
+      }
+    }
     if (kind === "tr") {
       if (!closing) {
-        if (rows.length >= 20) throw new HtmlInspectionError();
-        rows.push({ start: out.length, cells: [], cellStart: null });
-      } else {
-        const row = rows.pop();
-        if (row?.cells.length === 2 && /^(?:company|employer|job\s*title|role|position|location|application\s*(?:id|number|reference)|submitted email|applicant email)\s*:?$/i.test(row.cells[0]!)) {
-          out.splice(row.start, out.length - row.start, `${row.cells[0]!.replace(/:$/, "")}: ${row.cells[1]}`);
+        // </tr> is optional in HTML: a new row in the same table ends the previous one.
+        if (rows.length && rows.at(-1)!.table === tableDepth) {
+          finishRow(rows.pop()!);
+          out.push("\n");
         }
+        if (rows.length < MAX_ROWS) rows.push({ start: out.length, cells: [], cellStart: null, table: tableDepth });
+      } else if (rows.length && rows.at(-1)!.table === tableDepth) {
+        finishRow(rows.pop()!);
       }
     }
     if ((kind === "td" || kind === "th") && rows.length) {

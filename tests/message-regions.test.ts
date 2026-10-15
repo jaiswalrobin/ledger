@@ -104,3 +104,31 @@ it("the condition itself never asserts an event", async () => {
   ])
     assert.equal((await extract(text, undefined, "Next steps")).kind, null, text);
 });
+
+it("deeply nested or unclosed HTML is read, not rejected as malformed", async () => {
+  const body = "<p>Thank you for applying for the Data Engineer position at Acme. We have received your application.</p>";
+  for (const html of [
+    "<table>" + "<tr><td>row</td>".repeat(25) + "</table>" + body,
+    "<div>".repeat(45) + body,
+    "<table><tr><td>".repeat(22) + body + "</td></tr></table>".repeat(22),
+  ]) {
+    const signal = await extract("View this email in a browser.", html);
+    assert.equal(signal.kind, "CONFIRMATION_RECEIVED");
+    assert.equal(signal.fields.company, "Acme");
+  }
+});
+
+it("label rows are read when </tr> is omitted", async () => {
+  const signal = await extract("View this email in a browser.",
+    "<p>We have received your application.</p><table><tr><td>Company:</td><td>Acme</td><tr><td>Job Title</td><td>Data Engineer</td></table>");
+  assert.equal(signal.fields.company, "Acme");
+  assert.equal(signal.fields.title, "Data Engineer");
+});
+
+it("a Gmail quote past the container limit is still quoted history", async () => {
+  const signal = await extract("View this email in a browser.",
+    "<div>".repeat(45) + "<p>We have received your application for the Data Engineer role at Acme.</p>" +
+    '<div class="gmail_quote"><p>We are delighted to offer you the Wrong Engineer role at Wrong Company.</p></div>');
+  assert.equal(signal.kind, "CONFIRMATION_RECEIVED");
+  assert.equal(signal.fields.company, "Acme");
+});
