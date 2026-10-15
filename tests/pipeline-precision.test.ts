@@ -307,3 +307,19 @@ describe("waiting updates reconcile when the attempt they need appears", () => {
     assert.deepEqual(await events(user), ["CONFIRMATION_RECEIVED", "INTERVIEW_INVITED"]);
   });
 });
+
+describe("conditional wording in follow-ups", () => {
+  it("an interview invitation opening with 'When you're ready' joins the application, not dismissed", async () => {
+    const { user, mailbox } = await fresh();
+    await gmail(user, mailbox, {
+      subject: "Application received",
+      text: "We received your application for the Data Engineer role at Acme.",
+    });
+    const out = await gmail(user, mailbox, {
+      subject: "Next steps", date: "Tue, 13 Oct 2026 09:30:00 +0000",
+      text: "Hi Robin,\n\nWhen you're ready, we'd like to invite you to interview for the Data Engineer role at Acme.",
+    });
+    assert.equal(out.status, "APPLIED");
+    assert.deepEqual(await events(user), ["CONFIRMATION_RECEIVED", "INTERVIEW_INVITED"]);
+  });
+});

@@ -184,6 +184,25 @@ const STEP_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>([
   "INTERVIEW_SCHEDULED",
 ]);
 
+const CONDITION_START = /^(?:if|unless|should|in case|when)\b/i;
+/** Where the main clause of a comma-less conditional sentence usually begins. */
+const MAIN_CLAUSE = /\s(?=(?:then|we|we'd|we'll|we're|please|kindly|you will|you'll|our team|i|i'd|i'll)\b)/i;
+
+/**
+ * A conditional sentence asserts its main clause, not its condition. "If your interview is
+ * cancelled, please let us know" must not report a cancellation, and "If we decide not to move
+ * forward, we will let you know" is not a rejection; but "When you're ready, we'd like to invite
+ * you to interview" is an invitation. The condition runs to the first comma, or else to where the
+ * main clause starts; with neither, the whole sentence is treated as a condition.
+ */
+function withoutCondition(clause: string): string {
+  if (!CONDITION_START.test(clause)) return clause;
+  const comma = clause.indexOf(",");
+  if (comma >= 0) return clause.slice(comma + 1).trim();
+  const main = MAIN_CLAUSE.exec(clause.slice(3));
+  return main ? clause.slice(3 + main.index).trim() : "";
+}
+
 export function detectKind(haystack: string): {
   kind: SignalKind | null;
   reasons: string[];
@@ -192,7 +211,7 @@ export function detectKind(haystack: string): {
   const normalized = normalizeForMatching(haystack).replace(/https?:\/\/\S+/gi, " ");
   // Keep assertion boundaries; ordinary hard wrapping may still join within a clause.
   const clauses = normalized.split(/(?:[.!?]+(?:\s+|$)|\n{2,}|\n(?=\s*(?:if|unless|should|in case|when)\b))/i)
-    .map(flatten).filter(clause => clause && !/^(?:if|unless|should|in case|when)\b/i.test(clause));
+    .map(flatten).map(withoutCondition).filter(Boolean);
   // "Thank you for taking the time to interview with us" opens most post-interview rejections;
   // a thank-you sentence describes the past, so it never proposes an interview/assessment step.
   const withoutThanks = clauses.map(clause => clause.replace(

@@ -84,3 +84,23 @@ it("an interview subject cannot lend its noun to an unrelated cancelled session"
   const signal = await extract("Your previous session was cancelled. We would like to invite you to interview for the Backend Engineer role at Acme.", undefined, "Interview invitation");
   assert.equal(signal.kind, "INTERVIEW_INVITED");
 });
+
+it("a conditional sentence still asserts its main clause", async () => {
+  for (const [text, kind] of [
+    ["When you have a moment, please complete the coding assessment for the Data Engineer role.", "ASSESSMENT_INVITED"],
+    ["When you're ready, we'd like to invite you to interview with our team.", "INTERVIEW_INVITED"],
+    ["If you are still interested, we would like to schedule an interview.", "INTERVIEW_INVITED"],
+    ["If you are still interested we would like to schedule an interview.", "INTERVIEW_INVITED"],
+    ["Should you accept, we are delighted to extend an offer for the Data Engineer role.", "OFFER_RECEIVED"],
+  ] as const)
+    assert.equal((await extract(text, undefined, "Next steps")).kind, kind, text);
+});
+
+it("the condition itself never asserts an event", async () => {
+  for (const text of [
+    "If we decide not to move forward, we will let you know.",
+    "If we decide not to move forward we will let you know.",
+    "If your interview is cancelled please let us know 24 hours in advance.",
+  ])
+    assert.equal((await extract(text, undefined, "Next steps")).kind, null, text);
+});
