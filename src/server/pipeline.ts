@@ -18,6 +18,7 @@ import {
   type MatchBasis,
   type ReviewReason,
 } from "../domain/policy.ts";
+import { isStep, placeStep } from "../domain/rounds.ts";
 import type { CalendarFacts } from "../domain/types.ts";
 import {
   atsKeyId,
@@ -63,7 +64,9 @@ import {
   loadOpenings,
   recordEvent,
   reproject,
+  stepEvents,
   weakOpeningCandidates,
+  type NewEvent,
 } from "./store.ts";
 
 export type { ReviewReason };
@@ -1011,7 +1014,27 @@ async function applyUpdate(
       return stop("CALENDAR_REVISION", [attemptId], [openingId]);
   }
 
-  const event = eventFor(c, attemptId);
+  let event: NewEvent = eventFor(c, attemptId);
+  if (isStep(c.kind)) {
+    // Reminders and repeat confirmations are evidence for the round's existing fact.
+    const placement = placeStep(await stepEvents(tx, userId, attemptId), {
+      kind: c.kind,
+      occurredAt: c.occurredAt,
+      calendar: event.calendar ?? null,
+      startsRound: c.signal.fields.nextRound === true,
+    });
+    if (placement.action === "ATTACH") {
+      await linkEvidence(
+        tx,
+        userId,
+        placement.eventId,
+        c.artifactId,
+        c.signalId,
+      );
+      return next(applied(c, attemptId, openingId));
+    }
+    event = { ...event, startsRound: placement.startsRound };
+  }
   const problem = await automaticEventProblem(tx, event);
   if (problem) return stop(problem, [attemptId], [openingId]);
   await recordEvent(tx, event, c.artifactId);

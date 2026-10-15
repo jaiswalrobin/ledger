@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { companyKey, normalizedText } from "../domain/normalization.ts";
 import { projectAttempt } from "../domain/projection.ts";
+import type { StepEvent } from "../domain/rounds.ts";
 import type {
   ApplicationAttempt,
   ApplicationEvent,
@@ -278,6 +279,8 @@ export interface NewEvent {
   signalId?: string;
   calendar?: CalendarFacts;
   senderDomain?: string;
+  /** The email said it follows an earlier round; see src/domain/rounds.ts. */
+  startsRound?: boolean;
 }
 
 /** Validate automatic changes before accepting evidence, including late-arriving conflicts. */
@@ -336,8 +339,8 @@ export async function insertEvent(
   const id = randomUUID();
   const { rows } = await db.query<{ id: string }>(
     `INSERT INTO application_events (id, user_id, attempt_id, event_kind, occurred_at, review_state, source_type, origin, dedupe_key, correction_stage, correction_outcome,
-      calendar_uid_key,calendar_sequence,calendar_method,calendar_status,calendar_organizer_domain,calendar_sender_domain,scheduled_for)
-     VALUES ($1,$2,$3,$4,$5,'ACCEPTED',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      calendar_uid_key,calendar_sequence,calendar_method,calendar_status,calendar_organizer_domain,calendar_sender_domain,scheduled_for,starts_round)
+     VALUES ($1,$2,$3,$4,$5,'ACCEPTED',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
      ON CONFLICT (user_id, dedupe_key) DO NOTHING RETURNING id`,
     [
       id,
@@ -357,6 +360,7 @@ export async function insertEvent(
       e.calendar?.organizerDomain ?? null,
       e.senderDomain ?? null,
       e.calendar?.scheduledFor ?? null,
+      e.startsRound ?? false,
     ],
   );
   if (rows.length) return { id, created: true };
@@ -365,6 +369,42 @@ export async function insertEvent(
     [e.userId, e.dedupeKey],
   );
   return { id: existing.rows[0]!.id, created: false };
+}
+
+/** The attempt's accepted assessment and interview events, as the round rules read them. */
+export async function stepEvents(
+  db: Db,
+  userId: string,
+  attemptId: string,
+): Promise<StepEvent[]> {
+  const { rows } = await db.query<{
+    id: string;
+    event_kind: ApplicationEventKind;
+    occurred_at: unknown;
+    calendar_uid_key: string | null;
+    calendar_sequence: number | null;
+    scheduled_for: unknown;
+    starts_round: boolean;
+  }>(
+    `SELECT id,event_kind,occurred_at,calendar_uid_key,calendar_sequence,scheduled_for,starts_round
+       FROM application_events
+      WHERE user_id=$1 AND attempt_id=$2 AND review_state='ACCEPTED'
+        AND event_kind IN ('ASSESSMENT_INVITED','INTERVIEW_INVITED','INTERVIEW_SCHEDULED')`,
+    [userId, attemptId],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.event_kind,
+    occurredAt: iso(r.occurred_at),
+    calendar: r.calendar_uid_key
+      ? {
+          uidKey: r.calendar_uid_key,
+          sequence: Number(r.calendar_sequence),
+          scheduledFor: r.scheduled_for ? iso(r.scheduled_for) : null,
+        }
+      : null,
+    startsRound: r.starts_round,
+  }));
 }
 
 export async function linkEvidence(

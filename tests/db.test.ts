@@ -102,6 +102,7 @@ describe("schema", () => {
         "0012_sync_read_indexes.sql",
         "0013_review_reconciliation.sql",
         "0014_drop_signal_calendar_index.sql",
+        "0015_event_round_marker.sql",
       ],
     );
   });
