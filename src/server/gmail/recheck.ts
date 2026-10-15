@@ -9,7 +9,9 @@ export async function requestMailboxRecheck(
   now = new Date(),
 ): Promise<"QUEUED" | "BUSY" | "IN_PROGRESS" | "NOT_FOUND"> {
   return db.transaction(async (tx) => {
-    await tx.query("SELECT id FROM ledger_users WHERE id=$1 FOR UPDATE", [userId]);
+    await tx.query("SELECT id FROM ledger_users WHERE id=$1 FOR UPDATE", [
+      userId,
+    ]);
     const { rows } = await tx.query<{
       recheck_id: string | null;
       active_lease: boolean;

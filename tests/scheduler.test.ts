@@ -5,7 +5,12 @@ import { runScheduledSync, summarize } from "../src/server/scheduler.ts";
 import { syncAllMailboxes } from "../src/server/gmail/sync.ts";
 import { seedDemo } from "../src/server/demo.ts";
 import { FakeGmail } from "./helpers/fake-gmail.ts";
-import { createTestDb, seedMailbox, seedUser, type TestDb } from "./helpers/db.ts";
+import {
+  createTestDb,
+  seedMailbox,
+  seedUser,
+  type TestDb,
+} from "./helpers/db.ts";
 import { greenhouseConfirmation } from "./helpers/fixtures.ts";
 
 let t: TestDb;
@@ -21,11 +26,25 @@ const NOW = new Date("2026-10-20T12:00:00Z");
 describe("scheduler report", () => {
   it("classifies runs: failures fail, degraded mailboxes need attention, the rest are healthy", () => {
     const base = { gmailConfigured: true, demosPruned: 0, pruneFailed: false };
-    const run = (status: "OK" | "PARTIAL" | "BUSY" | "DEGRADED" | "FAILED" | "SKIPPED") => ({ mailboxId: "m", status });
-    assert.equal(summarize([run("OK"), run("PARTIAL"), run("BUSY")], base).outcome, "healthy");
-    assert.equal(summarize([run("OK"), run("DEGRADED")], base).outcome, "attention");
-    assert.equal(summarize([run("DEGRADED"), run("FAILED")], base).outcome, "failed");
-    assert.equal(summarize([], { ...base, pruneFailed: true }).outcome, "attention");
+    const run = (
+      status: "OK" | "PARTIAL" | "BUSY" | "DEGRADED" | "FAILED" | "SKIPPED",
+    ) => ({ mailboxId: "m", status });
+    assert.equal(
+      summarize([run("OK"), run("PARTIAL"), run("BUSY")], base).outcome,
+      "healthy",
+    );
+    assert.equal(
+      summarize([run("OK"), run("DEGRADED")], base).outcome,
+      "attention",
+    );
+    assert.equal(
+      summarize([run("DEGRADED"), run("FAILED")], base).outcome,
+      "failed",
+    );
+    assert.equal(
+      summarize([], { ...base, pruneFailed: true }).outcome,
+      "attention",
+    );
     const report = summarize([run("OK"), run("OK"), run("FAILED")], base);
     assert.equal(report.mailboxes, 3);
     assert.equal(report.statuses.OK, 2);
@@ -42,8 +61,14 @@ describe("scheduler report", () => {
       sync: { clientFor: async () => fake, now: () => NOW, budgetMs: 60_000 },
     });
     const text = JSON.stringify(report);
-    assert.ok(!text.includes("private-address"), "address leaked into the report");
-    assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-/.test(text), "an id leaked into the report");
+    assert.ok(
+      !text.includes("private-address"),
+      "address leaked into the report",
+    );
+    assert.ok(
+      !/[0-9a-f]{8}-[0-9a-f]{4}-/.test(text),
+      "an id leaked into the report",
+    );
     assert.equal(report.gmailConfigured, true);
     assert.ok(report.mailboxes >= 1);
   });
@@ -60,13 +85,22 @@ describe("scheduler report", () => {
       ...db,
       query: (async (sql: string, params?: unknown[]) => {
         if (/demo_workspaces/.test(sql)) throw new Error("cleanup broke");
-        if (/FROM connected_mailboxes WHERE sync_state <> 'DISCONNECTED'/.test(sql)) synced = true;
+        if (
+          /FROM connected_mailboxes WHERE sync_state <> 'DISCONNECTED'/.test(
+            sql,
+          )
+        )
+          synced = true;
         return db.query(sql, params as never);
       }) as Db["query"],
     };
     const report = await runScheduledSync({
       db: broken,
-      sync: { clientFor: async () => new FakeGmail(), now: () => NOW, budgetMs: 1_000 },
+      sync: {
+        clientFor: async () => new FakeGmail(),
+        now: () => NOW,
+        budgetMs: 1_000,
+      },
     });
     assert.equal(report.pruneFailed, true);
     assert.ok(synced, "mailbox sync did not run after the cleanup failed");
@@ -76,19 +110,30 @@ describe("scheduler report", () => {
 
 describe("demo cleanup accounting", () => {
   it("reports deletions that committed before a later cleanup step failed", async () => {
-    const a = await seedDemo(db), b = await seedDemo(db);
-    await db.query("UPDATE demo_workspaces SET expires_at = now() - interval '1 day' WHERE user_id = ANY($1::uuid[])", [[a, b]]);
+    const a = await seedDemo(db),
+      b = await seedDemo(db);
+    await db.query(
+      "UPDATE demo_workspaces SET expires_at = now() - interval '1 day' WHERE user_id = ANY($1::uuid[])",
+      [[a, b]],
+    );
     const failing: Db = {
       ...db,
       query: (async (sql: string, params?: unknown[]) => {
-        if (/DELETE FROM browser_rate_limits/.test(sql)) throw new Error("late failure");
+        if (/DELETE FROM browser_rate_limits/.test(sql))
+          throw new Error("late failure");
         return db.query(sql, params as never);
       }) as Db["query"],
     };
     const report = await runScheduledSync({ db: failing, sync: null });
     assert.equal(report.pruneFailed, true);
-    assert.ok(report.demosPruned >= 2, `expected the two committed deletions, got ${report.demosPruned}`);
-    const left = await db.query("SELECT 1 FROM ledger_users WHERE id = ANY($1::uuid[])", [[a, b]]);
+    assert.ok(
+      report.demosPruned >= 2,
+      `expected the two committed deletions, got ${report.demosPruned}`,
+    );
+    const left = await db.query(
+      "SELECT 1 FROM ledger_users WHERE id = ANY($1::uuid[])",
+      [[a, b]],
+    );
     assert.equal(left.rows.length, 0);
   });
 });
@@ -104,20 +149,35 @@ describe("syncAllMailboxes isolation", () => {
     const flaky: Db = {
       ...db,
       query: (async (sql: string, params?: unknown[]) => {
-        if (/^UPDATE connected_mailboxes SET sync_lease_until = \$2/.test(sql.trim()) && params?.[0] === first)
+        if (
+          /^UPDATE connected_mailboxes SET sync_lease_until = \$2/.test(
+            sql.trim(),
+          ) &&
+          params?.[0] === first
+        )
           throw new Error("connection reset");
         return db.query(sql, params as never);
       }) as Db["query"],
     };
     const results = await syncAllMailboxes(
-      { db: flaky, clientFor: async () => fake, now: () => NOW, budgetMs: 60_000 },
+      {
+        db: flaky,
+        clientFor: async () => fake,
+        now: () => NOW,
+        budgetMs: 60_000,
+      },
       { userId },
     );
-    const byId = Object.fromEntries(results.map((r) => [r.mailboxId, r.status]));
+    const byId = Object.fromEntries(
+      results.map((r) => [r.mailboxId, r.status]),
+    );
     assert.equal(byId[first], "FAILED");
     assert.equal(byId[second], "OK");
     // The crash leaves a safe, findable trace on the mailbox itself.
-    const trace = await db.query<{ last_error_code: string | null; last_attempt_at: unknown }>(
+    const trace = await db.query<{
+      last_error_code: string | null;
+      last_attempt_at: unknown;
+    }>(
       "SELECT last_error_code, last_attempt_at FROM connected_mailboxes WHERE id=$1",
       [first],
     );

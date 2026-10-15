@@ -74,7 +74,12 @@ export function DetailScreen({
           </p>
         </div>
         {detail.canonicalUrl && (
-          <a className="secondary" href={detail.canonicalUrl} target="_blank" rel="noopener noreferrer">
+          <a
+            className="secondary"
+            href={detail.canonicalUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Job posting <ArrowUpRight size={15} aria-hidden />
           </a>
         )}
@@ -89,7 +94,9 @@ export function DetailScreen({
       <div className="attempts">
         {detail.attempts.map((attempt, index) => {
           const age = daysSince(attempt.submittedAt);
-          const accepted = attempt.events.filter((e) => e.reviewState === "ACCEPTED").length;
+          const accepted = attempt.events.filter(
+            (e) => e.reviewState === "ACCEPTED",
+          ).length;
           return (
             <section key={attempt.id} className="attempt-card">
               <div className="attempt-heading">
@@ -102,7 +109,8 @@ export function DetailScreen({
                   </h2>
                   <p>
                     Submitted {date(attempt.submittedAt)}
-                    {age !== null && (age === 0 ? " · today" : ` · ${plural(age, "day")} ago`)}
+                    {age !== null &&
+                      (age === 0 ? " · today" : ` · ${plural(age, "day")} ago`)}
                     {" · "}
                     {attempt.coverageLabel}
                   </p>
@@ -116,9 +124,9 @@ export function DetailScreen({
               <p className="activity">{attempt.activity}</p>
               {attempt.submissionDateCorrections.map((correction, i) => (
                 <p className="small muted correction-note" key={i}>
-                  <RotateCcw size={13} aria-hidden /> Submission date corrected from{" "}
-                  {date(correction.previousAt)} to {date(correction.correctedAt)} ·{" "}
-                  {date(correction.createdAt)}
+                  <RotateCcw size={13} aria-hidden /> Submission date corrected
+                  from {date(correction.previousAt)} to{" "}
+                  {date(correction.correctedAt)} · {date(correction.createdAt)}
                 </p>
               ))}
 
@@ -140,24 +148,42 @@ export function DetailScreen({
                       <div className="timeline-content">
                         <div className="timeline-title">
                           <strong>{label(event.kind)}</strong>
-                          <time dateTime={event.occurredAt} title={fullDate(event.occurredAt)}>
+                          <time
+                            dateTime={event.occurredAt}
+                            title={fullDate(event.occurredAt)}
+                          >
                             {date(event.occurredAt)}
-                            <span className="rel"> · {relative(event.occurredAt)}</span>
+                            <span className="rel">
+                              {" "}
+                              · {relative(event.occurredAt)}
+                            </span>
                           </time>
                         </div>
                         <p>
                           {event.origin === "MANUAL"
                             ? "Confirmed by you"
-                            : (event.evidence[0]?.subject ?? "Supported by email evidence")}
+                            : (event.evidence[0]?.subject ??
+                              "Supported by email evidence")}
                         </p>
                         {event.scheduledFor && (
-                          <p className={event.currentSchedule ? "activity" : "small muted"}>
-                            {event.currentSchedule ? "Current interview time" : "Interview time in this update"}: {fullDate(event.scheduledFor)}
+                          <p
+                            className={
+                              event.currentSchedule ? "activity" : "small muted"
+                            }
+                          >
+                            {event.currentSchedule
+                              ? "Current interview time"
+                              : "Interview time in this update"}
+                            : {fullDate(event.scheduledFor)}
                           </p>
                         )}
                         <small>
-                          <span className={`state ${event.reviewState.toLowerCase()}`}>
-                            {event.reviewState === "ACCEPTED" ? "Accepted" : label(event.reviewState)}
+                          <span
+                            className={`state ${event.reviewState.toLowerCase()}`}
+                          >
+                            {event.reviewState === "ACCEPTED"
+                              ? "Accepted"
+                              : label(event.reviewState)}
                           </span>
                           {" · "}
                           {event.evidence[0]?.sourceKind === "GMAIL"
@@ -170,9 +196,15 @@ export function DetailScreen({
                       <button
                         className={`event-action ${inactive ? "restore" : ""}`}
                         disabled={busy}
-                        onClick={() => setEvent(event.id, inactive ? "ACCEPTED" : "REJECTED")}
+                        onClick={() =>
+                          setEvent(event.id, inactive ? "ACCEPTED" : "REJECTED")
+                        }
                       >
-                        {inactive ? <Undo2 size={13} aria-hidden /> : <XCircle size={13} aria-hidden />}
+                        {inactive ? (
+                          <Undo2 size={13} aria-hidden />
+                        ) : (
+                          <XCircle size={13} aria-hidden />
+                        )}
                         {inactive ? "Restore" : "Reject update"}
                       </button>
                     </li>
@@ -189,7 +221,9 @@ export function DetailScreen({
                   stage={attempt.stage}
                   outcome={attempt.outcome}
                   busy={busy}
-                  save={(stage, outcome) => saveStatus(attempt.id, stage, outcome)}
+                  save={(stage, outcome) =>
+                    saveStatus(attempt.id, stage, outcome)
+                  }
                 />
               </div>
             </section>

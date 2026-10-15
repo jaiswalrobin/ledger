@@ -85,9 +85,10 @@ export function JourneyBar({
   onSelect: (bucket: Bucket | null) => void;
 }) {
   const attempts = openings.flatMap((o) => o.attempts);
-  const counts = Object.fromEntries(
-    BUCKETS.map((b) => [b.key, 0]),
-  ) as Record<Bucket, number>;
+  const counts = Object.fromEntries(BUCKETS.map((b) => [b.key, 0])) as Record<
+    Bucket,
+    number
+  >;
   for (const a of attempts) counts[bucketOf(a)] += 1;
   const total = attempts.length || 1;
   return (
@@ -103,7 +104,9 @@ export function JourneyBar({
         {attempts.length === 0 && <span className="seg empty" />}
       </div>
       <div className="journey-legend">
-        {BUCKETS.filter((b) => b.key !== "unknown" || counts.unknown > 0 || active === b.key).map((b) => (
+        {BUCKETS.filter(
+          (b) => b.key !== "unknown" || counts.unknown > 0 || active === b.key,
+        ).map((b) => (
           <button
             key={b.key}
             type="button"

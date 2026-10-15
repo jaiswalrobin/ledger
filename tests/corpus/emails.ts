@@ -39,7 +39,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Datadog Recruiting" <no-reply@greenhouse.io>',
     subject: "Thanks for applying to Datadog!",
     text: "Hi Robin,\n\nThank you for your interest in the Software Engineer - Distributed Systems position at Datadog. We have received your application and our team is reviewing it now.\n\nBest,\nThe Datadog Recruiting Team",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Datadog", title: "Software Engineer - Distributed Systems" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Datadog",
+      title: "Software Engineer - Distributed Systems",
+    },
   },
   {
     id: "lever-confirm",
@@ -47,7 +51,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Netflix" <no-reply@hire.lever.co>',
     subject: "Thank you for your application to Netflix",
     text: "Hi Robin,\n\nThank you for applying for the Senior Software Engineer, Streaming position at Netflix. We have received your application and will be reviewing it shortly.\n\nIf there is a match, someone from our team will be in touch.\n\nNetflix Talent Acquisition",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Netflix", title: "Senior Software Engineer, Streaming" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Netflix",
+      title: "Senior Software Engineer, Streaming",
+    },
   },
   {
     id: "workday-confirm",
@@ -55,7 +63,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Salesforce Careers" <salesforce@myworkday.com>',
     subject: "Thank you for applying to Salesforce!",
     text: "Dear Robin,\n\nThank you for your interest in Salesforce. We have received your application for the Software Engineering MTS position (JR123456).\n\nOur recruiting team will review your qualifications and contact you if there is a fit.\n\nYou can check the status of your application at any time by logging in to your candidate home account.\n\nSincerely,\nSalesforce Talent Acquisition",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Salesforce", title: "Software Engineering MTS" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Salesforce",
+      title: "Software Engineering MTS",
+    },
   },
   {
     id: "ashby-confirm",
@@ -63,7 +75,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Notion" <no-reply@ashbyhq.com>',
     subject: "Thanks for applying to Notion",
     text: "Hi Robin,\n\nThanks for applying to the Product Engineer role at Notion! We've received your application and will get back to you as soon as we can.\n\nThe Notion Team",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Notion", title: "Product Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Notion",
+      title: "Product Engineer",
+    },
   },
   {
     id: "smartrecruiters-confirm",
@@ -71,7 +87,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Visa" <noreply@smartrecruiters.com>',
     subject: "Thank you for your application for Senior Data Analyst at Visa",
     text: "Dear Robin,\n\nThank you for applying for the Senior Data Analyst position. We are reviewing your application and will be in touch if your profile matches our requirements.\n\nKind regards,\nVisa Recruitment Team",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Visa", title: "Senior Data Analyst" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Visa",
+      title: "Senior Data Analyst",
+    },
   },
   {
     id: "icims-confirm",
@@ -79,15 +99,24 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Acme Health Careers" <careers-acmehealth@icims.com>',
     subject: "Thank you for applying - Software Developer II (2026-14528)",
     text: "Dear Robin,\n\nThank you for your interest in employment with Acme Health. We have received your application for the Software Developer II position.\n\nWe will review your qualifications and contact you if we would like to proceed.\n\nAcme Health Talent Acquisition",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme Health", title: "Software Developer II" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Acme Health",
+      title: "Software Developer II",
+    },
   },
   {
     id: "taleo-confirm",
     note: "Taleo: 'Company - Application Received - Title (Req)' subject",
     from: '"Oracle" <oracle@taleo.net>',
-    subject: "Oracle - Application Received - Senior Cloud Engineer (Req 12345)",
+    subject:
+      "Oracle - Application Received - Senior Cloud Engineer (Req 12345)",
     text: "Dear Robin,\n\nThank you for applying to the Senior Cloud Engineer (12345) position at Oracle. Your application has been successfully submitted.\n\nRegards,\nOracle Recruiting",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Oracle", title: "Senior Cloud Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Oracle",
+      title: "Senior Cloud Engineer",
+    },
   },
   {
     id: "successfactors-confirm",
@@ -95,7 +124,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"SAP Careers" <noreply@successfactors.com>',
     subject: "Your application for Data Engineer (Job ID 98765)",
     text: "Dear Robin,\n\nThank you for your application for the position Data Engineer. We have successfully received it and will now review your documents.\n\nBest regards,\nSAP Talent Acquisition",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "SAP", title: "Data Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "SAP",
+      title: "Data Engineer",
+    },
   },
   {
     id: "jobvite-confirm",
@@ -103,15 +136,24 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Zendesk" <notification@jobvite.com>',
     subject: "Zendesk: Thank you for your application",
     text: "Hi Robin,\n\nThank you for applying to the Support Engineer position with Zendesk. Your application has been received.\n\nThank you,\nZendesk Recruiting",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Zendesk", title: "Support Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Zendesk",
+      title: "Support Engineer",
+    },
   },
   {
     id: "workable-confirm",
     note: "Workable: 'applying for the X job at Y'",
     from: '"Contoso Labs" <noreply@candidates.workablemail.com>',
-    subject: "Thanks for applying for the Frontend Developer job at Contoso Labs",
+    subject:
+      "Thanks for applying for the Frontend Developer job at Contoso Labs",
     text: "Hi Robin,\n\nThanks for applying for the Frontend Developer job at Contoso Labs. We've received your application and our hiring team will review it.\n\nBest,\nContoso Labs",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Contoso Labs", title: "Frontend Developer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Contoso Labs",
+      title: "Frontend Developer",
+    },
   },
   {
     id: "teamtailor-confirm",
@@ -119,7 +161,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Klarna" <no-reply@teamtailor-mail.com>',
     subject: "We have received your application",
     text: "Hi Robin,\n\nThank you for your application for the position Backend Engineer at Klarna. We have received your application and will get back to you as soon as possible.\n\nKind regards,\nKlarna",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Klarna", title: "Backend Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Klarna",
+      title: "Backend Engineer",
+    },
   },
   {
     id: "bamboo-confirm",
@@ -127,7 +173,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Northwind Traders" <noreply@bamboohr.com>',
     subject: "Thank you for applying!",
     text: "Hi Robin,\n\nThanks for your interest in the Operations Analyst position at Northwind Traders. We received your application and will be reviewing it soon.\n\nNorthwind Traders",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Northwind Traders", title: "Operations Analyst" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Northwind Traders",
+      title: "Operations Analyst",
+    },
   },
   {
     id: "html-only-confirm",
@@ -136,7 +186,11 @@ export const CORPUS: CorpusEmail[] = [
     subject: "Your application to Figma",
     text: "This email is best viewed in a browser that supports HTML.",
     html: "<html><head><style>p{margin:0}</style></head><body><table><tr><td><p>Hi Robin,</p><p>Thanks for applying to the <b>Software Engineer, Editor</b> role at Figma! We&rsquo;ve received your application.</p></td></tr></table></body></html>",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Figma", title: "Software Engineer, Editor" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Figma",
+      title: "Software Engineer, Editor",
+    },
   },
 
   // ---- confirmations: job boards --------------------------------------------------------
@@ -146,7 +200,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"LinkedIn" <jobs-noreply@linkedin.com>',
     subject: "Robin, your application was sent to Spotify",
     text: "Your application was sent to Spotify\n\nSpotify\nBackend Engineer\nStockholm, Sweden\nApplied on October 3, 2026\n\nView job\n\nNow, take these next steps for more success with your job search",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Spotify", title: "Backend Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Spotify",
+      title: "Backend Engineer",
+    },
   },
   {
     id: "indeed-apply",
@@ -154,7 +212,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Indeed Apply" <indeedapply@indeed.com>',
     subject: "Indeed Application: Data Analyst",
     text: "Application submitted\n\nData Analyst\nAcme Analytics - Austin, TX\n\nThe following items were sent to Acme Analytics. Good luck!\n\n• Application\n• Resume",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme Analytics", title: "Data Analyst" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Acme Analytics",
+      title: "Data Analyst",
+    },
   },
 
   // ---- confirmations: employer-hosted ---------------------------------------------------
@@ -162,9 +224,14 @@ export const CORPUS: CorpusEmail[] = [
     id: "ibm-confirm",
     note: "IBM's own careers mail: requisition and title in the subject",
     from: '"IBM Careers" <ibmcareers@ibm.com>',
-    subject: "You have successfully submitted your IBM job application - 45678 - Data Scientist",
+    subject:
+      "You have successfully submitted your IBM job application - 45678 - Data Scientist",
     text: "Dear Robin,\n\nThank you for applying to the role of Data Scientist - 45678 with Candidate ID - 9876543 at IBM. We will review your application.\n\nIBM Talent Acquisition",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "IBM", title: "Data Scientist" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "IBM",
+      title: "Data Scientist",
+    },
   },
   {
     id: "employer-direct-confirm",
@@ -172,7 +239,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Contoso Careers" <careers@contoso.com>',
     subject: "Application received: Machine Learning Engineer",
     text: "Hello Robin,\n\nWe have received your application for the Machine Learning Engineer role at Contoso. Thank you for considering us.\n\nContoso Recruiting",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Contoso", title: "Machine Learning Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Contoso",
+      title: "Machine Learning Engineer",
+    },
   },
   {
     id: "wrapped-confirm",
@@ -180,7 +251,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Initech" <jobs@initech.example>',
     subject: "Thank you for your application",
     text: "Dear Robin,\n\nThank you for applying for the Senior Platform Reliability\nEngineer position at Initech. We have received your application and\nwill be in touch.\n\nInitech HR",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Initech", title: "Senior Platform Reliability Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Initech",
+      title: "Senior Platform Reliability Engineer",
+    },
   },
 
   // ---- assessments ---------------------------------------------------------------------
@@ -190,7 +265,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"HackerRank" <support@hackerrankforwork.com>',
     subject: "Acme Robotics has invited you to take a test",
     text: "Hi Robin,\n\nAcme Robotics has invited you to take the Backend Engineer Assessment on HackerRank. The test is 90 minutes long.\n\nPlease complete the test by October 22, 2026.\n\nGood luck!\nThe HackerRank Team",
-    expect: { kind: "ASSESSMENT_INVITED", company: "Acme Robotics", title: null },
+    expect: {
+      kind: "ASSESSMENT_INVITED",
+      company: "Acme Robotics",
+      title: null,
+    },
   },
   {
     id: "codility-invite",
@@ -198,7 +277,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Codility" <no-reply@codility.com>',
     subject: "Invitation to a Codility test from Northwind Labs",
     text: "Hello Robin,\n\nYou have been invited to complete a Codility test for the Data Engineer position at Northwind Labs. You will have 120 minutes.\n\nCodility on behalf of Northwind Labs",
-    expect: { kind: "ASSESSMENT_INVITED", company: "Northwind Labs", title: "Data Engineer" },
+    expect: {
+      kind: "ASSESSMENT_INVITED",
+      company: "Northwind Labs",
+      title: "Data Engineer",
+    },
   },
   {
     id: "takehome-recruiter",
@@ -206,7 +289,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Priya Shah" <priya.shah@globex.example>',
     subject: "Next step: take-home exercise",
     text: "Hi Robin,\n\nThanks again for your time on the phone. As a next step for the Staff Engineer role at Globex, we'd like you to complete a take-home exercise. You'll find the instructions in the attached PDF. Please return it within 5 days.\n\nBest,\nPriya",
-    expect: { kind: "ASSESSMENT_INVITED", company: "Globex", title: "Staff Engineer" },
+    expect: {
+      kind: "ASSESSMENT_INVITED",
+      company: "Globex",
+      title: "Staff Engineer",
+    },
   },
 
   // ---- interviews ---------------------------------------------------------------------
@@ -216,7 +303,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Dana Lee" <dana.lee@acme.example>',
     subject: "Next steps - Software Engineer",
     text: "Hi Robin,\n\nThanks for applying to the Software Engineer role at Acme. I'd love to set up a 30 minute call to learn more about your background. Could you share your availability for next week?\n\nBest,\nDana Lee\nTechnical Recruiter, Acme",
-    expect: { kind: "INTERVIEW_INVITED", company: "Acme", title: "Software Engineer" },
+    expect: {
+      kind: "INTERVIEW_INVITED",
+      company: "Acme",
+      title: "Software Engineer",
+    },
   },
   {
     id: "interview-invite-subject",
@@ -224,15 +315,24 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Talent Team" <talent@umbrella.example>',
     subject: "Interview invitation: Product Designer at Umbrella",
     text: "Hi Robin,\n\nWe were impressed by your application and would like to invite you to an interview for the Product Designer position. Please pick a time that suits you using the link below.\n\nUmbrella Talent Team",
-    expect: { kind: "INTERVIEW_INVITED", company: "Umbrella", title: "Product Designer" },
+    expect: {
+      kind: "INTERVIEW_INVITED",
+      company: "Umbrella",
+      title: "Product Designer",
+    },
   },
   {
     id: "calendar-invite",
     note: "Google Calendar invitation for an interview",
     from: '"Google Calendar" <calendar-notification@google.com>',
-    subject: "Invitation: Robin / Hooli - Technical Interview @ Tue Oct 20, 2026 2pm - 3pm (PDT) (robin.example@example.com)",
+    subject:
+      "Invitation: Robin / Hooli - Technical Interview @ Tue Oct 20, 2026 2pm - 3pm (PDT) (robin.example@example.com)",
     text: "You have been invited to the following event.\n\nTechnical Interview - Senior Backend Engineer\nWhen: Tuesday Oct 20, 2026 2pm – 3pm Pacific Time\nJoining info: Join with Google Meet\nOrganizer: recruiting@hooli.example\n\nInvitation from Google Calendar",
-    expect: { kind: "INTERVIEW_SCHEDULED", company: "Hooli", title: "Senior Backend Engineer" },
+    expect: {
+      kind: "INTERVIEW_SCHEDULED",
+      company: "Hooli",
+      title: "Senior Backend Engineer",
+    },
   },
   {
     id: "interview-confirmed",
@@ -240,7 +340,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Massive Dynamic Recruiting" <recruiting@massivedynamic.example>',
     subject: "Interview Confirmed: Data Scientist at Massive Dynamic",
     text: "Hi Robin,\n\nYour interview has been scheduled for Thursday, October 22 at 10:00 AM EDT. You will meet with two members of the analytics team.\n\nMeeting ID: 123 456 7890\nPasscode: 8Hk2pQ\n\nWe look forward to speaking with you.",
-    expect: { kind: "INTERVIEW_SCHEDULED", company: "Massive Dynamic", title: "Data Scientist" },
+    expect: {
+      kind: "INTERVIEW_SCHEDULED",
+      company: "Massive Dynamic",
+      title: "Data Scientist",
+    },
   },
   {
     id: "hirevue-video",
@@ -248,7 +352,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Vandelay Industries" <noreply@hirevue.com>',
     subject: "Vandelay Industries - Video Interview Invitation",
     text: "Dear Robin,\n\nThank you for your interest in the Import Analyst position with Vandelay Industries. As the next step, we invite you to complete a video interview on HireVue.\n\nPlease complete your interview within 5 days.",
-    expect: { kind: "INTERVIEW_INVITED", company: "Vandelay Industries", title: "Import Analyst" },
+    expect: {
+      kind: "INTERVIEW_INVITED",
+      company: "Vandelay Industries",
+      title: "Import Analyst",
+    },
   },
 
   // ---- rejections ---------------------------------------------------------------------
@@ -258,7 +366,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Stripe" <no-reply@us.greenhouse-mail.io>',
     subject: "Your application to Stripe",
     text: "Hi Robin,\n\nThank you for your interest in Stripe and for taking the time to apply to our Software Engineer, Payments role. After careful consideration, we have decided to move forward with other candidates whose experience more closely matches our needs at this time.\n\nWe wish you the best in your search.\n\nStripe Recruiting",
-    expect: { kind: "REJECTION_RECEIVED", company: "Stripe", title: "Software Engineer, Payments" },
+    expect: {
+      kind: "REJECTION_RECEIVED",
+      company: "Stripe",
+      title: "Software Engineer, Payments",
+    },
   },
   {
     id: "lever-reject",
@@ -266,7 +378,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Netflix" <no-reply@hire.lever.co>',
     subject: "Update on your Netflix application",
     text: "Hi Robin,\n\nThank you for taking the time to apply for the Senior Software Engineer, Streaming position. Unfortunately, we won't be moving forward with your application at this time.\n\nBest of luck,\nNetflix",
-    expect: { kind: "REJECTION_RECEIVED", company: "Netflix", title: "Senior Software Engineer, Streaming" },
+    expect: {
+      kind: "REJECTION_RECEIVED",
+      company: "Netflix",
+      title: "Senior Software Engineer, Streaming",
+    },
   },
   {
     id: "workday-reject",
@@ -274,7 +390,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Salesforce Careers" <salesforce@myworkday.com>',
     subject: "Regarding your application to Salesforce",
     text: "Dear Robin,\n\nThank you for your interest in the Software Engineering MTS position at Salesforce. We regret to inform you that you have not been selected to move forward in the process.\n\nSincerely,\nSalesforce Talent Acquisition",
-    expect: { kind: "REJECTION_RECEIVED", company: "Salesforce", title: "Software Engineering MTS" },
+    expect: {
+      kind: "REJECTION_RECEIVED",
+      company: "Salesforce",
+      title: "Software Engineering MTS",
+    },
   },
   {
     id: "uk-unsuccessful",
@@ -282,7 +402,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Barclays Recruitment" <recruitment@barclays.example>',
     subject: "Your application for Graduate Analyst",
     text: "Dear Robin,\n\nThank you for your recent application for the Graduate Analyst role at Barclays. Unfortunately, on this occasion your application has been unsuccessful.\n\nWe wish you every success in the future.",
-    expect: { kind: "REJECTION_RECEIVED", company: "Barclays", title: "Graduate Analyst" },
+    expect: {
+      kind: "REJECTION_RECEIVED",
+      company: "Barclays",
+      title: "Graduate Analyst",
+    },
   },
   {
     id: "reject-after-interview",
@@ -290,7 +414,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Hooli Recruiting" <recruiting@hooli.example>',
     subject: "Hooli - Senior Backend Engineer",
     text: "Hi Robin,\n\nThank you for taking the time to interview with us for the Senior Backend Engineer role. Following your interview with the team, we have decided to pursue other candidates for this position.\n\nWe appreciate your interest in Hooli.",
-    expect: { kind: "REJECTION_RECEIVED", company: "Hooli", title: "Senior Backend Engineer" },
+    expect: {
+      kind: "REJECTION_RECEIVED",
+      company: "Hooli",
+      title: "Senior Backend Engineer",
+    },
   },
   {
     id: "position-filled",
@@ -298,7 +426,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Initech HR" <hr@initech.example>',
     subject: "Update on the QA Engineer role",
     text: "Dear Robin,\n\nThank you for applying for the QA Engineer position at Initech. We wanted to let you know that the position has been filled.\n\nWe will keep your resume on file for future openings.",
-    expect: { kind: "REJECTION_RECEIVED", company: "Initech", title: "QA Engineer" },
+    expect: {
+      kind: "REJECTION_RECEIVED",
+      company: "Initech",
+      title: "QA Engineer",
+    },
   },
   {
     id: "not-proceed-candidacy",
@@ -306,7 +438,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Talent Team" <talent@umbrella.example>',
     subject: "Your candidacy at Umbrella",
     text: "Hi Robin,\n\nAfter reviewing your application for the Product Designer role, we have decided not to proceed with your candidacy. We appreciate the time you invested.\n\nUmbrella Talent Team",
-    expect: { kind: "REJECTION_RECEIVED", company: "Umbrella", title: "Product Designer" },
+    expect: {
+      kind: "REJECTION_RECEIVED",
+      company: "Umbrella",
+      title: "Product Designer",
+    },
   },
 
   // ---- offers -------------------------------------------------------------------------
@@ -316,7 +452,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Dana Lee" <dana.lee@acme.example>',
     subject: "Your offer from Acme",
     text: "Hi Robin,\n\nCongratulations! We are thrilled to extend an offer for the role of Senior Software Engineer at Acme. Your formal offer letter is attached; please review it and let us know if you have any questions.\n\nWelcome aboard,\nDana",
-    expect: { kind: "OFFER_RECEIVED", company: "Acme", title: "Senior Software Engineer" },
+    expect: {
+      kind: "OFFER_RECEIVED",
+      company: "Acme",
+      title: "Senior Software Engineer",
+    },
   },
   {
     id: "offer-letter-attached",
@@ -324,7 +464,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"People Team" <people@globex.example>',
     subject: "Offer Letter - Staff Engineer - Globex",
     text: "Dear Robin,\n\nPlease find attached your offer letter for the Staff Engineer position at Globex. Kindly review and sign by Friday.\n\nGlobex People Team",
-    expect: { kind: "OFFER_RECEIVED", company: "Globex", title: "Staff Engineer" },
+    expect: {
+      kind: "OFFER_RECEIVED",
+      company: "Globex",
+      title: "Staff Engineer",
+    },
   },
 
   // ---- negatives: hiring-adjacent mail that is not an application event --------------
@@ -342,7 +486,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Salesforce Careers" <salesforce@myworkday.com>',
     subject: "Complete your application for Software Engineering MTS",
     text: "Dear Robin,\n\nYou started an application for the Software Engineering MTS position but haven't submitted it yet. Your application for this role is saved as a draft. Sign in to finish it before the posting closes.",
-    expect: { kind: null, company: "Salesforce", title: "Software Engineering MTS" },
+    expect: {
+      kind: null,
+      company: "Salesforce",
+      title: "Software Engineering MTS",
+    },
   },
   {
     id: "talent-community",
@@ -392,7 +540,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Mollie" <no-reply@recruitee.com>',
     subject: "Your application at Mollie",
     text: "Hi Robin,\n\nThanks for your application! You have applied for the Senior Go Developer position at Mollie. We will review your profile and get back to you within two weeks.\n\nCheers,\nMollie Talent Team",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Mollie", title: "Senior Go Developer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Mollie",
+      title: "Senior Go Developer",
+    },
   },
   {
     id: "h-greenhouse-confirm-variant",
@@ -400,7 +552,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Airtable" <no-reply@greenhouse.io>',
     subject: "Application received - Solutions Engineer",
     text: "Hi Robin,\n\nThanks for applying to Airtable! We've received your application for Solutions Engineer and will be in touch if your experience is a match.\n\nAirtable Recruiting",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Airtable", title: "Solutions Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Airtable",
+      title: "Solutions Engineer",
+    },
   },
   {
     id: "h-employer-confirm-no-role-word",
@@ -408,7 +564,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Wayne Enterprises Careers" <careers@wayne-enterprises.example>',
     subject: "We received your application",
     text: "Dear Robin,\n\nWe received your application for Security Analyst. Our recruiters review every application carefully.\n\nWayne Enterprises Careers",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Wayne Enterprises", title: "Security Analyst" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Wayne Enterprises",
+      title: "Security Analyst",
+    },
   },
   {
     id: "h-workday-reject-variant",
@@ -416,7 +576,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Cyberdyne Careers" <cyberdyne@myworkday.com>',
     subject: "Your Cyberdyne application",
     text: "Dear Robin,\n\nThank you for applying for the Robotics Engineer position at Cyberdyne. While your background is impressive, we have decided to move forward with other applicants at this time.\n\nCyberdyne Talent Acquisition",
-    expect: { kind: "REJECTION_RECEIVED", company: "Cyberdyne", title: "Robotics Engineer" },
+    expect: {
+      kind: "REJECTION_RECEIVED",
+      company: "Cyberdyne",
+      title: "Robotics Engineer",
+    },
   },
   {
     id: "h-reject-short",
@@ -424,7 +588,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Sam Patel" <sam@soylent.example>',
     subject: "Re: Data Platform Engineer",
     text: "Hi Robin,\n\nThanks for your patience. Unfortunately we've decided not to move forward with your application for the Data Platform Engineer role at Soylent.\n\nAll the best,\nSam",
-    expect: { kind: "REJECTION_RECEIVED", company: "Soylent", title: "Data Platform Engineer" },
+    expect: {
+      kind: "REJECTION_RECEIVED",
+      company: "Soylent",
+      title: "Data Platform Engineer",
+    },
   },
   {
     id: "h-reject-not-progressing",
@@ -432,7 +600,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Recruitment" <recruitment@tyrell.example>',
     subject: "Application outcome - UX Researcher",
     text: "Dear Robin,\n\nThank you for your application for the UX Researcher role at Tyrell. After careful review we will not be progressing your application further.\n\nKind regards,\nTyrell Recruitment",
-    expect: { kind: "REJECTION_RECEIVED", company: "Tyrell", title: "UX Researcher" },
+    expect: {
+      kind: "REJECTION_RECEIVED",
+      company: "Tyrell",
+      title: "UX Researcher",
+    },
   },
   {
     id: "h-codesignal",
@@ -440,7 +612,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"CodeSignal" <noreply@codesignal.com>',
     subject: "Complete your coding assessment for Pied Piper",
     text: "Hi Robin,\n\nPied Piper has invited you to complete a coding assessment for the Backend Engineer role. The assessment takes about 70 minutes.\n\nGood luck!",
-    expect: { kind: "ASSESSMENT_INVITED", company: "Pied Piper", title: "Backend Engineer" },
+    expect: {
+      kind: "ASSESSMENT_INVITED",
+      company: "Pied Piper",
+      title: "Backend Engineer",
+    },
   },
   {
     id: "h-phone-screen",
@@ -448,7 +624,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Alex Kim" <alex.kim@aperture.example>',
     subject: "Phone screen for Research Scientist",
     text: "Hi Robin,\n\nI'm a recruiter at Aperture and I'd like to schedule a phone screen for the Research Scientist position. Are you free Wednesday or Thursday afternoon?\n\nAlex",
-    expect: { kind: "INTERVIEW_INVITED", company: "Aperture", title: "Research Scientist" },
+    expect: {
+      kind: "INTERVIEW_INVITED",
+      company: "Aperture",
+      title: "Research Scientist",
+    },
   },
   {
     id: "h-onsite-scheduled",
@@ -456,7 +636,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Recruiting Coordinator" <coordinator@stark.example>',
     subject: "Your onsite interview with Stark Industries is confirmed",
     text: "Hi Robin,\n\nYour onsite interview for the Mechanical Engineer position is confirmed for Monday, October 26 at 9:00 AM at our Malibu office.\n\nStark Industries Recruiting",
-    expect: { kind: "INTERVIEW_SCHEDULED", company: "Stark Industries", title: "Mechanical Engineer" },
+    expect: {
+      kind: "INTERVIEW_SCHEDULED",
+      company: "Stark Industries",
+      title: "Mechanical Engineer",
+    },
   },
   {
     id: "h-offer-congrats",
@@ -472,7 +656,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"LinkedIn" <jobs-noreply@linkedin.com>',
     subject: "Your application was sent to Canva",
     text: "Your application was sent to Canva\n\nCanva\nProduct Designer\nSydney, Australia (Hybrid)\n\nApplied on October 9, 2026",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Canva", title: "Product Designer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Canva",
+      title: "Product Designer",
+    },
   },
   {
     id: "h-glassdoor-alert",
@@ -505,7 +693,11 @@ export const CORPUS: CorpusEmail[] = [
     subject: "Your application to Gusto",
     text: "",
     html: "<div><p>Hi Robin,</p><p>Thank you for your interest in the <strong>Payroll Engineer</strong> role at Gusto. Unfortunately, we have decided not to move forward with your application at this time.</p></div>",
-    expect: { kind: "REJECTION_RECEIVED", company: "Gusto", title: "Payroll Engineer" },
+    expect: {
+      kind: "REJECTION_RECEIVED",
+      company: "Gusto",
+      title: "Payroll Engineer",
+    },
   },
   {
     id: "h-interview-availability-calendly",
@@ -513,17 +705,25 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Morgan Lee" <morgan@hooli.example>',
     subject: "Interview for Site Reliability Engineer",
     text: "Hi Robin,\n\nWe'd like to move you forward to the next round for the Site Reliability Engineer role at Hooli. Please book a time for a technical interview using my calendar link.\n\nMorgan",
-    expect: { kind: "INTERVIEW_INVITED", company: "Hooli", title: "Site Reliability Engineer" },
+    expect: {
+      kind: "INTERVIEW_INVITED",
+      company: "Hooli",
+      title: "Site Reliability Engineer",
+    },
   },
 
   // ---- from code review of the rebuild (PR #12) -----------------------------------------
   {
     id: "r-apostrophe-brand",
     note: "Brand name ending in apostrophe-s must survive",
-    from: "\"McDonald's Careers\" <noreply@myworkday.com>",
+    from: '"McDonald\'s Careers" <noreply@myworkday.com>',
     subject: "Thank you for applying to McDonald's",
     text: "Dear Robin,\n\nThank you for applying for the Restaurant Manager position at McDonald's. We have received your application.\n\nMcDonald's Talent Acquisition",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "McDonald's", title: "Restaurant Manager" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "McDonald's",
+      title: "Restaurant Manager",
+    },
   },
   {
     id: "r-receipt-with-community-footer",
@@ -531,7 +731,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Contoso Careers" <careers@contoso.com>',
     subject: "Application received: Cloud Architect",
     text: "Hi Robin,\n\nWe have received your application for the Cloud Architect role at Contoso.\n\nWhile you wait, join our Talent Community for news. If you have not yet completed your profile, you can do so at any time.\n\nContoso Recruiting",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Contoso", title: "Cloud Architect" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Contoso",
+      title: "Cloud Architect",
+    },
   },
   {
     id: "r-no-article-role",
@@ -539,7 +743,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Acme Careers" <careers@acme.example>',
     subject: "Thanks for applying to Software Engineer role at Acme",
     text: "Hi Robin,\n\nThanks for applying to Software Engineer role at Acme. We have received your application.\n\nAcme Careers",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Software Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Acme",
+      title: "Software Engineer",
+    },
   },
   {
     id: "r-mixed-case-title",
@@ -547,7 +755,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Notion" <no-reply@ashbyhq.com>',
     subject: "Thanks for applying to Notion",
     text: "Hi Robin,\n\nThanks for applying to the iOS Engineer role at Notion! We've received your application.",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Notion", title: "iOS Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Notion",
+      title: "iOS Engineer",
+    },
   },
   {
     id: "r-platform-as-employer",
@@ -555,7 +767,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Google Careers" <noreply@google.example>',
     subject: "Thank you for applying to Google",
     text: "Hi Robin,\n\nThank you for applying for the Software Engineer, Search position at Google. We have received your application.\n\nGoogle Recruiting",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Google", title: "Software Engineer, Search" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Google",
+      title: "Software Engineer, Search",
+    },
   },
   {
     id: "r-long-organization",
@@ -563,7 +779,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"MD Anderson Careers" <careers@mdanderson.example>',
     subject: "Application received",
     text: "Dear Robin,\n\nThank you for applying for the Research Nurse position at University of Texas MD Anderson Cancer Center. We have received your application.",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "University of Texas MD Anderson Cancer Center", title: "Research Nurse" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "University of Texas MD Anderson Cancer Center",
+      title: "Research Nurse",
+    },
   },
   // ---- from the second review of PR #12: classification ------------------------------------
   {
@@ -572,7 +792,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Acme Careers" <careers@acme.example>',
     subject: "Your application",
     text: "Hi Robin,\n\nWe received your application for the Backend Engineer role at Acme.\n\nJoin our talent community for more opportunities.",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Backend Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Acme",
+      title: "Backend Engineer",
+    },
   },
   {
     id: "r2-not-received",
@@ -596,7 +820,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Acme Recruiting" <recruiting@acme.example>',
     subject: "Next steps",
     text: "Hi Robin,\n\nYour final interview for the Backend Engineer role at Acme will be scheduled once you send us your availability.\n\nAcme Recruiting",
-    expect: { kind: "INTERVIEW_INVITED", company: "Acme", title: "Backend Engineer" },
+    expect: {
+      kind: "INTERVIEW_INVITED",
+      company: "Acme",
+      title: "Backend Engineer",
+    },
   },
   {
     id: "h2-interview-rescheduled",
@@ -604,7 +832,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Recruiting" <recruiting@prestige.example>',
     subject: "Updated: your interview with Prestige Worldwide",
     text: "Hi Robin,\n\nYour interview for the Account Executive position has been rescheduled to Friday, October 30 at 1:00 PM PDT. Apologies for the change.\n\nPrestige Worldwide Recruiting",
-    expect: { kind: "INTERVIEW_SCHEDULED", company: "Prestige Worldwide", title: "Account Executive" },
+    expect: {
+      kind: "INTERVIEW_SCHEDULED",
+      company: "Prestige Worldwide",
+      title: "Account Executive",
+    },
   },
   // ---- from the second review of PR #12: validation ---------------------------------------
   {
@@ -613,7 +845,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Acme Careers" <careers@acme.example>',
     subject: "Application received",
     text: "Thank you for applying.\n\nCompany: Acme\nJob Title: Account Executive",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Account Executive" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Acme",
+      title: "Account Executive",
+    },
   },
   {
     id: "r2-community-manager",
@@ -621,7 +857,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Acme Careers" <careers@acme.example>',
     subject: "Thanks for applying",
     text: "Hi Robin,\n\nThank you for applying for the Community Manager position at Acme.",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Community Manager" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Acme",
+      title: "Community Manager",
+    },
   },
   {
     id: "r2-labelled-lowercase",
@@ -629,7 +869,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Acme Careers" <careers@acme.example>',
     subject: "Application received",
     text: "We have received your application.\n\nCompany: Acme\nJob Title: software engineer",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "software engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Acme",
+      title: "software engineer",
+    },
   },
   {
     id: "r2-labelled-google",
@@ -637,7 +881,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Careers" <noreply@careers.example>',
     subject: "Application received",
     text: "We have received your application.\n\nCompany: Google\nJob Title: Site Reliability Engineer",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Google", title: "Site Reliability Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Google",
+      title: "Site Reliability Engineer",
+    },
   },
   {
     id: "r2-subject-qualifier",
@@ -645,7 +893,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Acme" <no-reply@us.greenhouse-mail.io>',
     subject: "Application received: Software Engineer (Frontend)",
     text: "Hi Robin,\n\nThank you for applying to Acme. We have received your application.",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Software Engineer (Frontend)" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Acme",
+      title: "Software Engineer (Frontend)",
+    },
   },
   {
     id: "r2-subject-requisition",
@@ -653,7 +905,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Acme" <no-reply@us.greenhouse-mail.io>',
     subject: "Application received: Software Engineer (Req 48213)",
     text: "Hi Robin,\n\nThank you for applying to Acme. We have received your application.",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Software Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Acme",
+      title: "Software Engineer",
+    },
   },
   {
     id: "r2-and-in-name",
@@ -661,7 +917,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Careers" <careers@bn.example>',
     subject: "Thank you for applying",
     text: "Dear Robin,\n\nThank you for applying for the Store Manager position at Barnes and Noble. We have received your application.",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Barnes and Noble", title: "Store Manager" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Barnes and Noble",
+      title: "Store Manager",
+    },
   },
   {
     id: "r2-unicode",
@@ -669,7 +929,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Carrières" <emplois@societe.example>',
     subject: "Candidature reçue",
     text: "Bonjour Robin,\n\nThank you for applying for the Écologue Senior position at Énergie Québec. We have received your application.",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Énergie Québec", title: "Écologue Senior" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Énergie Québec",
+      title: "Écologue Senior",
+    },
   },
 
   // Disclosed evaluation failures promoted after explicit review.
@@ -679,7 +943,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Talent Team" <talent@vandelay.example>',
     subject: "Interview time change - Community Manager",
     text: "Hi Robin,\n\nWe need to move your interview for the Community Manager position at Vandelay Industries. It is now scheduled for Thursday, November 5 at 3:00 PM EST.\n\nVandelay Talent Team",
-    expect: { kind: "INTERVIEW_SCHEDULED", company: "Vandelay Industries", title: "Community Manager" },
+    expect: {
+      kind: "INTERVIEW_SCHEDULED",
+      company: "Vandelay Industries",
+      title: "Community Manager",
+    },
   },
   {
     id: "h2-offer-formal",
@@ -687,7 +955,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"HR Department" <hr@gringotts.example>',
     subject: "Employment Offer - Risk Analyst",
     text: "Dear Robin,\n\nWe are delighted to offer you employment as a Risk Analyst at Gringotts. Please find your employment offer attached.\n\nGringotts HR",
-    expect: { kind: "OFFER_RECEIVED", company: "Gringotts", title: "Risk Analyst" },
+    expect: {
+      kind: "OFFER_RECEIVED",
+      company: "Gringotts",
+      title: "Risk Analyst",
+    },
   },
   {
     id: "h2-ibm-style-other-employer",
@@ -695,7 +967,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Careers" <careers@globex.example>',
     subject: "Application confirmation - 77881 - Network Engineer",
     text: "Dear Robin,\n\nThank you for submitting your application to Globex.\n\nRef: 77881 - Network Engineer\n\nGlobex Careers",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Globex", title: "Network Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Globex",
+      title: "Network Engineer",
+    },
   },
   // ---- round 5: generalised forms of rules first written from held-out misses -------------
   {
@@ -704,7 +980,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Initech Recruiting" <recruiting@initech.example>',
     subject: "Your interview",
     text: "Hi Robin,\n\nThanks for confirming a time for your interview for the QA Engineer position at Initech. This call has been booked for Monday at 2 PM ET.\n\nInitech Recruiting",
-    expect: { kind: "INTERVIEW_SCHEDULED", company: "Initech", title: "QA Engineer" },
+    expect: {
+      kind: "INTERVIEW_SCHEDULED",
+      company: "Initech",
+      title: "QA Engineer",
+    },
   },
   {
     id: "r5-interview-moved",
@@ -712,7 +992,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Initech Recruiting" <recruiting@initech.example>',
     subject: "Schedule change",
     text: "Hi Robin,\n\nWe have moved your phone interview to Tuesday at 11 AM for the QA Engineer position at Initech.\n\nInitech Recruiting",
-    expect: { kind: "INTERVIEW_SCHEDULED", company: "Initech", title: "QA Engineer" },
+    expect: {
+      kind: "INTERVIEW_SCHEDULED",
+      company: "Initech",
+      title: "QA Engineer",
+    },
   },
   {
     id: "r5-offer-join-as",
@@ -720,7 +1004,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Morgan Lee" <morgan.lee@initech.example>',
     subject: "Offer",
     text: "Hi Robin,\n\nWe are delighted to extend an offer for you to join us as a Data Scientist at Initech. The written offer letter is attached.\n\nMorgan",
-    expect: { kind: "OFFER_RECEIVED", company: "Initech", title: "Data Scientist" },
+    expect: {
+      kind: "OFFER_RECEIVED",
+      company: "Initech",
+      title: "Data Scientist",
+    },
   },
   // ---- round 6: boundary bugs from a pipeline review ----------------------------------------
   {
@@ -729,7 +1017,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Zalando Careers" <jobs@zalando.example>',
     subject: "Thank you for your application",
     text: "Hi Robin,\n\nThank you for applying for the Software Engineer position at Zalando in Berlin. We have received your application.",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Zalando", title: "Software Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Zalando",
+      title: "Software Engineer",
+    },
   },
   {
     id: "r6-connector-in-name",
@@ -737,7 +1029,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Careers" <careers@codeforamerica.example>',
     subject: "Thank you for your application",
     text: "Hi Robin,\n\nThank you for applying for the Product Manager position at Code for America. We have received your application.",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Code for America", title: "Product Manager" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Code for America",
+      title: "Product Manager",
+    },
   },
   {
     id: "r6-swallowed-preposition",
@@ -745,7 +1041,11 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Acme Careers" <careers@acme.example>',
     subject: "Your application",
     text: "Hi Robin,\n\nWe received your application in October for the Backend Engineer role at Acme.",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Backend Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Acme",
+      title: "Backend Engineer",
+    },
   },
   {
     id: "r7-self-reference-place",
@@ -753,6 +1053,10 @@ export const CORPUS: CorpusEmail[] = [
     from: '"Acme Careers" <careers@acme.example>',
     subject: "Thank you for applying to Acme",
     text: "Hi Robin,\n\nWe received your application for the Data Engineer position at our Berlin office.\n\nAcme Recruiting",
-    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Data Engineer" },
+    expect: {
+      kind: "CONFIRMATION_RECEIVED",
+      company: "Acme",
+      title: "Data Engineer",
+    },
   },
 ];

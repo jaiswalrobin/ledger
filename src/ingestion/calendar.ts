@@ -18,8 +18,16 @@ const ensure = (condition: unknown): void => {
 const MAX_BYTES = 100_000;
 const MAX_LINES = 4000;
 const MAX_DEPTH = 20;
-const INTERVIEW_SUMMARY = /\b(?:interview|phone screen|technical screen|onsite)\b/i;
-const SINGLE_VALUED = ["uid", "sequence", "dtstart", "status", "summary", "organizer"];
+const INTERVIEW_SUMMARY =
+  /\b(?:interview|phone screen|technical screen|onsite)\b/i;
+const SINGLE_VALUED = [
+  "uid",
+  "sequence",
+  "dtstart",
+  "status",
+  "summary",
+  "organizer",
+];
 
 /** Size and BEGIN/END nesting are checked before ical.js sees the text. */
 function checkBounds(content: string): void {
@@ -33,7 +41,8 @@ function checkBounds(content: string): void {
   ensure(depth === 0);
 }
 
-const daysInMonth = (year: number, month: number) => new Date(Date.UTC(year, month, 0)).getUTCDate();
+const daysInMonth = (year: number, month: number) =>
+  new Date(Date.UTC(year, month, 0)).getUTCDate();
 
 /** ical.js accepts out-of-range components ("2026-02-31T25:00"); a real start time does not. */
 function checkClock(time: unknown): void {
@@ -49,7 +58,10 @@ function checkClock(time: unknown): void {
  * The start as an instant, or null when it is not one: an all-day date, a floating local time,
  * or a TZID with no VTIMEZONE in the file (remote time zones are never loaded).
  */
-function absoluteStart(root: ICAL.Component, event: ICAL.Component): string | null {
+function absoluteStart(
+  root: ICAL.Component,
+  event: ICAL.Component,
+): string | null {
   const time = event.getFirstPropertyValue("dtstart");
   checkClock(time);
   if (!(time instanceof ICAL.Time) || time.isDate) return null;
@@ -57,25 +69,37 @@ function absoluteStart(root: ICAL.Component, event: ICAL.Component): string | nu
   const absolute =
     tzid == null
       ? time.zone === ICAL.Timezone.utcTimezone
-      : typeof tzid === "string" && time.zone !== ICAL.Timezone.utcTimezone && !!root.getTimeZoneByID(tzid);
+      : typeof tzid === "string" &&
+        time.zone !== ICAL.Timezone.utcTimezone &&
+        !!root.getTimeZoneByID(tzid);
   return absolute ? new Date(time.toUnixTime() * 1000).toISOString() : null;
 }
 
 /** Parses one part. Returns null for a well-formed invitation that is not about an interview. */
-function parsePart(part: { method: string | null; content: string }, reasons: string[]): CalendarEvent | null {
+function parsePart(
+  part: { method: string | null; content: string },
+  reasons: string[],
+): CalendarEvent | null {
   checkBounds(part.content);
   const root = ICAL.Component.fromString(part.content);
-  ensure(root.name === "vcalendar" && root.getAllProperties("method").length === 1);
+  ensure(
+    root.name === "vcalendar" && root.getAllProperties("method").length === 1,
+  );
   const method = String(root.getFirstPropertyValue("method")).toUpperCase();
   // The MIME part's method parameter must agree with the calendar's own METHOD.
-  ensure(part.method && method === part.method && ["REQUEST", "CANCEL"].includes(method));
+  ensure(
+    part.method &&
+      method === part.method &&
+      ["REQUEST", "CANCEL"].includes(method),
+  );
 
   const events = root.getAllSubcomponents("vevent");
   ensure(events.length === 1);
   const event = events[0]!;
   const summary = String(event.getFirstPropertyValue("summary") ?? "");
   if (!INTERVIEW_SUMMARY.test(summary)) return null;
-  for (const name of SINGLE_VALUED) ensure(event.getAllProperties(name).length <= 1);
+  for (const name of SINGLE_VALUED)
+    ensure(event.getAllProperties(name).length <= 1);
   // Recurring interviews are not modelled; expanding them is unbounded work.
   ensure(!event.hasProperty("rrule") && !event.hasProperty("recurrence-id"));
 
@@ -83,17 +107,26 @@ function parsePart(part: { method: string | null; content: string }, reasons: st
   const sequence = Number(event.getFirstPropertyValue("sequence") ?? 0);
   ensure(typeof uid === "string" && uid && uid.length <= 512);
   ensure(Number.isSafeInteger(sequence) && sequence >= 0);
-  const status = String(event.getFirstPropertyValue("status") ?? "").toUpperCase();
+  const status = String(
+    event.getFirstPropertyValue("status") ?? "",
+  ).toUpperCase();
   const scheduledFor = absoluteStart(root, event);
-  const organizer = String(event.getFirstPropertyValue("organizer") ?? "").replace(/^mailto:/i, "");
-  const organizerDomain = /^[^\s<>@]+@([A-Za-z0-9.-]+)$/.exec(organizer)?.[1]?.toLowerCase() ?? null;
+  const organizer = String(
+    event.getFirstPropertyValue("organizer") ?? "",
+  ).replace(/^mailto:/i, "");
+  const organizerDomain =
+    /^[^\s<>@]+@([A-Za-z0-9.-]+)$/.exec(organizer)?.[1]?.toLowerCase() ?? null;
 
-  if (method === "CANCEL" || status === "CANCELLED") reasons.push("interview-cancelled");
-  else if (!scheduledFor || !["", "CONFIRMED"].includes(status)) reasons.push("uncertain-calendar");
+  if (method === "CANCEL" || status === "CANCELLED")
+    reasons.push("interview-cancelled");
+  else if (!scheduledFor || !["", "CONFIRMED"].includes(status))
+    reasons.push("uncertain-calendar");
   return {
     // The UID is hashed: raw calendar identifiers are never retained.
     facts: {
-      uidKey: createHash("sha256").update(uid as string).digest("hex"),
+      uidKey: createHash("sha256")
+        .update(uid as string)
+        .digest("hex"),
       sequence,
       method,
       status,
@@ -107,7 +140,10 @@ function parsePart(part: { method: string | null; content: string }, reasons: st
 }
 
 /** Parse bounded scheduling data without expanding recurrences or loading remote time zones. */
-export function extractCalendar(message: ParsedMessage): { event: CalendarEvent | null; reasons: string[] } {
+export function extractCalendar(message: ParsedMessage): {
+  event: CalendarEvent | null;
+  reasons: string[];
+} {
   const events: CalendarEvent[] = [];
   const reasons: string[] = [];
   for (const part of message.calendarParts ?? []) {
@@ -120,7 +156,12 @@ export function extractCalendar(message: ParsedMessage): { event: CalendarEvent 
     }
   }
   // Several parts describing different events cannot be reconciled automatically.
-  const unique = new Map(events.map((event) => [JSON.stringify(event.facts), event]));
+  const unique = new Map(
+    events.map((event) => [JSON.stringify(event.facts), event]),
+  );
   if (unique.size > 1) reasons.push("uncertain-calendar");
-  return { event: unique.size === 1 ? [...unique.values()][0]! : null, reasons: [...new Set(reasons)] };
+  return {
+    event: unique.size === 1 ? [...unique.values()][0]! : null,
+    reasons: [...new Set(reasons)],
+  };
 }

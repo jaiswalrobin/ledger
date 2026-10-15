@@ -54,7 +54,7 @@ async function attemptViews(
   now: Date,
 ): Promise<Map<string, AttemptView[]>> {
   if (!rows.length) return new Map();
-  const attemptIds = rows.map(r => r.id);
+  const attemptIds = rows.map((r) => r.id);
   const facts = await db.query<{
     attempt_id: string;
     sync_state: SyncState;
@@ -73,7 +73,10 @@ async function attemptViews(
   );
   // Select each calendar's latest accepted revision before considering its time. Filtering
   // future times first would incorrectly revive an older invitation after a reschedule.
-  const schedules = await db.query<{ attempt_id: string; scheduled_for: unknown }>(
+  const schedules = await db.query<{
+    attempt_id: string;
+    scheduled_for: unknown;
+  }>(
     `SELECT attempt_id,min(scheduled_for) AS scheduled_for FROM (
        SELECT DISTINCT ON (attempt_id,calendar_uid_key) attempt_id,scheduled_for
        FROM application_events WHERE user_id=$1 AND attempt_id=ANY($2::uuid[])
@@ -82,7 +85,9 @@ async function attemptViews(
      ) current_calendar WHERE scheduled_for >= $3 GROUP BY attempt_id`,
     [userId, attemptIds, now.toISOString()],
   );
-  const upcoming = new Map(schedules.rows.map(r => [r.attempt_id, iso(r.scheduled_for)]));
+  const upcoming = new Map(
+    schedules.rows.map((r) => [r.attempt_id, iso(r.scheduled_for)]),
+  );
   const byAttempt = new Map<
     string,
     { syncState: SyncState; backfillComplete: boolean }[]
@@ -112,7 +117,8 @@ async function attemptViews(
       outcome: r.outcome,
       submittedAt: r.submitted_at ? iso(r.submitted_at) : null,
       lastActivityAt,
-      nextInterviewAt: r.outcome === "PENDING" ? upcoming.get(r.id) ?? null : null,
+      nextInterviewAt:
+        r.outcome === "PENDING" ? (upcoming.get(r.id) ?? null) : null,
       conflicts: r.projection_conflicts,
       coverage,
       coverageLabel: COVERAGE_LABEL[coverage],
@@ -292,7 +298,8 @@ export async function getOpening(
       origin: e.origin,
       evidence: evidenceByEvent.get(e.id) ?? [],
       scheduledFor: e.scheduled_for ? iso(e.scheduled_for) : null,
-      calendarRevision: e.calendar_sequence === null ? null : Number(e.calendar_sequence),
+      calendarRevision:
+        e.calendar_sequence === null ? null : Number(e.calendar_sequence),
       currentSchedule: e.current_schedule,
     });
     eventViews.set(e.attempt_id, list);
@@ -444,7 +451,8 @@ export async function listReviews(
     candidateOpenings: r.candidate_opening_ids.flatMap(
       (id) => openingInfo.get(id) ?? [],
     ),
-    mailboxAddress:r.mailbox_address,providerMessageId:r.provider_message_id,
+    mailboxAddress: r.mailbox_address,
+    providerMessageId: r.provider_message_id,
   }));
 }
 
@@ -525,35 +533,43 @@ export async function listMailboxes(
     [userId],
   );
   if (!rows.length) return [];
-  const mailboxIds = rows.map(m => m.id);
+  const mailboxIds = rows.map((m) => m.id);
   // Batch every read across the owner's mailboxes: the query count does not grow per account.
   const run = await db.query<{
-      mailbox_id: string;
-      kind: string;
-      state: string;
-      started_at: unknown;
-      finished_at: unknown;
-      discovered_count: number;
-      headers_inspected: number;
-      bodies_fetched: number;
-      skipped_sensitive: number;
-      skipped_other: number;
-      signals_applied: number;
-      reviews_created: number;
-      tasks_failed: number;
-      safe_error_code: string | null;
-    }>(
-      "SELECT DISTINCT ON (mailbox_id) * FROM sync_runs WHERE mailbox_id = ANY($1::uuid[]) ORDER BY mailbox_id, started_at DESC, id",
-      [mailboxIds],
-    );
-    const tasks = await db.query<{ mailbox_id: string; pending: string; failed: string }>(
-      `SELECT mailbox_id, count(*) FILTER (WHERE state='PENDING') AS pending,
+    mailbox_id: string;
+    kind: string;
+    state: string;
+    started_at: unknown;
+    finished_at: unknown;
+    discovered_count: number;
+    headers_inspected: number;
+    bodies_fetched: number;
+    skipped_sensitive: number;
+    skipped_other: number;
+    signals_applied: number;
+    reviews_created: number;
+    tasks_failed: number;
+    safe_error_code: string | null;
+  }>(
+    "SELECT DISTINCT ON (mailbox_id) * FROM sync_runs WHERE mailbox_id = ANY($1::uuid[]) ORDER BY mailbox_id, started_at DESC, id",
+    [mailboxIds],
+  );
+  const tasks = await db.query<{
+    mailbox_id: string;
+    pending: string;
+    failed: string;
+  }>(
+    `SELECT mailbox_id, count(*) FILTER (WHERE state='PENDING') AS pending,
          count(*) FILTER (WHERE state='FAILED' AND outcome<>'DISCONNECTED') AS failed
        FROM processing_tasks WHERE mailbox_id=ANY($1::uuid[]) AND user_id=$2 GROUP BY mailbox_id`,
-      [mailboxIds, userId],
-    );
-    const outcomes = await db.query<{ mailbox_id: string; category: string; n: string }>(
-      `SELECT t.mailbox_id, CASE
+    [mailboxIds, userId],
+  );
+  const outcomes = await db.query<{
+    mailbox_id: string;
+    category: string;
+    n: string;
+  }>(
+    `SELECT t.mailbox_id, CASE
          WHEN t.outcome='PROCESSED' THEN 'processed'
          WHEN t.outcome='PROCESSED_PARTIAL' THEN 'partiallyProcessed'
          WHEN t.outcome='SKIPPED_SENSITIVE' OR a.body_access_decision='SKIPPED_SENSITIVE' THEN 'skippedSensitive'
@@ -563,15 +579,15 @@ export async function listMailboxes(
        FROM processing_tasks t LEFT JOIN source_artifacts a ON a.user_id=t.user_id AND a.mailbox_id=t.mailbox_id
          AND a.provider_message_id=t.provider_message_id AND a.source_kind='GMAIL'
        WHERE t.mailbox_id=ANY($1::uuid[]) AND t.user_id=$2 AND t.state='DONE' GROUP BY t.mailbox_id, category`,
-      [mailboxIds, userId],
-    );
-    const excluded = await db.query<{
-      mailbox_id: string;
-      provider_message_id: string;
-      reason: MailboxView["excludedMessages"][number]["reason"];
-      original_message_at: unknown;
-    }>(
-      `SELECT * FROM (SELECT t.mailbox_id, t.provider_message_id, a.original_message_at,
+    [mailboxIds, userId],
+  );
+  const excluded = await db.query<{
+    mailbox_id: string;
+    provider_message_id: string;
+    reason: MailboxView["excludedMessages"][number]["reason"];
+    original_message_at: unknown;
+  }>(
+    `SELECT * FROM (SELECT t.mailbox_id, t.provider_message_id, a.original_message_at,
          row_number() OVER (PARTITION BY t.mailbox_id ORDER BY t.finished_at DESC NULLS LAST, t.id) AS rank, CASE
          WHEN t.outcome='SKIPPED_SENSITIVE' OR a.body_access_decision='SKIPPED_SENSITIVE' THEN 'PRIVACY_CHECK'
          WHEN left(t.outcome,12)='QUARANTINED_' OR t.outcome='PROCESSED_PARTIAL' THEN 'PARSE_LIMIT'
@@ -581,27 +597,39 @@ export async function listMailboxes(
        WHERE t.mailbox_id=ANY($1::uuid[]) AND t.user_id=$2 AND t.state='DONE'
          AND (t.outcome IN ('NO_SIGNAL','SKIPPED_SENSITIVE','SKIPPED_UNCERTAIN','PROCESSED_PARTIAL') OR left(t.outcome,12)='QUARANTINED_')
        ) ranked WHERE rank<=20 ORDER BY mailbox_id, rank`,
-      [mailboxIds, userId],
-    );
-  const runsByMailbox = new Map(run.rows.map(r => [r.mailbox_id, r]));
-  const tasksByMailbox = new Map(tasks.rows.map(t => [t.mailbox_id, t]));
+    [mailboxIds, userId],
+  );
+  const runsByMailbox = new Map(run.rows.map((r) => [r.mailbox_id, r]));
+  const tasksByMailbox = new Map(tasks.rows.map((t) => [t.mailbox_id, t]));
   const summaries = new Map<string, MailboxView["processingSummary"]>();
   for (const o of outcomes.rows) {
-    const summary = summaries.get(o.mailbox_id) ?? { processed: 0, skippedSensitive: 0, unrecognized: 0,
-      skippedOther: 0, quarantined: 0, partiallyProcessed: 0 };
+    const summary = summaries.get(o.mailbox_id) ?? {
+      processed: 0,
+      skippedSensitive: 0,
+      unrecognized: 0,
+      skippedOther: 0,
+      quarantined: 0,
+      partiallyProcessed: 0,
+    };
     summary[o.category as keyof typeof summary] = Number(o.n);
     summaries.set(o.mailbox_id, summary);
   }
   const exclusions = new Map<string, MailboxView["excludedMessages"]>();
   for (const e of excluded.rows) {
     const list = exclusions.get(e.mailbox_id) ?? [];
-    list.push({ messageId: e.provider_message_id, reason: e.reason,
-      originalMessageAt: e.original_message_at ? iso(e.original_message_at) : null });
+    list.push({
+      messageId: e.provider_message_id,
+      reason: e.reason,
+      originalMessageAt: e.original_message_at
+        ? iso(e.original_message_at)
+        : null,
+    });
     exclusions.set(e.mailbox_id, list);
   }
   const result: MailboxView[] = [];
   for (const m of rows) {
-    const r = runsByMailbox.get(m.id), counts = tasksByMailbox.get(m.id);
+    const r = runsByMailbox.get(m.id),
+      counts = tasksByMailbox.get(m.id);
     result.push({
       id: m.id,
       address: m.address,
@@ -615,8 +643,14 @@ export async function listMailboxes(
       pendingTasks: Number(counts?.pending ?? 0),
       failedTasks: Number(counts?.failed ?? 0),
       recheckInProgress: m.recheck_id !== null,
-      processingSummary: summaries.get(m.id) ?? { processed: 0, skippedSensitive: 0, unrecognized: 0,
-        skippedOther: 0, quarantined: 0, partiallyProcessed: 0 },
+      processingSummary: summaries.get(m.id) ?? {
+        processed: 0,
+        skippedSensitive: 0,
+        unrecognized: 0,
+        skippedOther: 0,
+        quarantined: 0,
+        partiallyProcessed: 0,
+      },
       excludedMessages: exclusions.get(m.id) ?? [],
       lastRun: r
         ? {

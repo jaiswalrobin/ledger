@@ -1,10 +1,7 @@
 import { EML_LIMITS } from "../../ingestion/eml.ts";
-import { authenticatedGmailDomain } from "./authentication.ts";
+import { senderAuthenticated } from "./authentication.ts";
 import { RECRUITMENT_SUBJECT_TERMS } from "../../ingestion/header-gate.ts";
-import {
-  RECRUITING_SENDER_DOMAINS,
-  senderDomain,
-} from "../../ingestion/ats.ts";
+import { RECRUITING_SENDER_DOMAINS } from "../../ingestion/ats.ts";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 export type GmailErrorCode =
@@ -118,7 +115,11 @@ const phraseQuery = (): string =>
  */
 export function phraseCheckQuery(rfcMessageId: string): string | null {
   const id = rfcMessageId.trim().replace(/^<|>$/g, "");
-  if (!id || id.length > 250 || !/^[A-Za-z0-9!#$%&'*+\/=?^_`{|}~.@-]+$/.test(id))
+  if (
+    !id ||
+    id.length > 250 ||
+    !/^[A-Za-z0-9!#$%&'*+\/=?^_`{|}~.@-]+$/.test(id)
+  )
     return null;
   return `rfc822msgid:${id} in:anywhere ${phraseQuery()}`;
 }
@@ -133,7 +134,7 @@ export function candidateQueries(afterEpochSeconds: number): string[] {
   const senders = `(${RECRUITING_SENDER_DOMAINS.map((d) => `from:${d}`).join(" OR ")})`;
   return [
     `${base} ${senders}`,
-    `${base} subject:(${RECRUITMENT_SUBJECT_TERMS.map(term => term.includes(" ") ? `"${term}"` : term).join(" OR ")})`,
+    `${base} subject:(${RECRUITMENT_SUBJECT_TERMS.map((term) => (term.includes(" ") ? `"${term}"` : term)).join(" OR ")})`,
     `${base} (from:jobs-noreply@linkedin.com OR from:indeedapply@indeed.com OR from:noreply@indeed.com OR from:jobs-listings@linkedin.com)`,
     `${base} ${phraseQuery()}`,
     // Hiring platforms' mail is often misfiled as spam. Spam hits are accepted later only when
@@ -263,18 +264,17 @@ export function createGmailClient(
       const header = (name: string) =>
         headers.find((h) => h.name.toLowerCase() === name)?.value ?? "";
       const from = header("from");
-      // The address, not an "@" inside a display name such as "jobs@acme via Greenhouse".
-      const domain = senderDomain(from);
-      const authenticatedDomain = headers.filter(h=>h.name.toLowerCase()==="from").length===1
-        ? authenticatedGmailDomain(headers) : null;
       return {
         id,
-        ...(typeof r["threadId"]==="string" && /^[a-zA-Z0-9_-]{1,200}$/.test(r["threadId"]) ? {threadId:r["threadId"]} : {}),
+        ...(typeof r["threadId"] === "string" &&
+        /^[a-zA-Z0-9_-]{1,200}$/.test(r["threadId"])
+          ? { threadId: r["threadId"] }
+          : {}),
         from,
         subject: header("subject"),
         rfcMessageId: header("message-id") || null,
         labelIds: (r["labelIds"] as string[] | undefined) ?? [],
-        senderAuthenticated: !!domain && domain === authenticatedDomain,
+        senderAuthenticated: senderAuthenticated(headers),
       };
     },
     async getRaw(id) {

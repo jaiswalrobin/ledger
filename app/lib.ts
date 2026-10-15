@@ -3,11 +3,7 @@ import type { Stage, Outcome } from "../src/domain/types.ts";
 import type { AttemptView, OpeningView } from "../src/server/queries.ts";
 
 export type Screen =
-  | "applications"
-  | "review"
-  | "connections"
-  | "import"
-  | "settings";
+  "applications" | "review" | "connections" | "import" | "settings";
 
 export const label = (value: string) =>
   value
@@ -15,8 +11,17 @@ export const label = (value: string) =>
     .replaceAll("_", " ")
     .replace(/^./, (x) => x.toUpperCase());
 
-export function gmailMessageUrl(address:string|null,id:string|null):string|null {
-  if(!address||!id||!/^[a-f0-9]{8,32}$/i.test(id)||!/^[^\s<>@]+@[^\s<>@]+$/.test(address))return null;
+export function gmailMessageUrl(
+  address: string | null,
+  id: string | null,
+): string | null {
+  if (
+    !address ||
+    !id ||
+    !/^[a-f0-9]{8,32}$/i.test(id) ||
+    !/^[^\s<>@]+@[^\s<>@]+$/.test(address)
+  )
+    return null;
   return `https://mail.google.com/mail/?authuser=${encodeURIComponent(address)}#all/${id}`;
 }
 
@@ -53,7 +58,9 @@ export function relative(value: string | null, now = Date.now()): string {
 }
 
 export const daysSince = (value: string | null, now = Date.now()) =>
-  value ? Math.max(0, Math.floor((now - Date.parse(value)) / 86_400_000)) : null;
+  value
+    ? Math.max(0, Math.floor((now - Date.parse(value)) / 86_400_000))
+    : null;
 
 export const localInstant = (value: string | null) => {
   if (!value) return "";
@@ -101,12 +108,7 @@ const STAGE_RANK: Record<Stage, number> = {
 export const stageRank = (stage: Stage) => STAGE_RANK[stage];
 
 export type Bucket =
-  | "unknown"
-  | "applied"
-  | "assessment"
-  | "interview"
-  | "offer"
-  | "closed";
+  "unknown" | "applied" | "assessment" | "interview" | "offer" | "closed";
 export function bucketOf(a: { stage: Stage; outcome: Outcome }): Bucket {
   if (a.outcome === "OFFERED") return "offer";
   if (a.outcome === "REJECTED" || a.outcome === "WITHDRAWN") return "closed";
@@ -205,9 +207,12 @@ export const reasonText: Record<string, string> = {
   CONFLICTING_EVENTS: "This update conflicts with the accepted timeline.",
   CONFLICTING_ALTERNATIVES:
     "The plain-text and HTML versions disagree. Choose how this update should be interpreted.",
-  CONFLICTING_FIELDS: "This message names conflicting employers or roles. Choose the correct application details.",
-  UNCERTAIN_CALENDAR: "The calendar invitation needs review before its time or status can be accepted.",
-  CALENDAR_REVISION: "This calendar update is older than, or conflicts with, an accepted invitation.",
+  CONFLICTING_FIELDS:
+    "This message names conflicting employers or roles. Choose the correct application details.",
+  UNCERTAIN_CALENDAR:
+    "The calendar invitation needs review before its time or status can be accepted.",
+  CALENDAR_REVISION:
+    "This calendar update is older than, or conflicts with, an accepted invitation.",
   INTERVIEW_CANCELLED:
     "This message says an interview was cancelled or postponed. Decide how it affects the timeline.",
   NOT_SUBMITTED:

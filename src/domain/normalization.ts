@@ -55,7 +55,8 @@ export function canonicalUrlId(raw: string): string | null {
     const url = new URL(raw);
     if (url.protocol !== "https:" && url.protocol !== "http:") return null;
     url.hash = "";
-    if (url.pathname.length > 1) url.pathname = url.pathname.replace(/\/+$/, "");
+    if (url.pathname.length > 1)
+      url.pathname = url.pathname.replace(/\/+$/, "");
     return url.toString();
   } catch {
     return null;

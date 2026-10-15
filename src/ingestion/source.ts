@@ -1,4 +1,10 @@
-import type { ApplicationEventKind, AtsKey } from "../domain/types.ts";
+import type {
+  ApplicationEventKind,
+  AtsKey,
+  CalendarFacts,
+} from "../domain/types.ts";
+
+export type { CalendarFacts };
 
 /**
  * Transient, in-memory view of one ORIGINAL message (never an envelope). It is produced
@@ -48,25 +54,18 @@ export type SignalKind = Extract<
   | "OFFER_RECEIVED"
 >;
 
-export const TERMINAL_KINDS: ReadonlySet<SignalKind> = new Set<SignalKind>([
-  "REJECTION_RECEIVED",
-  "OFFER_RECEIVED",
-]);
-
 export interface FieldDecision {
   state: "SUPPORTED" | "AMBIGUOUS" | "MISSING";
   value: string | null;
-  candidates: readonly { value: string; score: number; sources: readonly string[] }[];
-}
-
-export interface CalendarFacts {
-  /** Opaque UID hash; raw calendar identifiers and participant addresses are never retained. */
-  uidKey: string;
-  sequence: number;
-  method: string;
-  status: string;
-  scheduledFor: string | null;
-  organizerDomain: string | null;
+  /** `rules` names the extraction rules that proposed a value; absent in decisions stored earlier. */
+  candidates: readonly {
+    value: string;
+    score: number;
+    sources: readonly string[];
+    rules?: readonly string[];
+  }[];
+  /** Every rule that proposed any candidate, including those beyond the eight kept above. */
+  firedRules?: readonly string[];
 }
 
 /** Structured, redacted facts lifted from a message. Safe to persist. */

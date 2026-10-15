@@ -1,6 +1,9 @@
 # Test strategy and evaluation plan
 
-**Status:** Test plan for the first implementation; no automated tests exist in this repository yet.
+**Status:** The original test plan. The automated suite now covers these layers: `npm run check`
+(unit, pipeline and security tests on in-memory PostgreSQL), `npm run check:full` (adds real
+PostgreSQL, build, browser and smoke tests), `npm run eval:parser` for the synthetic corpus, and
+`npm run eval:real` for local evaluation on real mail. See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## 1. Corpus and labels
 

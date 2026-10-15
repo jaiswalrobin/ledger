@@ -167,7 +167,8 @@ rejecting an interpretation requires review/owner action; revisions do not erase
 promoted to development; replacement cases written by the same developer are not independent
 proof of generalization. These small synthetic sets do not establish real-mail accuracy. For that,
 use independently labelled, sanitized data grouped by employer/template family and a fixed test
-set that does not guide development.
+set that does not guide development. `npm run eval:real` does this locally on your own Gmail
+downloads; see [real-mail-evaluation.md](real-mail-evaluation.md).
 
 Run `npm run eval:parser` or `npm run eval:parser -- holdout` for accuracy, emitted-value precision,
 positive-field recall, coverage, support counts, and individual misses. Correct empty values count
@@ -177,6 +178,14 @@ through a strict model of generated Gmail discovery queries, header/privacy gate
 final database processing. This model is not a live Gmail integration test. Mutation tests check
 wrapping, quoted history, footers, and repeated evidence; pipeline tests assert that ambiguous
 values never create false applications.
+
+**Rule attribution.** Every company/title rule has a stable id (`FIELD_RULES` in
+`src/ingestion/fields.ts`), and each field decision records which rules proposed each candidate.
+`eval:parser` reports, per rule, how many email fields it fired on, how often it backed a correct
+or a wrong value, and how often it proposed the labelled value but lost. Rules that back wrong
+values are the first to tighten; rules that never fire have no example. `tests/rule-coverage.test.ts`
+requires every rule to fire on a labelled email or on a named example, so a rule cannot be added
+without one.
 
 **Upgrade preview.** `npm run preview:parser -- original.eml --baseline-ref COMMIT` compares the
 current extractor with a locally available Git revision using the current MIME decoding and installed

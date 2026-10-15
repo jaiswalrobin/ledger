@@ -8,11 +8,19 @@ import { htmlText } from "../src/ingestion/html.ts";
 import { senderDomain } from "../src/ingestion/ats.ts";
 import { ingestOriginal } from "../src/server/pipeline.ts";
 import { syncMailbox, type SyncDeps } from "../src/server/gmail/sync.ts";
-import { candidateQueries, phraseCheckQuery } from "../src/server/gmail/client.ts";
+import {
+  candidateQueries,
+  phraseCheckQuery,
+} from "../src/server/gmail/client.ts";
 import type { Db } from "../src/server/db.ts";
 import { buildEml, forwardAsAttachment, type EmlSpec } from "./helpers/eml.ts";
 import { FakeGmail } from "./helpers/fake-gmail.ts";
-import { createTestDb, seedMailbox, seedUser, type TestDb } from "./helpers/db.ts";
+import {
+  createTestDb,
+  seedMailbox,
+  seedUser,
+  type TestDb,
+} from "./helpers/db.ts";
 import {
   APPLICANT_A,
   greenhouseConfirmation,
@@ -34,13 +42,17 @@ const base = (text: string, subject = "Hello"): EmlSpec => ({
 
 describe("recall: kind detection survives real-world formatting", () => {
   it("typographic apostrophes", async () => {
-    const s = await extract(base("We’d like to offer you the Senior Backend Engineer position."));
+    const s = await extract(
+      base("We’d like to offer you the Senior Backend Engineer position."),
+    );
     assert.equal(s.kind, "OFFER_RECEIVED");
   });
 
   it("phrases split by hard line wrapping and non-breaking spaces", async () => {
     const s = await extract(
-      base("Hi Robin,\n\nThank you for\napplying to Acme Robotics. We have\nreceived your application."),
+      base(
+        "Hi Robin,\n\nThank you for\napplying to Acme Robotics. We have\nreceived your application.",
+      ),
     );
     assert.equal(s.kind, "CONFIRMATION_RECEIVED");
   });
@@ -53,7 +65,11 @@ describe("recall: kind detection survives real-world formatting", () => {
       "Application confirmation for Data Engineer.",
       "Your application has been successfully submitted.",
     ])
-      assert.equal((await extract(base(text))).kind, "CONFIRMATION_RECEIVED", text);
+      assert.equal(
+        (await extract(base(text))).kind,
+        "CONFIRMATION_RECEIVED",
+        text,
+      );
   });
 
   it("common rejection phrasings", async () => {
@@ -65,17 +81,36 @@ describe("recall: kind detection survives real-world formatting", () => {
       "The position has been filled.",
       "We have selected another candidate whose experience more closely matches.",
     ])
-      assert.equal((await extract(base(text))).kind, "REJECTION_RECEIVED", text);
+      assert.equal(
+        (await extract(base(text))).kind,
+        "REJECTION_RECEIVED",
+        text,
+      );
   });
 
   it("common interview and assessment phrasings", async () => {
     const cases: [string, string][] = [
-      ["We would love to schedule a call to learn more about you.", "INTERVIEW_INVITED"],
-      ["Please share your availability for an interview next week.", "INTERVIEW_INVITED"],
+      [
+        "We would love to schedule a call to learn more about you.",
+        "INTERVIEW_INVITED",
+      ],
+      [
+        "Please share your availability for an interview next week.",
+        "INTERVIEW_INVITED",
+      ],
       ["We'd like to move you forward to the next round.", "INTERVIEW_INVITED"],
-      ["Your interview has been rescheduled to Thursday.", "INTERVIEW_SCHEDULED"],
-      ["You have been invited to complete a HackerRank test.", "ASSESSMENT_INVITED"],
-      ["Please complete the technical assessment within 3 days.", "ASSESSMENT_INVITED"],
+      [
+        "Your interview has been rescheduled to Thursday.",
+        "INTERVIEW_SCHEDULED",
+      ],
+      [
+        "You have been invited to complete a HackerRank test.",
+        "ASSESSMENT_INVITED",
+      ],
+      [
+        "Please complete the technical assessment within 3 days.",
+        "ASSESSMENT_INVITED",
+      ],
     ];
     for (const [text, kind] of cases)
       assert.equal((await extract(base(text))).kind, kind, text);
@@ -83,7 +118,10 @@ describe("recall: kind detection survives real-world formatting", () => {
 
   it("calendar invitations are scheduled interviews", async () => {
     const s = await extract(
-      base("Join with Google Meet", "Invitation: Interview with Acme Robotics @ Tue Oct 13, 2026 10am - 11am (UTC)"),
+      base(
+        "Join with Google Meet",
+        "Invitation: Interview with Acme Robotics @ Tue Oct 13, 2026 10am - 11am (UTC)",
+      ),
     );
     assert.equal(s.kind, "INTERVIEW_SCHEDULED");
   });
@@ -109,13 +147,17 @@ describe("recall: kind detection survives real-world formatting", () => {
   });
 
   it("keeps real titles that contain a status word", async () => {
-    const s = await extract(base("Job Title: Application Security Engineer\nThank you for applying."));
+    const s = await extract(
+      base("Job Title: Application Security Engineer\nThank you for applying."),
+    );
     assert.equal(s.fields.title, "Application Security Engineer");
   });
 
   it("recovers title and company from a hard-wrapped sentence", async () => {
     const s = await extract(
-      base("Thank you for applying for the Senior Backend\nEngineer position at Acme Robotics. We will be in touch."),
+      base(
+        "Thank you for applying for the Senior Backend\nEngineer position at Acme Robotics. We will be in touch.",
+      ),
     );
     assert.equal(s.fields.title, "Senior Backend Engineer");
     assert.equal(s.fields.company, "Acme Robotics");
@@ -123,7 +165,9 @@ describe("recall: kind detection survives real-world formatting", () => {
 
   it("EU Lever job links are recognised", async () => {
     const s = await extract(
-      base("Thanks for applying. https://jobs.eu.lever.co/northwind/6f1c1c2e-aaaa-4bbb-8ccc-0123456789ab/apply"),
+      base(
+        "Thanks for applying. https://jobs.eu.lever.co/northwind/6f1c1c2e-aaaa-4bbb-8ccc-0123456789ab/apply",
+      ),
     );
     assert.equal(s.fields.atsKey?.provider, "lever");
   });
@@ -132,7 +176,9 @@ describe("recall: kind detection survives real-world formatting", () => {
 describe("recall: sensitive screening targets credentials, not ordinary links", () => {
   it("does not drop interview mail with a meeting passcode", () => {
     assert.equal(
-      hasSensitiveContent("Join Zoom Meeting https://zoom.us/j/123?pwd=abc\nMeeting ID: 123 456\nPasscode: 8Hk2pQ"),
+      hasSensitiveContent(
+        "Join Zoom Meeting https://zoom.us/j/123?pwd=abc\nMeeting ID: 123 456\nPasscode: 8Hk2pQ",
+      ),
       false,
     );
   });
@@ -202,25 +248,49 @@ describe("recall: header gate", () => {
       "Thanks for your interest in Acme",
       "Your candidacy at Acme",
     ])
-      assert.equal(classifyHeaders({ from: "talent@acme.example", subject }).kind, "CANDIDATE", subject);
+      assert.equal(
+        classifyHeaders({ from: "talent@acme.example", subject }).kind,
+        "CANDIDATE",
+        subject,
+      );
   });
   it("accepts neutral subjects from hiring platforms, but not account mail", () => {
     assert.equal(
-      classifyHeaders({ from: '"Acme" <no-reply@us.greenhouse-mail.io>', subject: "Acme Robotics – Senior Engineer" }).kind,
+      classifyHeaders({
+        from: '"Acme" <no-reply@us.greenhouse-mail.io>',
+        subject: "Acme Robotics – Senior Engineer",
+      }).kind,
       "CANDIDATE",
     );
     assert.equal(
-      classifyHeaders({ from: "noreply@hackerrank.com", subject: "Acme Robotics has invited you" }).kind,
+      classifyHeaders({
+        from: "noreply@hackerrank.com",
+        subject: "Acme Robotics has invited you",
+      }).kind,
       "CANDIDATE",
     );
     assert.equal(
-      classifyHeaders({ from: "noreply@greenhouse.io", subject: "Reset your password" }).kind,
+      classifyHeaders({
+        from: "noreply@greenhouse.io",
+        subject: "Reset your password",
+      }).kind,
       "SKIP_SENSITIVE",
     );
-    assert.equal(classifyHeaders({ from: "noreply@greenhouse.io", subject: "Your account" }).kind, "REVIEW_HEADERS");
+    assert.equal(
+      classifyHeaders({
+        from: "noreply@greenhouse.io",
+        subject: "Your account",
+      }).kind,
+      "REVIEW_HEADERS",
+    );
   });
   it("takes the sender domain from the address, never the display name", () => {
-    assert.equal(senderDomain('"jobs@evil.example via Greenhouse" <no-reply@greenhouse.io>'), "greenhouse.io");
+    assert.equal(
+      senderDomain(
+        '"jobs@evil.example via Greenhouse" <no-reply@greenhouse.io>',
+      ),
+      "greenhouse.io",
+    );
     assert.equal(senderDomain("no-reply@greenhouse.io"), "greenhouse.io");
   });
 });
@@ -235,17 +305,28 @@ describe("recall: MIME parsing", () => {
           to: "jobs@example.org",
           subject: "Fwd",
           text: "",
-          attachments: [{ filename: "original.eml", mime: "application/octet-stream", content: original }],
+          attachments: [
+            {
+              filename: "original.eml",
+              mime: "application/octet-stream",
+              content: original,
+            },
+          ],
         }),
       ),
     );
     assert.equal(out.length, 1);
-    assert.equal(out[0]!.message.subject, "Thank you for applying to Acme Robotics");
+    assert.equal(
+      out[0]!.message.subject,
+      "Thank you for applying to Acme Robotics",
+    );
   });
 
   it("one damaged attachment does not discard valid siblings", async () => {
     const good = buildEml(greenhouseConfirmation());
-    const out = await parseEml(bytes(forwardAsAttachment([good, "not a message at all"])));
+    const out = await parseEml(
+      bytes(forwardAsAttachment([good, "not a message at all"])),
+    );
     assert.equal(out.length, 1);
     assert.deepEqual(out[0]!.omittedOriginals, ["NOT_A_MESSAGE"]);
   });
@@ -260,18 +341,29 @@ describe("recall: MIME parsing", () => {
   });
 
   it("accepts a UTC zone name", async () => {
-    const [out] = await parseEml(bytes(buildEml({ ...greenhouseConfirmation(), date: "Mon, 05 Oct 2026 09:30:00 UTC" })));
+    const [out] = await parseEml(
+      bytes(
+        buildEml({
+          ...greenhouseConfirmation(),
+          date: "Mon, 05 Oct 2026 09:30:00 UTC",
+        }),
+      ),
+    );
     assert.equal(out!.message.date, "2026-10-05T09:30:00.000Z");
   });
 
   it("does not refuse a mail-merge with many visible recipients", async () => {
     const to = Array.from({ length: 80 }, (_, i) => `person${i}@example.com`);
-    const [out] = await parseEml(bytes(buildEml({ ...greenhouseConfirmation(), to })));
+    const [out] = await parseEml(
+      bytes(buildEml({ ...greenhouseConfirmation(), to })),
+    );
     assert.equal(out!.message.to.length, 80);
   });
 
   it("keeps the body when <head> is never closed and decodes typographic entities", () => {
-    const text = htmlText("<html><head><meta charset=utf-8><body><p>We&rsquo;d like to offer you the role&hellip;</p>");
+    const text = htmlText(
+      "<html><head><meta charset=utf-8><body><p>We&rsquo;d like to offer you the role&hellip;</p>",
+    );
     assert.match(text, /We’d like to offer you the role…/);
   });
 });
@@ -279,11 +371,21 @@ describe("recall: MIME parsing", () => {
 describe("recall: discovery queries", () => {
   it("cover more hiring platforms, inflections, body phrases and authenticated spam", () => {
     const qs = candidateQueries(1_700_000_000).join("\n");
-    for (const needle of ["from:taleo.net", "from:hackerrank.com", "interviews", "applications", '"thank you for applying"', "in:spam"])
+    for (const needle of [
+      "from:taleo.net",
+      "from:hackerrank.com",
+      "interviews",
+      "applications",
+      '"thank you for applying"',
+      "in:spam",
+    ])
       assert.ok(qs.includes(needle), needle);
   });
   it("only embeds safe Message-IDs in a phrase check", () => {
-    assert.match(phraseCheckQuery("<abc.123@mail.example.com>")!, /^rfc822msgid:abc\.123@mail\.example\.com in:anywhere \(/);
+    assert.match(
+      phraseCheckQuery("<abc.123@mail.example.com>")!,
+      /^rfc822msgid:abc\.123@mail\.example\.com in:anywhere \(/,
+    );
     assert.equal(phraseCheckQuery('<a b"c@x>'), null);
     assert.equal(phraseCheckQuery("<x) OR (in:inbox@x>"), null);
   });
@@ -298,7 +400,12 @@ describe("recall: pipeline and sync", () => {
   });
   after(() => t.close());
   const NOW = new Date("2026-10-20T12:00:00Z");
-  const deps = (fake: FakeGmail): SyncDeps => ({ db, clientFor: async () => fake, now: () => NOW, budgetMs: 60_000 });
+  const deps = (fake: FakeGmail): SyncDeps => ({
+    db,
+    clientFor: async () => fake,
+    now: () => NOW,
+    budgetMs: 60_000,
+  });
   const outcomes = async (mailboxId: string) =>
     Object.fromEntries(
       (
@@ -313,11 +420,23 @@ describe("recall: pipeline and sync", () => {
     const user = await seedUser(db);
     const mailbox = await seedMailbox(db, user);
     const [original] = await parseEml(
-      bytes(buildEml(base("We regret to inform you the role is filled. We are pleased to offer you a different role.", "Your application"))),
+      bytes(
+        buildEml(
+          base(
+            "We regret to inform you the role is filled. We are pleased to offer you a different role.",
+            "Your application",
+          ),
+        ),
+      ),
     );
     const out = await ingestOriginal(db, {
       userId: user,
-      source: { kind: "GMAIL", mailboxId: mailbox, providerMessageId: "amb-1", senderAuthenticated: true },
+      source: {
+        kind: "GMAIL",
+        mailboxId: mailbox,
+        providerMessageId: "amb-1",
+        senderAuthenticated: true,
+      },
       original: original!,
       observedAt: NOW,
     });
@@ -331,12 +450,20 @@ describe("recall: pipeline and sync", () => {
       const [original] = await parseEml(bytes(buildEml(spec)));
       return ingestOriginal(db, {
         userId: user,
-        source: { kind: "GMAIL", mailboxId: mailbox, providerMessageId: id, senderAuthenticated: true },
+        source: {
+          kind: "GMAIL",
+          mailboxId: mailbox,
+          providerMessageId: id,
+          senderAuthenticated: true,
+        },
         original: original!,
         observedAt: NOW,
       });
     };
-    assert.equal((await ingest(greenhouseConfirmation(), "c1")).status, "APPLIED");
+    assert.equal(
+      (await ingest(greenhouseConfirmation(), "c1")).status,
+      "APPLIED",
+    );
     const mixed = rejection();
     mixed.text = mixed.text!.replace(
       "Unfortunately,",
@@ -344,7 +471,8 @@ describe("recall: pipeline and sync", () => {
     );
     const out = await ingest(mixed, "r1");
     assert.equal(out.status, "REVIEW");
-    if (out.status === "REVIEW") assert.equal(out.reason, "TERMINAL_NEEDS_REVIEW");
+    if (out.status === "REVIEW")
+      assert.equal(out.reason, "TERMINAL_NEEDS_REVIEW");
   });
 
   it("recruiter mail with an unhelpful subject is fetched when Gmail finds a recruitment phrase", async () => {
@@ -379,11 +507,15 @@ describe("recall: pipeline and sync", () => {
     const mailbox = await seedMailbox(db, user);
     const fake = new FakeGmail();
     fake.add("ats-spam", greenhouseConfirmation(), ["SPAM"]);
-    fake.add("scam-spam", {
-      ...greenhouseConfirmation(),
-      from: '"Acme" <jobs@scam.example>',
-      messageId: "<scam@scam.example>",
-    }, ["SPAM"]);
+    fake.add(
+      "scam-spam",
+      {
+        ...greenhouseConfirmation(),
+        from: '"Acme" <jobs@scam.example>',
+        messageId: "<scam@scam.example>",
+      },
+      ["SPAM"],
+    );
     await syncMailbox(deps(fake), mailbox, { system: true });
     const o = await outcomes(mailbox);
     assert.equal(o["ats-spam"], "PROCESSED");

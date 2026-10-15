@@ -17,7 +17,8 @@ import type { CalendarFacts } from "../ingestion/source.ts";
 export const iso = (value: unknown): string =>
   (value instanceof Date ? value : new Date(String(value))).toISOString();
 
-export const CALENDAR_REVISION_ORDER = "calendar_sequence DESC,occurred_at DESC,observed_at DESC,id DESC";
+export const CALENDAR_REVISION_ORDER =
+  "calendar_sequence DESC,occurred_at DESC,observed_at DESC,id DESC";
 
 export function isUniqueViolation(error: unknown): boolean {
   return (
@@ -43,22 +44,37 @@ interface OpeningRow {
 export async function loadOpenings(
   db: Db,
   userId: string,
-  filter?: {id?:string;title?:string;atsKey?:AtsKey|null;canonicalUrl?:string|null},
+  filter?: {
+    id?: string;
+    title?: string;
+    atsKey?: AtsKey | null;
+    canonicalUrl?: string | null;
+  },
 ): Promise<JobOpening[]> {
-  const params:unknown[]=[userId];
-  const conditions:string[]=[];
-  const bind=(value:unknown)=>{params.push(value);return `$${params.length}`;};
-  if(filter?.id)conditions.push(`o.id=${bind(filter.id)}::uuid`);
-  else if(filter?.atsKey)conditions.push(`o.ats_provider=${bind(normalizedText(filter.atsKey.provider))} AND o.ats_tenant=${bind(normalizedText(filter.atsKey.tenant))} AND o.requisition_id=${bind(filter.atsKey.requisitionId)}`);
-  else if(filter?.title){
-    const title=`lower(regexp_replace(btrim(o.title),'\\s+',' ','g'))=${bind(normalizedText(filter.title))}`;
-    conditions.push(filter.canonicalUrl?`(${title} OR o.canonical_url=${bind(filter.canonicalUrl)})`:title);
+  const params: unknown[] = [userId];
+  const conditions: string[] = [];
+  const bind = (value: unknown) => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+  if (filter?.id) conditions.push(`o.id=${bind(filter.id)}::uuid`);
+  else if (filter?.atsKey)
+    conditions.push(
+      `o.ats_provider=${bind(normalizedText(filter.atsKey.provider))} AND o.ats_tenant=${bind(normalizedText(filter.atsKey.tenant))} AND o.requisition_id=${bind(filter.atsKey.requisitionId)}`,
+    );
+  else if (filter?.title) {
+    const title = `lower(regexp_replace(btrim(o.title),'\\s+',' ','g'))=${bind(normalizedText(filter.title))}`;
+    conditions.push(
+      filter.canonicalUrl
+        ? `(${title} OR o.canonical_url=${bind(filter.canonicalUrl)})`
+        : title,
+    );
   }
   const { rows } = await db.query<OpeningRow>(
     `SELECT o.id, c.canonical_name AS company, o.title, o.location, o.ats_provider, o.ats_tenant,
             o.requisition_id, o.canonical_url
        FROM job_openings o JOIN companies c ON c.id = o.company_id AND c.user_id = o.user_id
-      WHERE o.user_id = $1${conditions.length?" AND "+conditions.join(" AND "):""}`,
+      WHERE o.user_id = $1${conditions.length ? " AND " + conditions.join(" AND ") : ""}`,
     params,
   );
   return rows.map((r) => ({
@@ -223,13 +239,29 @@ export async function addSubmissionEvidence(
 /** Accepted confirmations fill missing submission facts, preserving earlier snapshots and dates.
  * Receipt evidence is distinct from status-update evidence on a manually created attempt. */
 export async function acceptSubmissionEvidence(
-  db: Db,userId: string,attemptId: string,key: string,occurredAt: string,
-  fields: {applicantEmail:string|null;externalApplicationId:string|null},
+  db: Db,
+  userId: string,
+  attemptId: string,
+  key: string,
+  occurredAt: string,
+  fields: {
+    applicantEmail: string | null;
+    externalApplicationId: string | null;
+  },
 ): Promise<void> {
-  await addSubmissionEvidence(db,userId,attemptId,key);
-  await db.query(`UPDATE application_attempts SET submitted_at=coalesce(submitted_at,$3),
+  await addSubmissionEvidence(db, userId, attemptId, key);
+  await db.query(
+    `UPDATE application_attempts SET submitted_at=coalesce(submitted_at,$3),
     applicant_email_snapshot=coalesce(applicant_email_snapshot,$4),external_application_id=coalesce(external_application_id,$5)
-    WHERE user_id=$1 AND id=$2`,[userId,attemptId,occurredAt,fields.applicantEmail,fields.externalApplicationId]);
+    WHERE user_id=$1 AND id=$2`,
+    [
+      userId,
+      attemptId,
+      occurredAt,
+      fields.applicantEmail,
+      fields.externalApplicationId,
+    ],
+  );
 }
 
 // ---- events & projection ----------------------------------------------------------------
@@ -318,8 +350,12 @@ export async function insertEvent(
       e.dedupeKey,
       e.correction?.stage ?? null,
       e.correction?.outcome ?? null,
-      e.calendar?.uidKey ?? null, e.calendar?.sequence ?? null, e.calendar?.method ?? null,
-      e.calendar?.status ?? null, e.calendar?.organizerDomain ?? null, e.senderDomain ?? null,
+      e.calendar?.uidKey ?? null,
+      e.calendar?.sequence ?? null,
+      e.calendar?.method ?? null,
+      e.calendar?.status ?? null,
+      e.calendar?.organizerDomain ?? null,
+      e.senderDomain ?? null,
       e.calendar?.scheduledFor ?? null,
     ],
   );
@@ -399,33 +435,74 @@ export async function recordEvent(
   artifactId: string | null,
 ): Promise<{ id: string; created: boolean }> {
   const result = await insertEvent(db, e);
-  if (artifactId) await linkEvidence(db, e.userId, result.id, artifactId, e.signalId);
+  if (artifactId)
+    await linkEvidence(db, e.userId, result.id, artifactId, e.signalId);
   await reproject(db, e.userId, e.attemptId);
   return result;
 }
 
 // ---- calendar revisions: read accepted event facts, never arbitrary historical proposals. ----
-export async function attemptsForCalendarUid(db: Db,userId: string,_excludeSignalId: string,uidKey: string): Promise<{attemptId:string;openingId:string}[]> {
-  const {rows}=await db.query<{attempt_id:string;opening_id:string}>(
+export async function attemptsForCalendarUid(
+  db: Db,
+  userId: string,
+  _excludeSignalId: string,
+  uidKey: string,
+): Promise<{ attemptId: string; openingId: string }[]> {
+  const { rows } = await db.query<{ attempt_id: string; opening_id: string }>(
     `SELECT DISTINCT e.attempt_id,a.job_opening_id AS opening_id FROM application_events e
      JOIN application_attempts a ON a.id=e.attempt_id AND a.user_id=e.user_id
-     WHERE e.user_id=$1 AND e.calendar_uid_key=$2 AND e.review_state='ACCEPTED'`,[userId,uidKey]);
-  return rows.map(r=>({attemptId:r.attempt_id,openingId:r.opening_id}));
+     WHERE e.user_id=$1 AND e.calendar_uid_key=$2 AND e.review_state='ACCEPTED'`,
+    [userId, uidKey],
+  );
+  return rows.map((r) => ({
+    attemptId: r.attempt_id,
+    openingId: r.opening_id,
+  }));
 }
-export async function latestCalendarRevision(db: Db,userId: string,_excludeSignalId: string,uidKey: string): Promise<{eventId:string;attemptId:string;calendar:CalendarFacts;senderDomain:string|null}|null> {
-  const {rows}=await db.query<{id:string;attempt_id:string;calendar_uid_key:string;calendar_sequence:number;calendar_method:string;calendar_status:string;calendar_organizer_domain:string|null;calendar_sender_domain:string|null;scheduled_for:unknown}>(
+export async function latestCalendarRevision(
+  db: Db,
+  userId: string,
+  _excludeSignalId: string,
+  uidKey: string,
+): Promise<{
+  eventId: string;
+  attemptId: string;
+  calendar: CalendarFacts;
+  senderDomain: string | null;
+} | null> {
+  const { rows } = await db.query<{
+    id: string;
+    attempt_id: string;
+    calendar_uid_key: string;
+    calendar_sequence: number;
+    calendar_method: string;
+    calendar_status: string;
+    calendar_organizer_domain: string | null;
+    calendar_sender_domain: string | null;
+    scheduled_for: unknown;
+  }>(
     `SELECT id,attempt_id,calendar_uid_key,calendar_sequence,calendar_method,calendar_status,calendar_organizer_domain,calendar_sender_domain,scheduled_for
      FROM application_events WHERE user_id=$1 AND calendar_uid_key=$2 AND review_state='ACCEPTED'
-     ORDER BY ${CALENDAR_REVISION_ORDER} LIMIT 1`,[userId,uidKey]);
-  const r=rows[0];
-  return r?{eventId:r.id,attemptId:r.attempt_id,senderDomain:r.calendar_sender_domain,calendar:{uidKey:r.calendar_uid_key,sequence:Number(r.calendar_sequence),method:r.calendar_method,status:r.calendar_status,organizerDomain:r.calendar_organizer_domain,scheduledFor:r.scheduled_for?iso(r.scheduled_for):null}}:null;
+     ORDER BY ${CALENDAR_REVISION_ORDER} LIMIT 1`,
+    [userId, uidKey],
+  );
+  const r = rows[0];
+  return r
+    ? {
+        eventId: r.id,
+        attemptId: r.attempt_id,
+        senderDomain: r.calendar_sender_domain,
+        calendar: {
+          uidKey: r.calendar_uid_key,
+          sequence: Number(r.calendar_sequence),
+          method: r.calendar_method,
+          status: r.calendar_status,
+          organizerDomain: r.calendar_organizer_domain,
+          scheduledFor: r.scheduled_for ? iso(r.scheduled_for) : null,
+        },
+      }
+    : null;
 }
-
-const CALENDAR_IDENTITY = ["uidKey", "sequence", "method", "status", "scheduledFor", "organizerDomain"] as const;
-
-/** Two observations of one invitation revision: every safe calendar fact agrees. */
-export const sameCalendarRevision = (a: CalendarFacts, b: CalendarFacts): boolean =>
-  CALENDAR_IDENTITY.every((key) => a[key] === b[key]);
 
 /** Whether one of the attempt's confirmations was received by this Gmail mailbox. */
 export async function attemptConfirmedInMailbox(

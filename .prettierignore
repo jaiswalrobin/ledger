@@ -1,0 +1,12 @@
+# Generated, vendored, or not ours to format.
+node_modules
+.next
+out
+coverage
+package-lock.json
+next-env.d.ts
+migrations
+eval
+*.md
+*.css
+.github
