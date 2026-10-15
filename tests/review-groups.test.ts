@@ -6,14 +6,15 @@ const r = (
   id: string,
   company: string | null,
   title: string | null,
-  senderDomain: string | null = null,
-) => ({ id, company, title, senderDomain });
+  employerDomain: string | null = null,
+) => ({ id, company, title, employerDomain });
 
 it("groups one interview thread, including emails that name only the company or only the sender", () => {
   assert.deepEqual(
     groupReviews([
       r("next", "Weave", "Senior Frontend Engineer", "weave.example"),
-      r("ats-reminder", "Weave", "Senior Frontend Engineer", "ashbyhq.com"),
+      // Shared hiring platforms reach the grouping as null: they say nothing about the employer.
+      r("ats-reminder", "Weave", "Senior Frontend Engineer", null),
       r("details", "weave", "senior frontend engineer", "weave.example"),
       r("reschedule", "Weave", null, "weave.example"),
       r("no-names", null, null, "weave.example"),
@@ -51,4 +52,37 @@ it("never groups emails with nothing in common", () => {
     ["a"],
     ["b"],
   ]);
+});
+
+it("does not group nameless emails that only share no employer domain", () => {
+  assert.deepEqual(
+    groupReviews([
+      r("weave", "Weave", "Senior Frontend Engineer", null),
+      r("other-employer-via-ats", null, null, null),
+    ]),
+    [["weave"], ["other-employer-via-ats"]],
+  );
+});
+
+it("shows a round chip only at an assessment or interview stage", async () => {
+  const { roundOf } = await import("../app/lib.ts");
+  const round = { number: 2, kind: "INTERVIEW" as const };
+  assert.equal(
+    roundOf({ outcome: "PENDING", stage: "INTERVIEW", round }),
+    "Round 2",
+  );
+  // Moved back by hand: the history keeps its rounds, the chip goes.
+  assert.equal(roundOf({ outcome: "PENDING", stage: "APPLIED", round }), null);
+  assert.equal(
+    roundOf({ outcome: "REJECTED", stage: "INTERVIEW", round }),
+    null,
+  );
+  assert.equal(
+    roundOf({
+      outcome: "PENDING",
+      stage: "INTERVIEW",
+      round: { number: 1, kind: "INTERVIEW" },
+    }),
+    null,
+  );
 });

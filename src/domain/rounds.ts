@@ -68,7 +68,12 @@ const NEW_INVITATION_AFTER_MS = 24 * 60 * 60 * 1000;
 interface Open extends Round {
   uids: Set<string>;
   lastScheduledAt: number | null;
+  /** The round began with next-round wording. */
+  marked: boolean;
 }
+
+const isInvitation = (kind: ApplicationEventKind) =>
+  kind === "INTERVIEW_INVITED" || kind === "ASSESSMENT_INVITED";
 
 /** Whether `event` begins a new round rather than continuing `current`. */
 function startsNewRound(
@@ -76,10 +81,16 @@ function startsNewRound(
   event: Omit<StepEvent, "id">,
 ): boolean {
   if (!current) return true;
-  if (event.startsRound) return true;
-  if (roundKind(event.kind) !== current.kind) return true;
-  // A revision of this round's invitation always stays with it.
+  // A revision of this round's invitation always stays with it, whatever its wording.
   if (event.calendar && current.uids.has(event.calendar.uidKey)) return false;
+  // Next-round wording starts a round, unless it repeats the wording that began this one: a
+  // reminder or confirmation of that round, or another invitation to it before it is scheduled.
+  if (
+    event.startsRound &&
+    !(current.marked && (!isInvitation(event.kind) || !current.scheduled))
+  )
+    return true;
+  if (roundKind(event.kind) !== current.kind) return true;
   const at = Date.parse(event.occurredAt);
   const meetingAt = current.meeting?.scheduledFor
     ? Date.parse(current.meeting.scheduledFor)
@@ -117,6 +128,7 @@ function build(events: readonly StepEvent[]): Open[] {
         scheduled: false,
         uids: new Set(),
         lastScheduledAt: null,
+        marked: !!event.startsRound,
       };
       rounds.push(current);
     }
@@ -128,13 +140,15 @@ function build(events: readonly StepEvent[]): Open[] {
     if (event.calendar) {
       current.uids.add(event.calendar.uidKey);
       const latest = current.meeting;
-      // A higher revision of the invitation, or a replacement invitation, moves the meeting.
-      const moves =
+      // A higher revision of the invitation, or a replacement invitation, supersedes it. It is a
+      // reschedule only when the time changed: revisions also carry location or guest edits.
+      const supersedes =
         !latest ||
         latest.uidKey !== event.calendar.uidKey ||
         event.calendar.sequence > latest.sequence;
-      if (moves) {
-        if (latest) current.reschedules += 1;
+      if (supersedes) {
+        if (latest && latest.scheduledFor !== event.calendar.scheduledFor)
+          current.reschedules += 1;
         current.meeting = { eventId: event.id, ...event.calendar };
       }
     }
@@ -145,7 +159,8 @@ function build(events: readonly StepEvent[]): Open[] {
 /** The attempt's assessment and interview rounds, oldest first. */
 export function interviewRounds(events: readonly StepEvent[]): Round[] {
   return build(events).map(
-    ({ uids: _uids, lastScheduledAt: _last, ...round }) => round,
+    ({ uids: _uids, lastScheduledAt: _last, marked: _marked, ...round }) =>
+      round,
   );
 }
 

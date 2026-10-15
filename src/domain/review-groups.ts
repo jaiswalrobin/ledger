@@ -9,8 +9,11 @@ export interface GroupableReview {
   id: string;
   company: string | null;
   title: string | null;
-  /** The sender's domain, for emails that name no company. */
-  senderDomain: string | null;
+  /**
+   * For emails that name no company: the sender's domain, only when it belongs to one employer.
+   * A shared hiring-platform domain must be passed as null, or unrelated employers would merge.
+   */
+  employerDomain: string | null;
 }
 
 /**
@@ -33,7 +36,7 @@ export function groupReviews(reviews: readonly GroupableReview[]): string[][] {
   for (const review of reviews) {
     const company = review.company ? companyKey(review.company) : null;
     const title = review.title ? normalizedText(review.title) : null;
-    const domain = review.senderDomain?.toLowerCase() ?? null;
+    const domain = review.employerDomain?.toLowerCase() ?? null;
     const sameCompany = company
       ? groups.filter((g) => g.company === company)
       : [];

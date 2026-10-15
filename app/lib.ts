@@ -93,9 +93,15 @@ export function initials(name: string): string {
 export const statusOf = (a: Pick<AttemptView, "stage" | "outcome">) =>
   a.outcome === "PENDING" ? a.stage : a.outcome;
 
-/** "Round 2" while an application is past its first assessment or interview round. */
-export const roundOf = (a: Pick<AttemptView, "outcome" | "round">) =>
-  a.outcome === "PENDING" && a.round && a.round.number > 1
+/**
+ * "Round 2" while an application is at an assessment or interview stage past its first round.
+ * Hidden after the owner moves the stage back by hand, though the history keeps its rounds.
+ */
+export const roundOf = (a: Pick<AttemptView, "outcome" | "round" | "stage">) =>
+  a.outcome === "PENDING" &&
+  (a.stage === "ASSESSMENT" || a.stage === "INTERVIEW") &&
+  a.round &&
+  a.round.number > 1
     ? `Round ${a.round.number}`
     : null;
 

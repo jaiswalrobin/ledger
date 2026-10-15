@@ -53,6 +53,7 @@ import {
 } from "./conversation.ts";
 import {
   acceptSubmissionEvidence,
+  attachEvidence,
   attemptConfirmedInMailbox,
   attemptsForCalendarUid,
   automaticEventProblem,
@@ -1028,11 +1029,12 @@ async function applyUpdate(
       startsRound: c.signal.fields.nextRound === true,
     });
     if (placement.action === "ATTACH") {
-      await linkEvidence(
+      await attachEvidence(
         tx,
         userId,
         placement.eventId,
         c.artifactId,
+        c.occurredAt,
         c.signalId,
       );
       return next(applied(c, attemptId, openingId));

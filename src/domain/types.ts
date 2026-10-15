@@ -87,6 +87,8 @@ export interface ApplicationEvent {
   reviewState: "PROPOSED" | "ACCEPTED" | "REJECTED" | "SUPERSEDED";
   evidenceId: string | null;
   correction?: { stage: Stage; outcome: Outcome };
+  /** A later email attached to this event as more evidence; counts as activity. */
+  latestEvidenceAt?: string | null;
 }
 
 export interface AttemptProjection {

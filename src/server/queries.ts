@@ -7,6 +7,7 @@ import {
   type SyncState,
 } from "../domain/coverage.ts";
 import type { ApplicationEventKind, Outcome, Stage } from "../domain/types.ts";
+import { isRecruitingSenderDomain } from "../ingestion/ats.ts";
 import type { ExtractedFields, SignalKind } from "../ingestion/source.ts";
 import type { Db } from "./db.ts";
 import type { ReviewReason } from "./pipeline.ts";
@@ -408,8 +409,11 @@ export interface ReviewView {
   candidateOpenings: { openingId: string; title: string; company: string }[];
   mailboxAddress: string | null;
   providerMessageId: string | null;
-  /** The sender's domain (no address), for grouping emails about one job. */
-  senderDomain: string | null;
+  /**
+   * The sender's domain when it belongs to one employer, for grouping emails about one job.
+   * Null for shared hiring platforms (greenhouse.io, ashbyhq.com), which every employer uses.
+   */
+  employerDomain: string | null;
 }
 
 export async function listReviews(
@@ -502,7 +506,10 @@ export async function listReviews(
     ),
     mailboxAddress: r.mailbox_address,
     providerMessageId: r.provider_message_id,
-    senderDomain: r.sender_domain,
+    employerDomain:
+      r.sender_domain && !isRecruitingSenderDomain(r.sender_domain)
+        ? r.sender_domain
+        : null,
   }));
 }
 

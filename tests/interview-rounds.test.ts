@@ -219,6 +219,11 @@ it("one interview round is a few facts with its emails as evidence, not one entr
       detail!.attempts[0]!.events.map((e) => e.round),
       [null, 1, 2, 2, 2, 2, 2],
     );
+    // The final reminder only attached as evidence, but it is still the latest activity.
+    assert.equal(
+      detail!.attempts[0]!.lastActivityAt,
+      "2026-10-15T07:00:00.000Z",
+    );
   } finally {
     await t.close();
   }
@@ -241,6 +246,12 @@ it("forwarded copies: resolving the first review clears the rest, but never a re
       assert.equal(outcome.status, "REVIEW", mail.id);
       if (outcome.status === "REVIEW") reviews.push(outcome.reviewId);
     }
+    // Grouping may use an employer's own domain, never a shared hiring platform's.
+    const { listReviews } = await import("../src/server/queries.ts");
+    const domains = new Set(
+      (await listReviews(t.db, userId)).map((r) => r.employerDomain),
+    );
+    assert.deepEqual([...domains].sort(), [null, "weave.example"]);
     await resolveReviewCreate(t.db, userId, reviews[0]!, {
       company: "Weave",
       title: "Senior Frontend Engineer",
@@ -265,6 +276,59 @@ it("forwarded copies: resolving the first review clears the rest, but never a re
       observedAt: new Date("2026-10-20T08:00:00Z"),
     });
     assert.equal(rejection.status, "REVIEW");
+  } finally {
+    await t.close();
+  }
+});
+
+it("a next-round email assigned by hand keeps its round marker", async () => {
+  const { resolveReviewAssign } = await import("../src/server/actions.ts");
+  const t = await createTestDb();
+  try {
+    const userId = await seedUser(t.db);
+    const mailboxId = await seedMailbox(t.db, userId);
+    const ingest = async (mail: Parameters<typeof original>[0]) =>
+      ingestOriginal(t.db, {
+        userId,
+        source: {
+          kind: "GMAIL",
+          mailboxId,
+          providerMessageId: mail.id,
+          senderAuthenticated: true,
+        },
+        original: await original(mail),
+        observedAt: new Date("2026-10-15T08:00:00Z"),
+      });
+    const applied = await ingest(WEAVE[0]!);
+    assert.equal(applied.status, "APPLIED");
+    if (applied.status !== "APPLIED") return;
+    // Round one only got as far as an invitation, so no time rule separates the rounds.
+    await ingest({
+      id: "first-invite",
+      from: swati,
+      subject: "Interview invitation - Weave",
+      date: "Mon, 21 Sep 2026 09:00:00 +0000",
+      text: "Hi Robin, we would like to invite you to an interview for the Senior Frontend Engineer role.",
+    });
+    // From a personal address and naming neither company nor role: it waits for a person.
+    const next = await ingest({
+      id: "next-personal",
+      from: "Nikita Rathi <nikita.rathi@gmail.com>",
+      subject: "Good news",
+      date: "Wed, 07 Oct 2026 09:00:00 +0000",
+      text: "Hi Robin, Good news! We received positive feedback from your previous interview, and we would like to invite you to the next round.",
+    });
+    assert.equal(next.status, "REVIEW");
+    if (next.status !== "REVIEW") return;
+    await resolveReviewAssign(t.db, userId, next.reviewId, applied.attemptId);
+    const { getOpening } = await import("../src/server/queries.ts");
+    const detail = await getOpening(
+      t.db,
+      userId,
+      applied.openingId,
+      new Date("2026-10-15T08:00:00Z"),
+    );
+    assert.equal(detail!.attempts[0]!.rounds.length, 2);
   } finally {
     await t.close();
   }

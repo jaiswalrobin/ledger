@@ -116,7 +116,7 @@ function reviewGroups(reviews: readonly ReviewView[]) {
       id: review.id,
       company: review.fields.company,
       title: review.fields.title,
-      senderDomain: review.senderDomain,
+      employerDomain: review.employerDomain,
     })),
   ).map((ids) => {
     const [lead, ...rest] = ids.map((id) => byId.get(id)!).sort(earliest);

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isStep, placeStep } from "../domain/rounds.ts";
 import type { AtsKey, Outcome, Stage } from "../domain/types.ts";
 import type { ExtractedFields, SignalKind } from "../ingestion/source.ts";
 import type { Db } from "./db.ts";
@@ -10,6 +11,9 @@ import {
   recordEvent,
   reproject,
   acceptSubmissionEvidence,
+  attachEvidence,
+  stepEvents,
+  type NewEvent,
 } from "./store.ts";
 
 export type ActionErrorCode =
@@ -256,6 +260,52 @@ export async function correctSubmissionDate(
   });
 }
 
+/**
+ * Records a reviewed email under the same round rules as automatic ingestion: a reminder joins
+ * the fact it repeats, and a next-round email keeps its marker.
+ */
+async function recordReviewed(
+  tx: Db,
+  userId: string,
+  attemptId: string,
+  ctx: ReviewContext,
+  kind: SignalKind,
+  occurredAt: string,
+): Promise<void> {
+  const event: NewEvent = {
+    userId,
+    attemptId,
+    kind,
+    occurredAt,
+    sourceType: ctx.sourceKind,
+    origin: "MANUAL",
+    dedupeKey: `${attemptId}:${kind}:${ctx.evidenceKey}`,
+    signalId: ctx.signalId,
+    ...(kind === "INTERVIEW_SCHEDULED" && ctx.fields.calendar
+      ? { calendar: ctx.fields.calendar, senderDomain: ctx.senderDomain ?? "" }
+      : {}),
+  };
+  if (isStep(kind)) {
+    const placement = placeStep(await stepEvents(tx, userId, attemptId), {
+      kind,
+      occurredAt,
+      calendar: event.calendar ?? null,
+      startsRound: ctx.fields.nextRound === true,
+    });
+    if (placement.action === "ATTACH")
+      return attachEvidence(
+        tx,
+        userId,
+        placement.eventId,
+        ctx.artifactId,
+        occurredAt,
+        ctx.signalId,
+      );
+    event.startsRound = placement.startsRound;
+  }
+  await recordEvent(tx, event, ctx.artifactId);
+}
+
 export async function resolveReviewAssign(
   db: Db,
   userId: string,
@@ -277,26 +327,7 @@ export async function resolveReviewAssign(
         occurredAt,
         ctx.fields,
       );
-    await recordEvent(
-      tx,
-      {
-        userId,
-        attemptId,
-        kind,
-        occurredAt,
-        sourceType: ctx.sourceKind,
-        origin: "MANUAL",
-        dedupeKey: `${attemptId}:${kind}:${ctx.evidenceKey}`,
-        signalId: ctx.signalId,
-        ...(kind === "INTERVIEW_SCHEDULED" && ctx.fields.calendar
-          ? {
-              calendar: ctx.fields.calendar,
-              senderDomain: ctx.senderDomain ?? "",
-            }
-          : {}),
-      },
-      ctx.artifactId,
-    );
+    await recordReviewed(tx, userId, attemptId, ctx, kind, occurredAt);
     await closeReview(tx, userId, reviewId, ctx, "RESOLVED", "ASSIGNED");
     // Any accepted email can be what waiting ones were missing: a reply's thread, or the
     // employer's domain on an application that had no evidence from it yet.
@@ -359,26 +390,7 @@ export async function resolveReviewCreate(
       evidenceKey: ctx.evidenceKey,
       submissionEvidence: kind === "CONFIRMATION_RECEIVED",
     });
-    await recordEvent(
-      tx,
-      {
-        userId,
-        attemptId,
-        kind,
-        occurredAt,
-        sourceType: ctx.sourceKind,
-        origin: "MANUAL",
-        dedupeKey: `${attemptId}:${kind}:${ctx.evidenceKey}`,
-        signalId: ctx.signalId,
-        ...(kind === "INTERVIEW_SCHEDULED" && ctx.fields.calendar
-          ? {
-              calendar: ctx.fields.calendar,
-              senderDomain: ctx.senderDomain ?? "",
-            }
-          : {}),
-      },
-      ctx.artifactId,
-    );
+    await recordReviewed(tx, userId, attemptId, ctx, kind, occurredAt);
     await closeReview(tx, userId, reviewId, ctx, "RESOLVED", "CREATED");
     // The new attempt may be what waiting updates were missing, as after an automatic one.
     await reconcileWaitingUpdates(tx, userId, new Date(), openingId);

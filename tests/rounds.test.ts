@@ -276,3 +276,102 @@ describe("placeStep", () => {
     );
   });
 });
+
+describe("review fixes", () => {
+  it("counts a revision as a reschedule only when the time changed", () => {
+    const [round] = interviewRounds([
+      {
+        id: "a",
+        kind: "INTERVIEW_SCHEDULED",
+        occurredAt: at(1),
+        calendar: invite("u", 0, 5),
+      },
+      // A location edit: higher SEQUENCE, same start.
+      {
+        id: "b",
+        kind: "INTERVIEW_SCHEDULED",
+        occurredAt: at(2),
+        calendar: invite("u", 1, 5),
+      },
+      {
+        id: "c",
+        kind: "INTERVIEW_SCHEDULED",
+        occurredAt: at(3),
+        calendar: invite("u", 2, 6),
+      },
+    ]);
+    assert.equal(round!.reschedules, 1);
+    assert.equal(round!.meeting?.eventId, "c");
+  });
+
+  it("does not start a round each time a reminder repeats next-round wording", () => {
+    const rounds = interviewRounds([
+      { id: "r1", kind: "INTERVIEW_SCHEDULED", occurredAt: at(1) },
+      {
+        id: "next",
+        kind: "INTERVIEW_INVITED",
+        occurredAt: at(5),
+        startsRound: true,
+      },
+      // "Reminder: submit availability for the next round" before scheduling.
+      {
+        id: "avail",
+        kind: "INTERVIEW_INVITED",
+        occurredAt: at(6),
+        startsRound: true,
+      },
+      {
+        id: "cal0",
+        kind: "INTERVIEW_SCHEDULED",
+        occurredAt: at(7),
+        startsRound: true,
+        calendar: invite("n", 0, 12),
+      },
+      // A revision of the same invitation, titled "Next round interview".
+      {
+        id: "cal1",
+        kind: "INTERVIEW_SCHEDULED",
+        occurredAt: at(8),
+        startsRound: true,
+        calendar: invite("n", 1, 12, 14),
+      },
+      // "Your next round interview is tomorrow".
+      {
+        id: "reminder",
+        kind: "INTERVIEW_SCHEDULED",
+        occurredAt: at(11),
+        startsRound: true,
+      },
+      // After scheduling, an invitation with next-round wording is the round after.
+      {
+        id: "final",
+        kind: "INTERVIEW_INVITED",
+        occurredAt: at(11, 12),
+        startsRound: true,
+      },
+    ]);
+    assert.deepEqual(
+      rounds.map((r) => r.eventIds),
+      [["r1"], ["next", "avail", "cal0", "cal1", "reminder"], ["final"]],
+    );
+  });
+
+  it("keeps a same-invitation revision in its round even with next-round wording", () => {
+    const rounds = interviewRounds([
+      {
+        id: "a",
+        kind: "INTERVIEW_SCHEDULED",
+        occurredAt: at(1),
+        calendar: invite("u", 0, 5),
+      },
+      {
+        id: "b",
+        kind: "INTERVIEW_SCHEDULED",
+        occurredAt: at(2),
+        startsRound: true,
+        calendar: invite("u", 1, 6),
+      },
+    ]);
+    assert.equal(rounds.length, 1);
+  });
+});
