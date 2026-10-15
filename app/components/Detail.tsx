@@ -3,6 +3,7 @@ import {
   ArrowUpRight,
   CalendarCheck,
   CheckCircle2,
+  Layers,
   ClipboardList,
   Info,
   Mail,
@@ -46,9 +47,31 @@ function RoundHeading({ round }: { round: Attempt["rounds"][number] }) {
         {round.reschedules > 0 &&
           ` · rescheduled ${round.reschedules === 1 ? "once" : `${round.reschedules} times`}`}
         {` · ${plural(round.emails, "email")}`}
+        {round.followsUnseenRound &&
+          " · follows an earlier round that isn't in your emails"}
       </span>
     </li>
   );
+}
+
+/**
+ * The label of the round correction for an event, or null where it would change nothing: the
+ * owner can mark where a round starts (including one that follows a round never in Ledger), or
+ * undo such a mark. A round that starts after a held meeting needs no mark.
+ */
+function roundToggle(
+  attempt: Attempt,
+  event: Attempt["events"][number],
+  index: number,
+): string | null {
+  if (event.round === null || event.reviewState !== "ACCEPTED") return null;
+  if (event.startsRound) return "Not a new round";
+  const first =
+    attempt.events.findIndex((e) => e.round === event.round) === index;
+  if (!first) return "Starts a new round";
+  return event.round === attempt.rounds[0]?.number
+    ? "Follows an earlier round"
+    : null;
 }
 
 const EVENT_ICON: Record<string, React.ReactNode> = {
@@ -79,6 +102,7 @@ export function DetailScreen({
   busy,
   back,
   setEvent,
+  setRoundStart,
   saveDate,
   saveStatus,
 }: {
@@ -86,6 +110,7 @@ export function DetailScreen({
   busy: boolean;
   back: () => void;
   setEvent: (eventId: string, state: "ACCEPTED" | "REJECTED") => void;
+  setRoundStart: (eventId: string, startsRound: boolean) => void;
   saveDate: (attemptId: string, occurredAt: string) => void;
   saveStatus: (attemptId: string, stage: Stage, outcome: Outcome) => void;
 }) {
@@ -252,20 +277,37 @@ export function DetailScreen({
                               : "Selected email import"}
                         </small>
                       </div>
-                      <button
-                        className={`event-action ${inactive ? "restore" : ""}`}
-                        disabled={busy}
-                        onClick={() =>
-                          setEvent(event.id, inactive ? "ACCEPTED" : "REJECTED")
-                        }
-                      >
-                        {inactive ? (
-                          <Undo2 size={13} aria-hidden />
-                        ) : (
-                          <XCircle size={13} aria-hidden />
+                      <div className="event-actions">
+                        <button
+                          className={`event-action ${inactive ? "restore" : ""}`}
+                          disabled={busy}
+                          onClick={() =>
+                            setEvent(
+                              event.id,
+                              inactive ? "ACCEPTED" : "REJECTED",
+                            )
+                          }
+                        >
+                          {inactive ? (
+                            <Undo2 size={13} aria-hidden />
+                          ) : (
+                            <XCircle size={13} aria-hidden />
+                          )}
+                          {inactive ? "Restore" : "Reject update"}
+                        </button>
+                        {roundToggle(attempt, event, i) && (
+                          <button
+                            className="event-action"
+                            disabled={busy}
+                            onClick={() =>
+                              setRoundStart(event.id, !event.startsRound)
+                            }
+                          >
+                            <Layers size={13} aria-hidden />
+                            {roundToggle(attempt, event, i)}
+                          </button>
                         )}
-                        {inactive ? "Restore" : "Reject update"}
-                      </button>
+                      </div>
                     </li>,
                   ];
                 })}

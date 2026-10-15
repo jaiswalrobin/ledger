@@ -203,6 +203,7 @@ it("one interview round is a few facts with its emails as evidence, not one entr
         meetingAt: null,
         reschedules: 0,
         scheduled: true,
+        followsUnseenRound: false,
         emails: 1,
       },
       {
@@ -212,6 +213,7 @@ it("one interview round is a few facts with its emails as evidence, not one entr
         meetingAt: "2026-10-16T10:30:00.000Z",
         reschedules: 2,
         scheduled: true,
+        followsUnseenRound: false,
         emails: 8,
       },
     ]);
@@ -329,6 +331,105 @@ it("a next-round email assigned by hand keeps its round marker", async () => {
       new Date("2026-10-15T08:00:00Z"),
     );
     assert.equal(detail!.attempts[0]!.rounds.length, 2);
+  } finally {
+    await t.close();
+  }
+});
+
+it("a thread whose first round never reached Ledger is numbered from round 2", async () => {
+  const t = await createTestDb();
+  try {
+    const userId = await seedUser(t.db);
+    const mailboxId = await seedMailbox(t.db, userId);
+    let openingId = "";
+    // Everything except the first-round email: Ledger's first step is "positive feedback".
+    for (const mail of WEAVE.filter((m) => m.id !== "first-round")) {
+      const outcome = await ingestOriginal(t.db, {
+        userId,
+        source: {
+          kind: "GMAIL",
+          mailboxId,
+          providerMessageId: mail.id,
+          senderAuthenticated: true,
+        },
+        original: await original(mail),
+        observedAt: new Date("2026-10-15T08:00:00Z"),
+      });
+      if (outcome.status === "APPLIED") openingId = outcome.openingId;
+    }
+    const { getOpening } = await import("../src/server/queries.ts");
+    const now = new Date("2026-10-15T08:00:00Z");
+    const rounds = (await getOpening(t.db, userId, openingId, now))!
+      .attempts[0]!.rounds;
+    assert.deepEqual(
+      rounds.map((r) => [r.number, r.followsUnseenRound]),
+      [[2, true]],
+    );
+  } finally {
+    await t.close();
+  }
+});
+
+it("the owner can mark where a round starts, for history recorded without the marker", async () => {
+  const { setRoundStart } = await import("../src/server/actions.ts");
+  const { getOpening } = await import("../src/server/queries.ts");
+  const t = await createTestDb();
+  try {
+    const userId = await seedUser(t.db);
+    const mailboxId = await seedMailbox(t.db, userId);
+    let openingId = "";
+    for (const mail of WEAVE.filter((m) => m.id !== "first-round")) {
+      const outcome = await ingestOriginal(t.db, {
+        userId,
+        source: {
+          kind: "GMAIL",
+          mailboxId,
+          providerMessageId: mail.id,
+          senderAuthenticated: true,
+        },
+        original: await original(mail),
+        observedAt: new Date("2026-10-15T08:00:00Z"),
+      });
+      if (outcome.status === "APPLIED") openingId = outcome.openingId;
+    }
+    // History recorded before rounds existed carries no marker.
+    await t.db.query(
+      "UPDATE application_events SET starts_round = false WHERE user_id = $1",
+      [userId],
+    );
+    const now = new Date("2026-10-15T08:00:00Z");
+    const before = (await getOpening(t.db, userId, openingId, now))!
+      .attempts[0]!;
+    assert.deepEqual(
+      before.rounds.map((r) => r.number),
+      [1],
+    );
+
+    const next = before.events.find((e) => e.kind === "INTERVIEW_INVITED")!;
+    await setRoundStart(t.db, userId, next.id, true);
+    const after = (await getOpening(t.db, userId, openingId, now))!
+      .attempts[0]!;
+    assert.deepEqual(
+      after.rounds.map((r) => [r.number, r.followsUnseenRound]),
+      [[2, true]],
+    );
+    assert.equal(after.round?.number, 2);
+
+    await setRoundStart(t.db, userId, next.id, false);
+    assert.deepEqual(
+      (await getOpening(t.db, userId, openingId, now))!.attempts[0]!.rounds.map(
+        (r) => r.number,
+      ),
+      [1],
+    );
+    // Only assessment and interview events can start a round.
+    const confirmation = after.events.find(
+      (e) => e.kind === "CONFIRMATION_RECEIVED",
+    )!;
+    await assert.rejects(
+      setRoundStart(t.db, userId, confirmation.id, true),
+      /NOT_FOUND/,
+    );
   } finally {
     await t.close();
   }

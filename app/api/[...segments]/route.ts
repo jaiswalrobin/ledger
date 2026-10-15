@@ -55,6 +55,7 @@ import {
   resolveReviewCreate,
   setAttemptStatus,
   setEventState,
+  setRoundStart,
   correctSubmissionDate,
 } from "../../../src/server/actions.ts";
 import type { CreateInput } from "../../../src/server/actions.ts";
@@ -398,6 +399,17 @@ export async function POST(
         session.userId,
         validUuid(body.eventId),
         body.state,
+      );
+      return response({ ok: true });
+    }
+    if (path === "event-round") {
+      if (typeof body.startsRound !== "boolean")
+        throw new WebError("INVALID_FORM");
+      await setRoundStart(
+        db,
+        session.userId,
+        validUuid(body.eventId),
+        body.startsRound,
       );
       return response({ ok: true });
     }

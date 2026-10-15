@@ -520,6 +520,17 @@ export default function Home() {
                   );
                 })
               }
+              setRoundStart={(eventId, startsRound) =>
+                void work(async () => {
+                  await api("event-round", { eventId, startsRound });
+                  await refresh();
+                  info(
+                    startsRound
+                      ? "Marked as the start of a new round."
+                      : "No longer marked as a new round.",
+                  );
+                })
+              }
               saveDate={(attemptId, occurredAt) =>
                 void work(async () => {
                   await api("submission-date", { attemptId, occurredAt });

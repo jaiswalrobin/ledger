@@ -629,6 +629,7 @@ ol, ul { margin: 0; padding: 0; list-style: none; }
 .round-divider { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 10px 0 2px; padding: 8px 12px; border-radius: 10px; background: var(--interview-bg); color: var(--ink); font-size: 13px; }
 .round-divider span { color: var(--muted); }
 .status-with-round { display: inline-flex; align-items: center; gap: 6px; }
+.event-actions { display: grid; gap: 6px; align-content: start; justify-items: end; }
 .review-group { display: grid; gap: 12px; padding: 14px; border: 1px dashed var(--line); border-radius: 16px; }
 .review-group-head { margin: 0; color: var(--muted); font-size: 14px; }
 .review-group-head strong { color: var(--ink); }
