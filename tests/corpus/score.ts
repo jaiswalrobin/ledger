@@ -3,6 +3,7 @@ import { extractSignal } from "../../src/ingestion/extract.ts";
 import { FIELD_RULES, type FieldRule } from "../../src/ingestion/fields.ts";
 import { parseEml } from "../../src/ingestion/eml.ts";
 import { buildEml } from "../helpers/eml.ts";
+import type { ExtractedSignal } from "../../src/ingestion/source.ts";
 import { CORPUS, type CorpusEmail } from "./emails.ts";
 
 export type Field = "kind" | "company" | "title";
@@ -35,11 +36,18 @@ export interface RuleTrace {
   expected: readonly FieldRule[];
 }
 
-export interface CaseResult {
-  email: CorpusEmail;
+export type Expected = Record<Field, string | null>;
+
+/** One labelled email scored against the extractor's signal. */
+export interface Scored {
+  expect: Expected;
   actual: Record<Field, string | null>;
   verdicts: Record<Field, Verdict>;
   rules: Record<RuleField, RuleTrace>;
+}
+
+export interface CaseResult extends Scored {
+  email: CorpusEmail;
 }
 
 function traceRules(
@@ -59,6 +67,24 @@ function traceRules(
   };
 }
 
+export function scoreSignal(expect: Expected, signal: ExtractedSignal): Scored {
+  const actual = { kind: signal.kind, company: signal.fields.company, title: signal.fields.title };
+  const decisions = signal.fields.fieldDecisions;
+  return {
+    expect,
+    actual,
+    rules: {
+      company: traceRules("company", decisions?.company.candidates ?? [], actual.company, expect.company),
+      title: traceRules("title", decisions?.title.candidates ?? [], actual.title, expect.title),
+    },
+    verdicts: {
+      kind: verdict(expect.kind, actual.kind),
+      company: verdict(expect.company, actual.company),
+      title: verdict(expect.title, actual.title),
+    },
+  };
+}
+
 export async function scoreCorpus(emails: readonly CorpusEmail[] = CORPUS): Promise<CaseResult[]> {
   const results: CaseResult[] = [];
   for (const email of emails) {
@@ -72,35 +98,20 @@ export async function scoreCorpus(emails: readonly CorpusEmail[] = CORPUS): Prom
       ...(email.html !== undefined ? { html: email.html } : {}),
     });
     const [original] = await parseEml(new TextEncoder().encode(raw));
-    const signal = extractSignal(original!.message);
-    const actual = { kind: signal.kind, company: signal.fields.company, title: signal.fields.title };
-    const decisions = signal.fields.fieldDecisions;
-    results.push({
-      email,
-      actual,
-      rules: {
-        company: traceRules("company", decisions?.company.candidates ?? [], actual.company, email.expect.company),
-        title: traceRules("title", decisions?.title.candidates ?? [], actual.title, email.expect.title),
-      },
-      verdicts: {
-        kind: verdict(email.expect.kind, actual.kind),
-        company: verdict(email.expect.company, actual.company),
-        title: verdict(email.expect.title, actual.title),
-      },
-    });
+    results.push({ email, ...scoreSignal(email.expect, extractSignal(original!.message)) });
   }
   return results;
 }
 
-export function summarize(results: CaseResult[]) {
+export function summarize(results: readonly Pick<Scored, "expect" | "actual" | "verdicts">[]) {
   const fields: Field[] = ["kind", "company", "title"];
   return Object.fromEntries(
     fields.map((f) => {
       const counts = { correct: 0, missed: 0, wrong: 0, spurious: 0 };
       for (const r of results) counts[r.verdicts[f]] += 1;
-      const support = results.filter(r => r.email.expect[f] != null).length;
+      const support = results.filter(r => r.expect[f] != null).length;
       const emitted = results.filter(r => r.actual[f] != null).length;
-      const recovered = results.filter(r => r.email.expect[f] != null && r.verdicts[f] === "correct").length;
+      const recovered = results.filter(r => r.expect[f] != null && r.verdicts[f] === "correct").length;
       return [f, { ...counts, support, emitted, recovered,
         accuracy: results.length ? counts.correct / results.length : 0,
         precision: emitted ? recovered / emitted : null,
@@ -124,7 +135,7 @@ export interface RuleStats {
 }
 
 /** Per-rule attribution over both fields: which rules earn their place, and which never fire. */
-export function ruleReport(results: readonly CaseResult[]): { stats: Map<FieldRule, RuleStats>; unfired: FieldRule[] } {
+export function ruleReport(results: readonly Scored[]): { stats: Map<FieldRule, RuleStats>; unfired: FieldRule[] } {
   const stats = new Map<FieldRule, RuleStats>(FIELD_RULES.map((rule) => [rule, { fired: 0, correct: 0, wrong: 0, lost: 0 }]));
   for (const result of results)
     for (const field of ["company", "title"] as const) {

@@ -1,3 +1,6 @@
+# Real mail for local evaluation (npm run eval:real); never committed
+/eval/real/
+
 # Logs
 logs
 *.log

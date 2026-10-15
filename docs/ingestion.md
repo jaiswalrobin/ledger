@@ -167,7 +167,8 @@ rejecting an interpretation requires review/owner action; revisions do not erase
 promoted to development; replacement cases written by the same developer are not independent
 proof of generalization. These small synthetic sets do not establish real-mail accuracy. For that,
 use independently labelled, sanitized data grouped by employer/template family and a fixed test
-set that does not guide development.
+set that does not guide development. `npm run eval:real` does this locally on your own Gmail
+downloads; see [real-mail-evaluation.md](real-mail-evaluation.md).
 
 Run `npm run eval:parser` or `npm run eval:parser -- holdout` for accuracy, emitted-value precision,
 positive-field recall, coverage, support counts, and individual misses. Correct empty values count

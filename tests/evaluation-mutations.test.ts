@@ -22,6 +22,7 @@ it("metrics distinguish correct absences from recovered positive fields", () => 
   const template = CORPUS[0]!;
   const row = (expected: string | null, actual: string | null) => ({
     email: { ...template, expect: { ...template.expect, title: expected } },
+    expect: { ...template.expect, title: expected },
     actual: { kind: null, company: null, title: actual },
     verdicts: { kind: "correct", company: "correct", title: verdict(expected, actual) },
   }) as CaseResult;

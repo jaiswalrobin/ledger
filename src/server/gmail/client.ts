@@ -1,10 +1,7 @@
 import { EML_LIMITS } from "../../ingestion/eml.ts";
-import { authenticatedGmailDomain } from "./authentication.ts";
+import { senderAuthenticated } from "./authentication.ts";
 import { RECRUITMENT_SUBJECT_TERMS } from "../../ingestion/header-gate.ts";
-import {
-  RECRUITING_SENDER_DOMAINS,
-  senderDomain,
-} from "../../ingestion/ats.ts";
+import { RECRUITING_SENDER_DOMAINS } from "../../ingestion/ats.ts";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 export type GmailErrorCode =
@@ -263,10 +260,6 @@ export function createGmailClient(
       const header = (name: string) =>
         headers.find((h) => h.name.toLowerCase() === name)?.value ?? "";
       const from = header("from");
-      // The address, not an "@" inside a display name such as "jobs@acme via Greenhouse".
-      const domain = senderDomain(from);
-      const authenticatedDomain = headers.filter(h=>h.name.toLowerCase()==="from").length===1
-        ? authenticatedGmailDomain(headers) : null;
       return {
         id,
         ...(typeof r["threadId"]==="string" && /^[a-zA-Z0-9_-]{1,200}$/.test(r["threadId"]) ? {threadId:r["threadId"]} : {}),
@@ -274,7 +267,7 @@ export function createGmailClient(
         subject: header("subject"),
         rfcMessageId: header("message-id") || null,
         labelIds: (r["labelIds"] as string[] | undefined) ?? [],
-        senderAuthenticated: !!domain && domain === authenticatedDomain,
+        senderAuthenticated: senderAuthenticated(headers),
       };
     },
     async getRaw(id) {

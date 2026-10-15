@@ -1,3 +1,5 @@
+import { senderDomain } from "../../ingestion/ats.ts";
+
 /** Parse Authentication-Results without interpreting comments or quoted reasons as results.
  * Trust is limited to Gmail's receiving authserv-id; it relies on Gmail stripping forged local
  * results at its boundary (RFC 8601 section 5), not on the header's text authenticating itself. */
@@ -75,4 +77,13 @@ export function authenticatedGmailDomain(headers:readonly {name:string;value:str
   if(!results.length||results.some(result=>!result.pass||!result.domain))return null;
   const domains=new Set(results.map(result=>result.domain));
   return domains.size===1?[...domains][0]!:null;
+}
+
+/** Whether Gmail authenticated the sender: exactly one From header, whose domain passed DMARC at Gmail. */
+export function senderAuthenticated(headers: readonly { name: string; value: string }[]): boolean {
+  const from = headers.filter((h) => h.name.toLowerCase() === "from");
+  if (from.length !== 1) return false;
+  // The address, not an "@" inside a display name such as "jobs@acme via Greenhouse".
+  const domain = senderDomain(from[0]!.value);
+  return !!domain && domain === authenticatedGmailDomain(headers);
 }
