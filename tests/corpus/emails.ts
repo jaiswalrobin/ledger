@@ -747,4 +747,12 @@ export const CORPUS: CorpusEmail[] = [
     text: "Hi Robin,\n\nWe received your application in October for the Backend Engineer role at Acme.",
     expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Backend Engineer" },
   },
+  {
+    id: "r7-self-reference-place",
+    note: "The role is 'at our Berlin office': the sender's own organisation, not another employer",
+    from: '"Acme Careers" <careers@acme.example>',
+    subject: "Thank you for applying to Acme",
+    text: "Hi Robin,\n\nWe received your application for the Data Engineer position at our Berlin office.\n\nAcme Recruiting",
+    expect: { kind: "CONFIRMATION_RECEIVED", company: "Acme", title: "Data Engineer" },
+  },
 ];

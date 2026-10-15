@@ -84,6 +84,10 @@ const LABEL_START = /^[\p{L}\p{N}]/u;
 const SCHEDULE_WORDS =
   /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|tonight)\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)(?![\p{L}])|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\b/iu;
 
+/** An employer phrase that refers back to the sender's own organisation. */
+const SELF_REFERENCE =
+  /^(?:our|my)\b|^(?:the|this)\s+(?:[\p{L}-]+\s+){0,3}(?:company|team|organi[sz]ation|firm|business|office|offices|group|department|location|site|branch|studio|lab|store|headquarters|hq)$/iu;
+
 const CALENDAR_WORD =
   /^(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december|today|tomorrow|(?:this|next|last) (?:week|month|year))$/i;
 
@@ -430,6 +434,9 @@ export function extractCompanyAndTitle(input: FieldInput): {
         if (p.company && m[p.company]) {
           const company = companyFrom(m, p.company, false);
           add(companies, company, p.weight, source);
+          // "at our company", "at our Berlin office", "with the team": the sender refers to itself,
+          // which binds the role to no other employer. ("at 123456" still binds it to an unknown one.)
+          if (!company && SELF_REFERENCE.test(m[p.company]!)) return true;
           const frame = { title: titleKey(title), company: company ? companyKey(company) : null };
           const id = JSON.stringify(frame);
           if (frames.has(id) || frames.size < 128) frames.set(id, frame);

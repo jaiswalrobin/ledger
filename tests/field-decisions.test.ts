@@ -117,3 +117,13 @@ it("independent mechanisms corroborate; repeats and wrapped copies of one do not
   assert.deepEqual(both.decisions.title.candidates[0]!.sources, ["body:label", "body:sentence"]);
   assert.deepEqual(repeated.decisions, both.decisions);
 });
+
+it("a role 'at our company' or 'at our Berlin office' stays with the sender's employer", () => {
+  for (const place of ["our company", "our Berlin office", "the company", "our engineering team"]) {
+    const result = extractCompanyAndTitle({subject: "Thank you for applying to Acme",
+      body: `Thank you for applying for the Data Engineer role at ${place}. We have received your application.`,
+      fromName: "Acme Careers", fromAddress: "careers@acme.example"});
+    assert.equal(result.company, "Acme", place);
+    assert.equal(result.title, "Data Engineer", place);
+  }
+});
