@@ -155,7 +155,11 @@ export function ReviewCard({
         : "",
     ),
     [email, setEmail] = useState(review.fields.applicantEmail ?? "");
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(
+    review.reason === "NO_KNOWN_SUBMISSION",
+  );
+  const recordingRejection =
+    review.reason === "NO_KNOWN_SUBMISSION" && kind === "REJECTION_RECEIVED";
   const sourceUrl = gmailMessageUrl(
     review.mailboxAddress,
     review.providerMessageId,
@@ -349,6 +353,14 @@ export function ReviewCard({
         onToggle={(event) => setCreating(event.currentTarget.open)}
       >
         <summary>Create an application from this email</summary>
+        {review.reason === "NO_KNOWN_SUBMISSION" &&
+          kind !== "CONFIRMATION_RECEIVED" && (
+            <p className="small muted">
+              Record this update as a separate application if it does not belong
+              to an existing attempt. The original application date will remain
+              unknown.
+            </p>
+          )}
         <div className="create-review">
           <label className="field wide">
             Job opening
@@ -417,7 +429,7 @@ export function ReviewCard({
             />
           </label>
           <button
-            className="secondary wide"
+            className={`${recordingRejection ? "primary" : "secondary"} wide`}
             disabled={
               busy || (!openingId && (!company || !title)) || !kind || !at
             }
@@ -434,7 +446,9 @@ export function ReviewCard({
               })
             }
           >
-            Create application
+            {recordingRejection
+              ? "Record rejected application"
+              : "Create application"}
           </button>
         </div>
       </details>
