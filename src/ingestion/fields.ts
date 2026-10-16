@@ -22,6 +22,8 @@ export const FIELD_RULES = [
   "hint:calendar",
   "hint:workday-slug",
   "hint:ibm",
+  "ats:receipt-label",
+  "ats:receipt-linked-label",
   "label:field",
   "label:requisition",
   "role:hired-as-at",
@@ -73,8 +75,18 @@ export interface FieldInput {
   /** Signature text may name the employer, but cannot assert a new event or title. */
   signature?: string;
   /** Extra title suggestions from structured sources (Workday URL slug, employer templates). */
-  titleHints?: readonly { value: string; weight: number; rule: FieldRule }[];
-  companyHints?: readonly { value: string; weight: number; rule: FieldRule }[];
+  titleHints?: readonly {
+    value: string;
+    weight: number;
+    rule: FieldRule;
+    labelled?: boolean;
+  }[];
+  companyHints?: readonly {
+    value: string;
+    weight: number;
+    rule: FieldRule;
+    labelled?: boolean;
+  }[];
   /** Explicit aliases corroborate named candidates only; they never invent an employer. */
   companyAliases?: readonly { company: string; domain: string }[];
 }
@@ -190,6 +202,7 @@ export function cleanTitle(
     .trim();
   if (
     value.length < 2 ||
+    /^(?:see|view|browse|learn|click|visit|explore)$/i.test(value) ||
     value.length > 100 ||
     value.split(" ").length > 12 ||
     !(source === "label" ? LABEL_START : NAME_START).test(value) ||
@@ -670,9 +683,21 @@ export function extractCompanyAndTitle(input: FieldInput): {
     );
 
   for (const h of input.titleHints ?? [])
-    add(titles, cleanTitle(h.value), h.weight, "structured:hint", h.rule);
+    add(
+      titles,
+      cleanTitle(h.value, h.labelled ? "label" : "prose"),
+      h.weight,
+      h.labelled ? "body:label" : "structured:hint",
+      h.rule,
+    );
   for (const h of input.companyHints ?? [])
-    add(companies, cleanCompany(h.value), h.weight, "structured:hint", h.rule);
+    add(
+      companies,
+      cleanCompany(h.value, !h.labelled, h.labelled ? "label" : "prose"),
+      h.weight,
+      h.labelled ? "body:label" : "structured:hint",
+      h.rule,
+    );
 
   // Labelled fields: "Job Title: ...", "Company: ...".
   for (const line of lines) {

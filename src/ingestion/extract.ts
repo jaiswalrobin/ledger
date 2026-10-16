@@ -6,12 +6,13 @@ import type {
   SignalKind,
 } from "./source.ts";
 import { safeField } from "./privacy.ts";
+import { atsReceiptHints } from "./ats-receipts.ts";
 import { cleanTitle, extractCompanyAndTitle } from "./fields.ts";
 import { messageRegions } from "./regions.ts";
 import { extractCalendar } from "./calendar.ts";
 import { companyKey } from "../domain/normalization.ts";
 
-export const EXTRACTOR_VERSION = "rules-9";
+export const EXTRACTOR_VERSION = "rules-11";
 
 /**
  * Canonical form for matching: typographic quotes/dashes become ASCII, invisible characters are
@@ -203,7 +204,14 @@ const NEXT_ROUND = new RegExp(
   "i",
 );
 
-const CONDITION_START = /^(?:if|unless|should|in case|when)\b/i;
+// "Once you finish your interview ..." describes a contingent workflow, not a booking.
+// "Once again/more" instead reaffirms the assertion that follows it.
+const CONDITION_INTRO = String.raw`(?:if|unless|should|in case|when|once(?=\s)(?!\s+(?:again|more)\b))\b`;
+const CONDITION_START = new RegExp(`^${CONDITION_INTRO}`, "i");
+const CLAUSE_BOUNDARY = new RegExp(
+  String.raw`(?:[.!?]+(?:\s+|$)|\n{2,}|\n(?=\s*${CONDITION_INTRO}))`,
+  "i",
+);
 /** Where the main clause of a comma-less conditional sentence usually begins. */
 const MAIN_CLAUSE =
   /\s(?=(?:then|we|we'd|we'll|we're|please|kindly|you will|you'll|our team|i|i'd|i'll)\b)/i;
@@ -212,15 +220,18 @@ const MAIN_CLAUSE =
  * A conditional sentence asserts its main clause, not its condition. "If your interview is
  * cancelled, please let us know" must not report a cancellation, and "If we decide not to move
  * forward, we will let you know" is not a rejection; but "When you're ready, we'd like to invite
- * you to interview" is an invitation. The condition runs to the first comma, or else to where the
+ * you to interview" is an invitation. "Once you finish your interview ..." similarly asserts no
+ * current interview state. The condition runs to the first comma, or else to where the
  * main clause starts; with neither, the whole sentence is treated as a condition.
  */
 function withoutCondition(clause: string): string {
-  if (!CONDITION_START.test(clause)) return clause;
-  const comma = clause.indexOf(",");
-  if (comma >= 0) return clause.slice(comma + 1).trim();
-  const main = MAIN_CLAUSE.exec(clause.slice(3));
-  return main ? clause.slice(3 + main.index).trim() : "";
+  const intro = CONDITION_START.exec(clause);
+  if (!intro) return clause;
+  const remainder = clause.slice(intro[0].length).trimStart();
+  const comma = remainder.indexOf(",");
+  if (comma >= 0) return remainder.slice(comma + 1).trim();
+  const main = MAIN_CLAUSE.exec(remainder);
+  return main ? remainder.slice(main.index).trim() : "";
 }
 
 export function detectKind(haystack: string): {
@@ -234,9 +245,7 @@ export function detectKind(haystack: string): {
   );
   // Keep assertion boundaries; ordinary hard wrapping may still join within a clause.
   const clauses = normalized
-    .split(
-      /(?:[.!?]+(?:\s+|$)|\n{2,}|\n(?=\s*(?:if|unless|should|in case|when)\b))/i,
-    )
+    .split(CLAUSE_BOUNDARY)
     .map(flatten)
     .map(withoutCondition)
     .filter(Boolean);
@@ -528,6 +537,19 @@ function extractOne(
     genericUrl ??= match ? null : genericJobUrl(url);
   }
 
+  const receipt = atsReceiptHints({
+    fromAddress: message.fromAddress,
+    body,
+    confirmed: kind === "CONFIRMATION_RECEIVED",
+    jobKey: ats?.key ?? null,
+    isPublicJobUrl: (url) => {
+      const job = atsFromUrl(url);
+      return (
+        !!job && !!ats && JSON.stringify(job.key) === JSON.stringify(ats.key)
+      );
+    },
+  });
+  if (receipt.limited) reasons.push("conflicting-fields");
   const { company, title, decisions } = extractCompanyAndTitle({
     subject: message.subject.replace(/^(?:\s*re\s*:\s*)+/i, ""),
     fromName: message.fromName,
@@ -535,6 +557,7 @@ function extractOne(
     body,
     signature: regions.signature,
     titleHints: [
+      ...receipt.titles,
       ...(calendarFields?.title
         ? [
             {
@@ -558,6 +581,7 @@ function extractOne(
         : []),
     ],
     companyHints: [
+      ...receipt.companies,
       ...(ibm && !ibm.conflict
         ? [{ value: "IBM", weight: 3, rule: "hint:ibm" as const }]
         : []),
