@@ -6,12 +6,13 @@ import type {
   SignalKind,
 } from "./source.ts";
 import { safeField } from "./privacy.ts";
+import { atsReceiptHints } from "./ats-receipts.ts";
 import { cleanTitle, extractCompanyAndTitle } from "./fields.ts";
 import { messageRegions } from "./regions.ts";
 import { extractCalendar } from "./calendar.ts";
 import { companyKey } from "../domain/normalization.ts";
 
-export const EXTRACTOR_VERSION = "rules-9";
+export const EXTRACTOR_VERSION = "rules-10";
 
 /**
  * Canonical form for matching: typographic quotes/dashes become ASCII, invisible characters are
@@ -528,6 +529,19 @@ function extractOne(
     genericUrl ??= match ? null : genericJobUrl(url);
   }
 
+  const receipt = atsReceiptHints({
+    fromAddress: message.fromAddress,
+    body,
+    confirmed: kind === "CONFIRMATION_RECEIVED",
+    jobKey: ats?.key ?? null,
+    isPublicJobUrl: (url) => {
+      const job = atsFromUrl(url);
+      return (
+        !!job && !!ats && JSON.stringify(job.key) === JSON.stringify(ats.key)
+      );
+    },
+  });
+  if (receipt.limited) reasons.push("conflicting-fields");
   const { company, title, decisions } = extractCompanyAndTitle({
     subject: message.subject.replace(/^(?:\s*re\s*:\s*)+/i, ""),
     fromName: message.fromName,
@@ -535,6 +549,7 @@ function extractOne(
     body,
     signature: regions.signature,
     titleHints: [
+      ...receipt.titles,
       ...(calendarFields?.title
         ? [
             {
@@ -558,6 +573,7 @@ function extractOne(
         : []),
     ],
     companyHints: [
+      ...receipt.companies,
       ...(ibm && !ibm.conflict
         ? [{ value: "IBM", weight: 3, rule: "hint:ibm" as const }]
         : []),

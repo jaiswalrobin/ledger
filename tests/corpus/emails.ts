@@ -7,6 +7,7 @@
  * only claiming an application event is wrong.
  */
 import type { SignalKind } from "../../src/ingestion/source.ts";
+import { ATS_RECEIPT_CORPUS } from "./ats-receipts.ts";
 
 export interface CorpusEmail {
   id: string;
@@ -24,6 +25,7 @@ export interface CorpusEmail {
 }
 
 export const CORPUS: CorpusEmail[] = [
+  ...ATS_RECEIPT_CORPUS,
   // ---- confirmations: hosted ATS ----------------------------------------------------------
   {
     id: "greenhouse-confirm-minimal",
