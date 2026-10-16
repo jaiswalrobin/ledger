@@ -9,13 +9,53 @@ and employer-only receipts must not be merged into an arbitrary job.
 
 The current system already has MIME parsing, privacy checks, current/quoted region separation,
 weighted field candidates, versioned signals, owner-scoped conversation matching, sole-attempt
-matching, reconciliation, and review grouping. Replacing those with another large expression
-does not address the missing layer: ATS-aware receipts and job identity.
+matching, reconciliation, and review grouping. More template expressions can recover missed
+fields, but their value depends on how often those fields actually occur in the original mail.
+The reported reason does not yet establish which architectural change has the highest impact.
 
 Before this change, all 92 synthetic development emails and 15 fixed holdout emails scored
 correctly, but five new explicit-title layouts reproduced missing titles. This is evidence of
 limited test coverage, not evidence of high accuracy on the user's mailbox. The eight new ATS
 examples are constructed development fixtures, not independent vendor samples or holdout data.
+
+## Reassessment: measure and resolve identity before expanding templates
+
+The first patch is a useful label-recovery improvement, not a demonstrated solution to the real
+review queue. It implements one shared recipe behind seven provider checks. The upstream API
+research establishes public posting interfaces; it does not validate those providers' receipt
+templates. Adding provider names and synthetic examples must not be presented as measured ATS
+coverage. The provider recipe versions are configuration today; only the overall extractor
+version and field rule IDs are currently retained with the signal.
+
+A synthetic pipeline probe exposed a separate bottleneck: a complete confirmation creates an
+opening and attempt; a later assessment has the same exact public job key but omits the title.
+It still receives `MISSING_JOB_DETAILS`. In `describedOpening`, the company/title prerequisite
+occurs before loading the known opening by its ATS key. That means missing repeated description
+can prevent use of already known identity. This is a reproducible capability gap, not a measured
+explanation of the user's current queue.
+
+Before expanding the adapter layer, compare representative original messages against both the
+baseline and proposed extractor, then run their related messages through the pipeline together.
+Classify misses into discovery, MIME/region loss, missed explicit fields, genuinely absent fields,
+unused known identity, and ambiguous attempts. Existing `preview:parser` (with `--baseline-ref`)
+and `eval:real` provide starting points. A cross-section of 25–50 labelled messages is a practical
+diagnostic starting point, not a statistically reliable accuracy estimate. Keep separate unseen
+employer/template families for evaluation and count wrong automatic changes as well as manual work.
+
+The target design is application-centric: individual emails contribute partial evidence; every
+email should not have to restate an application description. Separate three identities:
+
+- A **job opening**, identified by a reviewed provider/tenant/posting key when available.
+- An **application attempt**, identified by submission evidence and appropriately scoped
+  application identifiers; several attempts can share one posting.
+- An **email observation**, which can repeat evidence without creating another attempt.
+
+A subsequent resolver change should try an exact existing opening identity before requiring
+both descriptive fields. It must still reject contradictory company/title assertions, ambiguous
+job links and cross-owner matches, and must resolve the attempt using the existing policy. A
+posting ID alone never proves which reapplication an update concerns. Confirmations still need
+their resend/new-submission checks; terminal events still need authenticated authority. Put this
+behavior change in its own measured PR, rather than hiding it inside label parsing.
 
 ## Recommended flow
 
@@ -23,11 +63,11 @@ examples are constructed development fixtures, not independent vendor samples or
 flowchart TD
   A[Authorized Gmail / selected original EML] --> B[MIME, privacy, current-content regions]
   B --> C[Provider fingerprint: sender domain + public job identifiers]
-  C --> D[Versioned ATS receipt adapters]
-  B --> E[Generic recruiter / calendar extraction]
+  C --> D[Optional provider-template rules]
+  B --> E[Generic explicit fields / recruiter / calendar extraction]
   D --> F[Typed claims + rule provenance + contradictions]
   E --> F
-  F --> G[Owner-scoped accepted job / conversation evidence]
+  F --> G[Resolve known opening, then application attempt; retain conflicts]
   G --> H{Enough job information?}
   H -->|Known public posting ID| I[Optional cached public-job metadata]
   I --> J[Resolution and existing decision policy]
@@ -37,7 +77,13 @@ flowchart TD
   J --> M[Conflicts / uncertain identity requiring a decision]
 ```
 
-### 1. Provider adapters, with a generic fallback
+### 1. Shared extraction first, targeted provider adapters
+
+Ordinary explicit labels and HTML field relationships are generic evidence. Their meaning should
+not ultimately depend on seven sender domains. Keep common handling in a shared extraction layer;
+use a provider adapter only for a demonstrated platform-specific schema, identifier or wording.
+The first patch keeps its provider gate as a conservative initial scope; removing it or moving
+the recipe into generic extraction needs evaluation on direct employer and non-hiring mail.
 
 Select an adapter using exact domain boundaries or a recognized public job key. A platform name
 in the display name is insufficient. Provider recognition is parsing context; authentication and
@@ -45,6 +91,9 @@ event authority remain separate policy decisions.
 
 Each adapter should return typed candidate claims with stable rule IDs, its recipe version,
 public job identity when present, missing fields, and contradiction/inspection-limit flags.
+Claims also need their current-content block/row and related job identity, so the employer in
+one opening cannot be paired with a role from another opening in the same email. Preserve that
+association before flattening HTML; independent field scores alone do not establish a pair.
 It must not mutate the database, grant sender trust, infer an applicant from the recipient,
 invent an employer from a tenant slug, or fetch links while parsing. Employer-customized mail
 can fall back to the generic extractor. Several platforms can share a narrowly defined recipe.
@@ -95,9 +144,12 @@ incomplete**, with its own count rather than inflating distinct-job or attempt t
 matching email or owner correction can resolve it. Repeated delivery is idempotent; two
 unresolved receipts are not automatically two distinct attempts, nor automatically duplicates.
 
-The first read-model iteration can separate eligible existing `MISSING_JOB_DETAILS`
-confirmation reviews from actual conflicts. A durable receipt model needs its own migration
-and lifecycle design. Other event types and conflicting confirmations remain in review.
+Start with a read-model projection of eligible existing `MISSING_JOB_DETAILS` confirmation
+reviews, retaining the existing resolution actions and provenance. Moving a card must not hide
+required work or count as a successful automatic resolution. Add a durable receipt table only
+if a concrete lifecycle requirement cannot be expressed with the existing signals/reviews; it
+would need its own migration and consistency design. Other event types and conflicting
+confirmations remain in review.
 
 ### 4. Make corrections useful without making them universal rules
 
@@ -138,12 +190,20 @@ The user's current live review distribution has not been read from this environm
 
 ## Implementation order
 
-1. **Implemented here:** versioned provider selection, conservative explicit receipt-field
-   extraction, linked-title recovery, source attribution, and new positive/adversarial examples.
-2. **Measure and repair backlog:** provider/reason dashboard and opt-in proposal refresh.
-3. **Reduce unnecessary decisions:** incomplete-confirmation receipts in Applications.
-4. **Recover absent details:** cached public-posting enrichment for supported identifiers.
-5. **Consider model assistance only after measurement:** small classifiers or weak supervision
+1. **Evaluate before expanding:** label representative originals, compare the baseline and the
+   draft patch, and measure final application/attempt decisions across related messages. The
+   draft implements conservative explicit receipt-field extraction and linked-title recovery;
+   its real-mail benefit is still unmeasured.
+2. **Use known identity:** resolve exact existing openings even when an email omits a repeated
+   description, preserving contradiction, attempt-identity and authority checks. Add positive
+   and adversarial end-to-end cases, including reapplications and multiple jobs at one company.
+3. **Repair the backlog:** preview changed proposals and apply eligible untouched ones in a
+   bounded batch. Parser fixes must reach existing open reviews without overwriting decisions.
+4. **Handle genuinely incomplete receipts:** project them separately under Applications with
+   clear counts and actions. Measure unresolved work, not just the size of the Review page.
+5. **Enrich only the remaining supported cases:** public-posting requests are worthwhile only
+   when an exact usable ID exists and accepted owner evidence cannot supply the missing fact.
+6. **Consider model assistance only after measurement:** small classifiers or weak supervision
    may help suggest fields. Heuristic support scores are not calibrated probabilities. A remote
    LLM changes the privacy/cost model and needs a separate explicit product choice. Suggestions
    still pass the same identity, contradiction and terminal-event policy.
