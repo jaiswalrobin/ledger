@@ -57,6 +57,27 @@ posting ID alone never proves which reapplication an update concerns. Confirmati
 their resend/new-submission checks; terminal events still need authenticated authority. Put this
 behavior change in its own measured PR, rather than hiding it inside label parsing.
 
+## Observed workflow example: an invitation with future instructions
+
+A subsequently shared opened-email screenshot exposed a classification failure independently of
+missing fields. The message names a role and offers a pre-screening interview, then explains
+what will happen once that interview has finished. An anonymized reconstruction was classified
+as `INTERVIEW_SCHEDULED` because the phrase "your interview with ..." inside a `Once` condition
+was read as a current booking. A pipeline probe persisted that incorrect event kind on a known
+application. No meeting time was fabricated, but the scheduled-event classification was wrong.
+
+The draft now applies conditional-clause handling to `once`, sharing introducers with the
+single-newline assertion boundaries. The main clause can still assert an event, while "once
+again/more" remains a reaffirmation. New tests cover MIME text/HTML, hard wrapping, conditional
+outcomes/cancellation, actual bookings, and persistence of an invitation with no booked meeting.
+These are sanitized reconstructions and adversarial examples, not original MIME or a new holdout.
+They demonstrate this wording bug and its fix, not live-mail accuracy or successful live matching.
+
+The example also names a staffing brand, a parent organization, and an unnamed client. Those are
+distinct roles in the workflow. The fix creates no global employer alias, invents no client,
+and preserves review when extraction produces competing organization claims. Exact public job
+identity and owner-accepted application evidence remain preferable to branding-based matching.
+
 ## Recommended flow
 
 ```mermaid
@@ -192,8 +213,8 @@ The user's current live review distribution has not been read from this environm
 
 1. **Evaluate before expanding:** label representative originals, compare the baseline and the
    draft patch, and measure final application/attempt decisions across related messages. The
-   draft implements conservative explicit receipt-field extraction and linked-title recovery;
-   its real-mail benefit is still unmeasured.
+   draft implements conservative explicit receipt-field extraction, linked-title recovery and
+   conditional pre-screen workflow handling; its real-mail benefit is still unmeasured.
 2. **Use known identity:** resolve exact existing openings even when an email omits a repeated
    description, preserving contradiction, attempt-identity and authority checks. Add positive
    and adversarial end-to-end cases, including reapplications and multiple jobs at one company.
