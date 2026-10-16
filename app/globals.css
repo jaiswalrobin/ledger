@@ -928,6 +928,7 @@ ol, ul { margin: 0; padding: 0; list-style: none; }
   .timeline-title time .rel { display: none; }
 
   .review-actions { flex-direction: column; align-items: stretch; }
+  .review-actions .field.grow { flex: none; }
   .review-buttons { justify-content: stretch; }
   .review-buttons .primary { flex: 1; }
   .create-review { grid-template-columns: 1fr; }

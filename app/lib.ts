@@ -205,7 +205,8 @@ export const reasonText: Record<string, string> = {
   MISSING_JOB_DETAILS:
     "Some job details are missing. Add them before creating an application.",
   AMBIGUOUS_OPENING: "More than one job opening could match this message.",
-  NO_KNOWN_SUBMISSION: "This update has no matching submission yet.",
+  NO_KNOWN_SUBMISSION:
+    "This update has no matching recorded application. Record it as a separate application below, or assign it to an existing attempt.",
   AMBIGUOUS_ATTEMPT:
     "We could not tell which application attempt this update belongs to.",
   POSSIBLE_RESENT_CONFIRMATION:

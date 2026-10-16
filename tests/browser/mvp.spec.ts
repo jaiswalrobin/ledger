@@ -277,7 +277,9 @@ test("HTTP ownership, CSRF, cron authentication, and logout revocation fail clos
   await second.close();
 });
 
-test("mobile navigation and workspace deletion work", async ({ page }) => {
+test("mobile review recovery, navigation and workspace deletion work", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.getByRole("button", { name: "Explore the demo" }).click();
@@ -285,6 +287,107 @@ test("mobile navigation and workspace deletion work", async ({ page }) => {
     page.getByRole("heading", { name: "Your next chapter." }),
   ).toBeVisible();
   await page.screenshot({ path: "/tmp/ledger-mobile.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page
+    .getByRole("navigation", { name: "Quick navigation" })
+    .getByRole("button", { name: "Import", exact: true })
+    .click();
+  const subject = "Thank you for your interest in Meadow Labs";
+  const raw = buildEml({
+    from: '"Workday Notifications" <noreply@myworkday.com>',
+    to: "applicant@example.net",
+    subject,
+    date: new Date(Date.now() - 86400000).toUTCString(),
+    messageId: "<unmatched-rejection-browser@example.org>",
+    text:
+      "Thank you for your interest in the Front End Engineer opportunity at Meadow Labs.\n\n" +
+      "We have decided to move forward with other candidates at this time.\n\n" +
+      "We would be glad to keep your profile in mind for future roles.",
+  });
+  await page.getByLabel("Email files").setInputFiles({
+    name: "unmatched-rejection.eml",
+    mimeType: "message/rfc822",
+    buffer: Buffer.from(raw),
+  });
+  await page.getByRole("button", { name: "Import selected emails" }).click();
+  await expect(
+    page.getByText("Saved for review", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Quick navigation" })
+    .getByRole("button", { name: "Review", exact: true })
+    .click();
+  const card = page.locator(".review-card").filter({
+    has: page.getByRole("heading", { name: subject, exact: true }),
+  });
+  await expect(card).toContainText("no matching recorded application");
+  await expect(card.getByLabel("Company", { exact: true })).toBeVisible();
+  await expect(card.getByLabel("Company", { exact: true })).toHaveValue(
+    "Meadow Labs",
+  );
+  await expect(card.getByLabel("Role", { exact: true })).toHaveValue(
+    "Front End Engineer",
+  );
+  await expect(card.getByLabel("Event type", { exact: true })).toHaveValue(
+    "REJECTION_RECEIVED",
+  );
+  await expect(card).toContainText(
+    "original application date will remain unknown",
+  );
+
+  // The desktop flex basis must not turn into a 280px field on the column layout.
+  const choice = card.getByLabel("Choose application attempt");
+  await expect(choice).toHaveCount(1);
+  for (const width of [360, 390, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    const box = await choice.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.height).toBeLessThanOrEqual(52);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".sidebar")).toHaveCSS("visibility", "hidden");
+  await page.screenshot({
+    path: "/tmp/ledger-review-recovery-mobile.png",
+    fullPage: true,
+  });
+
+  // Nothing is accepted until the owner explicitly records this as a separate application.
+  const before = await (await page.request.get("/api/dashboard")).json();
+  expect(
+    before.openings.some(
+      (o: { company: string }) => o.company === "Meadow Labs",
+    ),
+  ).toBe(false);
+  await card
+    .getByRole("button", { name: "Record rejected application", exact: true })
+    .click();
+  await expect(card).toHaveCount(0);
+  const after = await (await page.request.get("/api/dashboard")).json();
+  const opening = after.openings.find(
+    (o: { company: string }) => o.company === "Meadow Labs",
+  );
+  expect(opening.attempts).toHaveLength(1);
+  expect(opening.attempts[0].submittedAt).toBeNull();
+  expect(opening.attempts[0].stage).toBe("UNKNOWN");
+  expect(opening.attempts[0].outcome).toBe("REJECTED");
+  const detail = await (
+    await page.request.get(`/api/openings/${opening.id}`)
+  ).json();
+  expect(
+    detail.attempts[0].events.map((e: { kind: string }) => e.kind),
+  ).toEqual(["REJECTION_RECEIVED"]);
+  await page.reload();
+  await expect(
+    page.locator(".review-card").filter({
+      has: page.getByRole("heading", { name: subject, exact: true }),
+    }),
+  ).toHaveCount(0);
+  const persisted = await (
+    await page.request.get(`/api/openings/${opening.id}`)
+  ).json();
+  expect(persisted.attempts[0].submittedAt).toBeNull();
+  expect(persisted.attempts[0].outcome).toBe("REJECTED");
   await page.getByRole("button", { name: "Toggle navigation" }).click();
   await page.getByRole("button", { name: "Workspace settings" }).click();
   await page.getByLabel("Deletion confirmation").fill("DELETE");
