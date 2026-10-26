@@ -26,8 +26,21 @@ npm run check:full   # everything CI runs: also migrations, PostgreSQL tests, bu
 one; see [docs/deployment.md](docs/deployment.md)). Run it for anything touching migrations,
 SQL, the pipeline, or the app. Push only when it passes; a red CI run costs everyone a cycle.
 
+Use Node 24 (`nvm use` reads `.nvmrc`), the version production and CI run. Outside Linux the
+browser tests drive the Google Chrome installed on your machine; CI uses a packaged Chromium. The
+demo endpoint is rate limited to 10 per 15 minutes per IP, so repeating the browser tests against
+one database can fail with "Ledger could not connect": truncate `browser_rate_limits` in your
+disposable database to reset it.
+
 Formatting is Prettier's default style: run `npm run format`. `npm test` fails on unformatted
 files.
+
+## Tests and the clock
+
+A test must pass on any date. Code that takes a `now` (sync, queries, recheck, connect) must be
+given one, and a value the database writes (`DEFAULT now()`, `now()` in SQL) is the wall clock,
+not the injected one. Stamping work with the database clock while the worker compares against the
+injected one made 35 sync tests fail the day the wall clock passed a hard-coded test date.
 
 ## Where rules live
 
