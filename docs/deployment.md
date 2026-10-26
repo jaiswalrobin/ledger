@@ -309,6 +309,17 @@ is the same command with a new token.
   npx vercel rollback <deployment-url> --yes
   ```
 - **Run the smoke test yourself:** `BASE_URL=https://ledger.jaiswalrobin.com npm run smoke`
+- **Deploy from your machine** (Actions unavailable): `scripts/deploy-production.sh` is the script the
+  deploy job runs, so it stages, migrates, promotes, smoke-tests and rolls back on failure. From a clean
+  checkout of a commit that is already on `main`, after `npm ci`:
+  ```bash
+  export VERCEL_TOKEN=...   # a Vercel token for the account; never commit it or echo it
+  export VERCEL_ORG_ID=... VERCEL_PROJECT_ID=... PRODUCTION_URL=https://ledger.jaiswalrobin.com
+  export GITHUB_SHA="$(git rev-parse HEAD)"
+  bash scripts/deploy-production.sh
+  ```
+  The two IDs and the URL are the `production` environment's variables: `gh variable list --env production`.
+  Prefer this to the hand steps below, which have no smoke test or automatic rollback.
 - **Break glass** (Actions unavailable): deploy with `npx vercel deploy --prod --skip-domain`, apply
   migrations with `npm run migrate` (unpooled `DATABASE_URL`), then `npx vercel promote <url>`. The
   ruleset can be disabled under repository Settings, Rules, if a fix must bypass the checks; re-enable
