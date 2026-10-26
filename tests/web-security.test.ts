@@ -5,6 +5,7 @@ import { createTestDb, seedUser, type TestDb } from "./helpers/db.ts";
 import {
   assertOrigin,
   createSession,
+  hash,
   readSession,
   logout,
   requestBytes,
@@ -135,6 +136,24 @@ test("each demo workspace is persisted and isolated; deleting it cascades only i
   assert.equal(await readSession(t.db, token, []), null);
   assert.equal((await listOpenings(t.db, a)).length, 0);
   assert.equal((await listOpenings(t.db, b)).length, 4);
+});
+test("cleanup deletes expired browser sessions and keeps current ones", async () => {
+  const user = await seedUser(t.db);
+  const expired = await createSession(t.db, user, false);
+  const current = await createSession(t.db, user, false);
+  await t.db.query(
+    "UPDATE browser_sessions SET expires_at=now()-interval '1 hour' WHERE token_hash=$1",
+    [hash(expired)],
+  );
+  await pruneDemos(t.db);
+  const left = await t.db.query<{ token_hash: string }>(
+    "SELECT token_hash FROM browser_sessions WHERE user_id=$1",
+    [user],
+  );
+  assert.deepEqual(
+    left.rows.map((r) => r.token_hash),
+    [hash(current)],
+  );
 });
 test("expired demo history is purged while current workspaces and Google accounts remain", async () => {
   const old = await seedDemo(t.db),

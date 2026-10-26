@@ -122,7 +122,10 @@ export async function seedDemo(db: Db): Promise<string> {
   });
   return userId;
 }
-/** Delete expired anonymous workspaces, never persistent Google accounts. */
+/**
+ * Delete expired anonymous workspaces, never persistent Google accounts, then expired browser
+ * sessions and rate-limit rows.
+ */
 export async function pruneDemos(
   db: Db,
   /** Called after each committed deletion, so a later failure cannot hide earlier ones. */
@@ -147,6 +150,8 @@ export async function pruneDemos(
     });
     if (pruned) onPruned(pruned);
   }
+  // Housekeeping for expired browser state; readSession already refuses expired sessions.
+  await db.query("DELETE FROM browser_sessions WHERE expires_at<now()");
   await db.query(
     "DELETE FROM browser_rate_limits WHERE reset_at<now()-interval '1 day'",
   );
