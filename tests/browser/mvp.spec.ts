@@ -695,7 +695,7 @@ test("one employer's interview emails group in review, then show as rounds", asy
     ),
   ]);
   await page.getByRole("button", { name: "View your ledger" }).click();
-  await page.getByText("Weave", { exact: true }).first().click();
+  await page.getByRole("button", { name: "View Weave application" }).click();
   await expect(page.getByText("Round 2 · Interview")).toBeVisible();
   await expect(page.getByText("+1 more email")).toBeVisible();
 });

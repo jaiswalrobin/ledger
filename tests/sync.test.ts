@@ -317,6 +317,24 @@ describe("incremental sync", () => {
     assert.equal((await attempts(userId))[0]!.outcome, "REJECTED");
   });
 
+  it("stamps discovered work with the run's own clock, not the database's", async () => {
+    const { mailboxId } = await setup();
+    const fake = new FakeGmail();
+    seedBackfillMailbox(fake);
+    await syncMailbox(deps(fake, { budgetMs: 0 }), mailboxId, { system: true });
+    const found = await tasks(mailboxId);
+    assert.ok(
+      found.length > 0,
+      "discovery registered work before the budget ended",
+    );
+    for (const task of found)
+      assert.equal(
+        new Date(task.next_attempt_at as string | Date).toISOString(),
+        NOW.toISOString(),
+        "a task due by the database clock but not the run's would wait for the next run",
+      );
+  });
+
   it("backs off on rate limits and retries later without losing the message", async () => {
     const { userId, mailboxId } = await setup();
     const fake = new FakeGmail();

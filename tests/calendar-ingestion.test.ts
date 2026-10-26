@@ -396,7 +396,12 @@ it("calendar identity cannot override a submitted contact or a changed organizer
         .status,
       "APPLIED",
     );
-    const detail = await getOpening(t.db, userId, first.openingId);
+    const detail = await getOpening(
+      t.db,
+      userId,
+      first.openingId,
+      new Date("2026-10-20T12:00:00Z"),
+    );
     const events = detail!.attempts
       .find((a) => a.id === first.attemptId)!
       .events.filter((e) => e.kind === "INTERVIEW_SCHEDULED");
@@ -450,9 +455,12 @@ it("calendar identity cannot override a submitted contact or a changed organizer
       outcome: "WITHDRAWN",
     });
     assert.equal(
-      (await getOpening(t.db, userId, first.openingId))!.attempts.find(
-        (a) => a.id === first.attemptId,
-      )!.nextInterviewAt,
+      (await getOpening(
+        t.db,
+        userId,
+        first.openingId,
+        new Date("2026-10-20T12:00:00Z"),
+      ))!.attempts.find((a) => a.id === first.attemptId)!.nextInterviewAt,
       null,
     );
     assert.ok(

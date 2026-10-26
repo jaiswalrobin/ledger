@@ -34,3 +34,20 @@ export async function requestMailboxRecheck(
     return "QUEUED";
   });
 }
+
+/**
+ * Returns the owner's failed work for one connected mailbox to the queue. The tasks become due at
+ * `now`, the same clock the sync worker compares against, so an immediate sync picks them up.
+ */
+export async function retryFailedTasks(
+  db: Db,
+  userId: string,
+  mailboxId: string,
+  now = new Date(),
+): Promise<void> {
+  await db.query(
+    `UPDATE processing_tasks SET state='PENDING',attempts=0,next_attempt_at=$3,safe_error_code=NULL,outcome=NULL,finished_at=NULL
+      WHERE user_id=$1 AND mailbox_id=$2 AND state='FAILED' AND EXISTS(SELECT 1 FROM connected_mailboxes m WHERE m.id=$2 AND m.user_id=$1 AND m.sync_state<>'DISCONNECTED')`,
+    [userId, mailboxId, now.toISOString()],
+  );
+}

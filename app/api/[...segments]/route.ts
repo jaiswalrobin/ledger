@@ -40,7 +40,10 @@ import {
   syncAllMailboxes,
   syncMailbox,
 } from "../../../src/server/gmail/sync.ts";
-import { requestMailboxRecheck } from "../../../src/server/gmail/recheck.ts";
+import {
+  requestMailboxRecheck,
+  retryFailedTasks,
+} from "../../../src/server/gmail/recheck.ts";
 import { runScheduledSync } from "../../../src/server/scheduler.ts";
 import {
   listOpenings,
@@ -479,14 +482,8 @@ export async function POST(
         if (result === "IN_PROGRESS")
           throw new WebError("RECHECK_IN_PROGRESS", 409);
       }
-      if (path === "retry-failed") {
-        const id = validUuid(body.mailboxId);
-        await db.query(
-          `UPDATE processing_tasks SET state='PENDING',attempts=0,next_attempt_at=now(),safe_error_code=NULL,outcome=NULL,finished_at=NULL
-          WHERE user_id=$1 AND mailbox_id=$2 AND state='FAILED' AND EXISTS(SELECT 1 FROM connected_mailboxes m WHERE m.id=$2 AND m.user_id=$1 AND m.sync_state<>'DISCONNECTED')`,
-          [session.userId, id],
-        );
-      }
+      if (path === "retry-failed")
+        await retryFailedTasks(db, session.userId, validUuid(body.mailboxId));
       const deps = {
         db,
         clientFor: gmailClientFactory(db, {
