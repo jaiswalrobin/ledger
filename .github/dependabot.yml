@@ -15,6 +15,10 @@ updates:
     ignore:
       - dependency-name: pg
         update-types: [version-update:semver-major]
+      # Production, CI and `engines` run Node 24. Types for a newer Node would let APIs that do not
+      # exist there pass the type-check; move this major together with the runtime.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
 
   # Keeps the SHA-pinned actions current; the pinned commit is rewritten with its version comment.
   - package-ecosystem: github-actions
