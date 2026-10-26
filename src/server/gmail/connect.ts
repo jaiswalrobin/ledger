@@ -39,6 +39,7 @@ export async function connectMailbox(
   userId: string,
   identity: { sub: string; email: string },
   refreshToken: string,
+  now = new Date(),
 ): Promise<{ mailboxId: string; reconnected: boolean }> {
   return db.transaction(async (tx) => {
     if (
@@ -75,9 +76,9 @@ export async function connectMailbox(
       );
       await tx.query(
         `UPDATE processing_tasks SET state='PENDING', outcome=NULL, safe_error_code=NULL,
-          attempts=0, next_attempt_at=now(), finished_at=NULL
+          attempts=0, next_attempt_at=$3, finished_at=NULL
          WHERE mailbox_id=$1 AND user_id=$2 AND state='FAILED' AND outcome='DISCONNECTED'`,
-        [found.id, userId],
+        [found.id, userId, now.toISOString()],
       );
       return { mailboxId: found.id, reconnected: true };
     }

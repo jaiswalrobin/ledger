@@ -293,8 +293,8 @@ export async function syncMailbox(
     ): Promise<number> => {
       if (!ids.length) return 0;
       const r = await tx.query(
-        `INSERT INTO processing_tasks (id, user_id, mailbox_id, provider_message_id, recheck_id, reprocess_requested)
-         SELECT gen_random_uuid(), $1, $2, x, $4::uuid, $4::uuid IS NOT NULL FROM unnest($3::text[]) AS x
+        `INSERT INTO processing_tasks (id, user_id, mailbox_id, provider_message_id, recheck_id, reprocess_requested, next_attempt_at)
+         SELECT gen_random_uuid(), $1, $2, x, $4::uuid, $4::uuid IS NOT NULL, $5::timestamptz FROM unnest($3::text[]) AS x
          ON CONFLICT (mailbox_id, provider_message_id) DO UPDATE SET
            state='PENDING', attempts=0, next_attempt_at=$5, safe_error_code=NULL,
            outcome=NULL, finished_at=NULL, recheck_id=EXCLUDED.recheck_id, reprocess_requested=true

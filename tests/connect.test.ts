@@ -103,6 +103,39 @@ describe("connectMailbox", () => {
     );
   });
 
+  it("reconnecting re-queues interrupted work at the supplied time, not the database clock", async () => {
+    const u = await seedUser(db);
+    const identity = { sub: "g-requeue", email: "requeue@example.org" };
+    const first = await connectMailbox(db, key, u, identity, "tok-1");
+    await db.query(
+      "INSERT INTO processing_tasks (id, user_id, mailbox_id, provider_message_id) VALUES (gen_random_uuid(), $1, $2, 'interrupted')",
+      [u, first.mailboxId],
+    );
+    await disconnectMailbox(
+      db,
+      key,
+      u,
+      first.mailboxId,
+      (async () =>
+        new Response("{}", { status: 200 })) as unknown as typeof fetch,
+    );
+    const at = new Date("2026-01-02T03:04:05.678Z");
+    await connectMailbox(db, key, u, identity, "tok-2", at);
+    const { rows } = await db.query<{
+      state: string;
+      next_attempt_at: unknown;
+    }>(
+      "SELECT state, next_attempt_at FROM processing_tasks WHERE mailbox_id = $1",
+      [first.mailboxId],
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.state, "PENDING");
+    assert.equal(
+      new Date(rows[0]!.next_attempt_at as string | Date).toISOString(),
+      at.toISOString(),
+    );
+  });
+
   it("allows the same Google account for two different Ledger users independently", async () => {
     const a = await seedUser(db);
     const b = await seedUser(db);

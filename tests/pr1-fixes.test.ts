@@ -189,7 +189,8 @@ test("PR1: reconnect retries only interrupted work and actually processes it", a
   const user = await seedUser(t.db),
     other = await seedUser(t.db),
     key = randomBytes(32),
-    identity = { sub: randomUUID(), email: "synthetic@example.com" };
+    identity = { sub: randomUUID(), email: "synthetic@example.com" },
+    reconnectedAt = new Date("2026-10-31T12:00:00Z");
   const { mailboxId } = await connectMailbox(
     t.db,
     key,
@@ -223,7 +224,7 @@ test("PR1: reconnect retries only interrupted work and actually processes it", a
     "INSERT INTO processing_tasks(id,user_id,mailbox_id,provider_message_id,state,outcome,attempts)VALUES($1,$2,$3,'failed', 'FAILED','FETCH_ERROR',5),($4,$2,$3,'done','DONE','PROCESSED',1)",
     [randomUUID(), user, mailboxId, randomUUID()],
   );
-  await connectMailbox(t.db, key, user, identity, "replacement");
+  await connectMailbox(t.db, key, user, identity, "replacement", reconnectedAt);
   const states = (
     await t.db.query<{
       provider_message_id: string;
@@ -256,7 +257,7 @@ test("PR1: reconnect retries only interrupted work and actually processes it", a
     {
       db: t.db,
       clientFor: async () => fake,
-      now: () => new Date("2026-10-31T12:00:00Z"),
+      now: () => reconnectedAt,
     },
     mailboxId,
     { userId: user },
